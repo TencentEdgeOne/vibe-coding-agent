@@ -21,6 +21,7 @@ import type {
   StreamSend,
 } from './_types';
 import { buildAutoFixPrompt } from './utils/_build-errors';
+import { debugLog } from './utils/_debug';
 import { normalizeRelPath } from './utils/_paths';
 import { sanitizeAssistantText } from './utils/_text';
 
@@ -254,7 +255,7 @@ async function extendExistingSandboxTimeout(context: any) {
 
   try {
     await sandbox.extendTimeout(SANDBOX_EXTENSION_SECONDS);
-    console.log('[sandbox]', {
+    debugLog(context, '[sandbox]', {
       stage: 'extend-timeout',
       seconds: SANDBOX_EXTENSION_SECONDS,
     });
@@ -289,7 +290,7 @@ export async function runFileReadPipeline(context: any): Promise<Response> {
   const pathParam = getRequestQueryParam(context, 'path');
   const relPath = pathParam.value;
   if (!conversationId) {
-    console.log('[file-read]', {
+    debugLog(context, '[file-read]', {
       ...diagnosticBase,
       rawPath: relPath,
       pathSource: pathParam.source,
@@ -302,7 +303,7 @@ export async function runFileReadPipeline(context: any): Promise<Response> {
   }
   const norm = normalizeRelPath(relPath);
   if (!norm) {
-    console.log('[file-read]', {
+    debugLog(context, '[file-read]', {
       ...diagnosticBase,
       rawPath: relPath,
       pathSource: pathParam.source,
@@ -316,7 +317,7 @@ export async function runFileReadPipeline(context: any): Promise<Response> {
   }
 
   const state = await getProjectState(context, conversationId);
-  console.log('[file-read]', {
+  debugLog(context, '[file-read]', {
     ...diagnosticBase,
     rawPath: relPath,
     pathSource: pathParam.source,
@@ -325,7 +326,7 @@ export async function runFileReadPipeline(context: any): Promise<Response> {
     stage: 'before-read',
   });
   const res = await readFileFromSandbox(context, state, norm);
-  console.log('[file-read]', {
+  debugLog(context, '[file-read]', {
     ...diagnosticBase,
     normalizedPath: norm,
     appDir: state.appDir,
@@ -422,12 +423,18 @@ export async function runChatPipeline(
     if (!isInitialProjectTurn && event.type === 'tool_result' && hiddenScaffoldToolUseIds.has(event.data.tool_use_id)) {
       return;
     }
-    if (event.type === 'text_segment' && state.previewUrl) {
+    if (event.type === 'text_segment') {
+      const text = state.previewUrl
+        ? stripReturnedPreviewLinks(event.data.text, state.previewUrl)
+        : event.data.text;
+      if (text.length === 0) {
+        return;
+      }
       send({
         ...event,
         data: {
           ...event.data,
-          text: stripReturnedPreviewLinks(event.data.text, state.previewUrl),
+          text,
         },
       } as unknown as Record<string, unknown>);
       return;

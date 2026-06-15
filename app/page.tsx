@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, memo, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { sanitizeAssistantText } from '../agents/utils/_text';
@@ -28,6 +28,7 @@ type ChatMessage = {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  thinkingContent?: string;
   steps?: TimelineStep[];
   status?: AssistantStatus;
 };
@@ -143,6 +144,10 @@ const LANGUAGE_STORAGE_KEY = 'web-dev-agent-language';
 const EDGEONE_AI_DEPLOY_URL = 'https://edgeone.ai/makers/new?template=vibe-coding-agent&from=within&fromAgent=1&agentLang=typescript';
 const TENCENT_CLOUD_DEPLOY_URL = 'https://console.cloud.tencent.com/edgeone/makers/new?template=vibe-coding-agent&from=within&fromAgent=1&agentLang=typescript';
 const PHASE_ORDER: NormalizedStepPhase[] = ['scaffold', 'modify', 'code', 'install', 'preview', 'link'];
+const TYPEWRITER_INTERVAL_MS = 18;
+const TYPEWRITER_CHARS_PER_TICK = 3;
+const NARRATION_TYPEWRITER_INTERVAL_MS = 34;
+const NARRATION_TYPEWRITER_CHARS_PER_TICK = 1;
 
 const TRANSLATIONS = {
   zh: {
@@ -420,10 +425,16 @@ function createMessageId(role: ChatMessage['role']) {
   return `${role}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-function maskConversationIdForLog(value: string | null) {
-  if (!value) return '<empty>';
-  if (value.length <= 12) return `${value.slice(0, 2)}...${value.slice(-2)}`;
-  return `${value.slice(0, 6)}...${value.slice(-6)}`;
+function sanitizeThinkingContent(value: string) {
+  return value
+    .replace(/\x1b\[[0-9;?]*[~A-Za-z]/g, '')
+    .replace(/\[20[01]~/g, '')
+    .replace(/\x1b\][^\x07]*\x07/g, '')
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '')
+    .replace(/<think\b[^>]*>/gi, '')
+    .replace(/<\/think>/gi, '')
+    .replace(/\n{4,}/g, '\n\n\n')
+    .replace(/<t(?:h(?:i(?:n(?:k(?:\b[^>]*)?)?)?)?)?$/i, '');
 }
 
 export default function Home() {
@@ -458,6 +469,9 @@ export default function Home() {
   const fileCount = fileTree?.items.filter((item) => item.type === 'file').length ?? 0;
   const latestMessage = messages[messages.length - 1];
   const latestAssistantContent = latestMessage?.role === 'assistant' ? latestMessage.content : '';
+  const latestAssistantThinkingContent = latestMessage?.role === 'assistant'
+    ? latestMessage.thinkingContent || ''
+    : '';
   const latestAssistantStatus = latestMessage?.role === 'assistant' ? latestMessage.status : '';
   const latestAssistantStepCount = latestMessage?.role === 'assistant'
     ? latestMessage.steps?.length ?? 0
@@ -490,7 +504,13 @@ export default function Home() {
       return;
     }
     container.scrollTop = container.scrollHeight;
-  }, [messages.length, latestAssistantContent, latestAssistantStatus, latestAssistantStepCount]);
+  }, [
+    messages.length,
+    latestAssistantContent,
+    latestAssistantThinkingContent,
+    latestAssistantStatus,
+    latestAssistantStepCount,
+  ]);
 
   const promotePendingPreview = () => {
     if (!pendingPreviewUrl) {
@@ -574,6 +594,7 @@ export default function Home() {
         id: assistantMessageId,
         role: 'assistant',
         content: '',
+        thinkingContent: '',
         status: 'running',
         steps: [],
       },
@@ -599,9 +620,21 @@ export default function Home() {
       setMessages((current) =>
         current.map((item) =>
           item.id === assistantMessageId
-            ? { ...item, steps: [...(item.steps ?? []), step] }
+            ? { ...item, steps: appendOrUpdateTimelineStep(item.steps ?? [], step) }
             : item,
         ),
+      );
+    };
+
+    const appendThinkingSegment = (text: string) => {
+      setMessages((current) =>
+        current.map((item) => {
+          if (item.id !== assistantMessageId) {
+            return item;
+          }
+          const nextThinkingContent = sanitizeThinkingContent(`${item.thinkingContent || ''}${text}`);
+          return { ...item, thinkingContent: nextThinkingContent };
+        }),
       );
     };
 
@@ -609,7 +642,7 @@ export default function Home() {
       finalContent: string,
       finalStatus: AssistantStatus,
     ) => {
-      patchAssistant({ content: finalContent, status: finalStatus });
+      patchAssistant({ content: finalContent, thinkingContent: '', status: finalStatus });
       // Collapse progress by default when the stream ends. The running-phase
       // forced expansion is temporary.
       setOpenSteps((current) => ({ ...current, [assistantMessageId]: false }));
@@ -709,7 +742,8 @@ export default function Home() {
         patchAssistant({ content: text });
         return;
       }
-      if (event.type === 'text_segment') {
+      if (event.type === 'text_segment' && event.data?.text) {
+        appendThinkingSegment(event.data.text);
         return;
       }
       if (event.type === 'tool_use' && event.data) {
@@ -832,7 +866,12 @@ export default function Home() {
       setMessages((current) =>
         current.map((item) =>
           item.id === assistantMessageId && item.status === 'running'
-            ? { ...item, status: 'done', content: item.content || t.response.agentFlowEnded }
+            ? {
+                ...item,
+                status: 'done',
+                content: item.content || t.response.agentFlowEnded,
+                thinkingContent: '',
+              }
             : item,
         ),
       );
@@ -963,6 +1002,7 @@ export default function Home() {
                 const steps = message.steps ?? [];
                 const isOpen = openSteps[message.id] ?? status === 'running';
                 const hasDisplayableTimelineSteps = normalizeTimelineSteps(steps, t.timeline).length > 0;
+                const runningContent = message.thinkingContent || message.content;
 
                 return (
                   <div
@@ -971,12 +1011,14 @@ export default function Home() {
                   >
                     {status === 'running' ? (
                       <>
-                        {message.content ? (
-                          <MarkdownMessage content={message.content} />
+                        {runningContent ? (
+                          <RunningNarrationPanel
+                            content={runningContent}
+                          />
                         ) : (
                           <AssistantTimeline steps={steps} running copy={t.timeline} />
                         )}
-                        {message.content && hasDisplayableTimelineSteps && (
+                        {runningContent && hasDisplayableTimelineSteps && (
                           <div className="mt-3 border-t border-white/10 pt-2">
                             <AssistantTimeline steps={steps} running copy={t.timeline} />
                           </div>
@@ -984,7 +1026,7 @@ export default function Home() {
                       </>
                     ) : (
                       <>
-                        {message.content && <MarkdownMessage content={message.content} />}
+                        {message.content && <TypewriterMarkdownMessage content={message.content} />}
                         {hasDisplayableTimelineSteps && (
                           <div className="mt-3 border-t border-white/10 pt-2">
                             <button
@@ -1152,7 +1194,7 @@ export default function Home() {
   );
 }
 
-function AssistantTimeline({
+const AssistantTimeline = memo(function AssistantTimeline({
   steps,
   running,
   copy,
@@ -1198,6 +1240,32 @@ function AssistantTimeline({
       )}
     </div>
   );
+});
+
+function appendOrUpdateTimelineStep(steps: TimelineStep[], nextStep: TimelineStep): TimelineStep[] {
+  if (nextStep.kind !== 'tool_use' || !nextStep.id) {
+    return [...steps, nextStep];
+  }
+
+  const existingIndex = steps.findIndex((step) =>
+    step.kind === 'tool_use' && step.id === nextStep.id,
+  );
+  if (existingIndex < 0) {
+    return [...steps, nextStep];
+  }
+
+  return steps.map((step, index) => {
+    if (index !== existingIndex || step.kind !== 'tool_use') {
+      return step;
+    }
+    return {
+      ...step,
+      name: nextStep.name || step.name,
+      command: nextStep.command || step.command,
+      phaseHint: nextStep.phaseHint || step.phaseHint,
+      fileCount: nextStep.fileCount || step.fileCount,
+    };
+  });
 }
 
 function normalizeTimelineSteps(steps: TimelineStep[], copy: TimelineCopy): NormalizedStep[] {
@@ -1311,7 +1379,7 @@ function normalizeTimelineSteps(steps: TimelineStep[], copy: TimelineCopy): Norm
     .filter((step): step is NormalizedStep => Boolean(step));
 }
 
-function NormalizedStepCard({ step, copy }: { step: NormalizedStep; copy: TimelineCopy }) {
+const NormalizedStepCard = memo(function NormalizedStepCard({ step, copy }: { step: NormalizedStep; copy: TimelineCopy }) {
   const isWaiting = step.status === 'waiting';
   const isRunning = step.status === 'running';
   const isError = step.status === 'error';
@@ -1366,7 +1434,7 @@ function NormalizedStepCard({ step, copy }: { step: NormalizedStep; copy: Timeli
       </div>
     </div>
   );
-}
+});
 
 function classifyToolUse(step: Extract<TimelineStep, { kind: 'tool_use' }>, copy: TimelineCopy): {
   phase: NormalizedStepPhase;
@@ -1387,7 +1455,7 @@ function classifyToolUse(step: Extract<TimelineStep, { kind: 'tool_use' }>, copy
     return { phase: 'scaffold', runningSummary: copy.summaries.scaffoldRunning };
   }
 
-  if (toolName === 'write_project_files') {
+  if (toolName === 'write_project_files' || toolName === 'write_files') {
     return {
       phase: 'code',
       runningSummary: copy.summaries.codeRunningUpdate,
@@ -1407,6 +1475,12 @@ function classifyToolUse(step: Extract<TimelineStep, { kind: 'tool_use' }>, copy
   }
 
   if (toolName === 'commands') {
+    if (step.command && isInstallCommand(step.command)) {
+      return { phase: 'install', runningSummary: copy.summaries.installRunning };
+    }
+    if (step.command && isPreviewCommand(step.command)) {
+      return { phase: 'preview', runningSummary: copy.summaries.previewRunning };
+    }
     return null;
   }
 
@@ -1594,6 +1668,151 @@ function Spinner() {
   );
 }
 
+function RunningNarrationPanel({
+  content,
+}: {
+  content: string;
+}) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [displayedContent, setDisplayedContent] = useState('');
+
+  useEffect(() => {
+    const container = scrollRef.current;
+    if (!container) {
+      return;
+    }
+    container.scrollTop = container.scrollHeight;
+  }, [content, displayedContent]);
+
+  return (
+    <div
+      ref={scrollRef}
+      className="h-28 min-w-0 overflow-y-auto rounded-lg text-[#aaa] px-3 py-2 pr-2"
+    >
+      <TypewriterNarrationText content={content} onDisplayChange={setDisplayedContent} />
+    </div>
+  );
+}
+
+function NarrationText({ content }: { content: string }) {
+  return (
+    <div className="min-w-0 whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+      {content}
+    </div>
+  );
+}
+
+function TypewriterNarrationText({
+  content,
+  onDisplayChange,
+}: {
+  content: string;
+  onDisplayChange?: (content: string) => void;
+}) {
+  const [displayContent, setDisplayContent] = useState('');
+  const targetRef = useRef(content);
+
+  useEffect(() => {
+    onDisplayChange?.(displayContent);
+  }, [displayContent, onDisplayChange]);
+
+  useEffect(() => {
+    targetRef.current = content;
+
+    const prefersReducedMotion = typeof window !== 'undefined'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (prefersReducedMotion) {
+      setDisplayContent(content);
+      return;
+    }
+
+    setDisplayContent((current) =>
+      content.startsWith(current) ? current : '',
+    );
+  }, [content]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      if (prefersReducedMotion) {
+        setDisplayContent(targetRef.current);
+        return;
+      }
+
+      setDisplayContent((current) => {
+        const target = targetRef.current;
+        if (current === target) return current;
+        return target.slice(0, current.length + NARRATION_TYPEWRITER_CHARS_PER_TICK);
+      });
+    }, NARRATION_TYPEWRITER_INTERVAL_MS);
+
+    return () => window.clearInterval(timer);
+  }, []);
+
+  return (
+    <>
+      <NarrationText content={displayContent} />
+      {displayContent.length < content.length && (
+        <span
+          className="ml-0.5 inline-block h-4 w-1 animate-pulse rounded-full bg-[#7bd8b4] align-[-0.15em]"
+          aria-hidden="true"
+        />
+      )}
+    </>
+  );
+}
+
+function TypewriterMarkdownMessage({ content }: { content: string }) {
+  const targetContent = sanitizeAssistantText(content);
+  const [displayContent, setDisplayContent] = useState('');
+  const targetRef = useRef(targetContent);
+
+  useEffect(() => {
+    targetRef.current = targetContent;
+
+    const prefersReducedMotion = typeof window !== 'undefined'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (prefersReducedMotion) {
+      setDisplayContent(targetContent);
+      return;
+    }
+
+    setDisplayContent((current) =>
+      targetContent.startsWith(current) ? current : '',
+    );
+  }, [targetContent]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      if (prefersReducedMotion) {
+        setDisplayContent(targetRef.current);
+        return;
+      }
+
+      setDisplayContent((current) => {
+        const target = targetRef.current;
+        if (current === target) return current;
+        return target.slice(0, current.length + TYPEWRITER_CHARS_PER_TICK);
+      });
+    }, TYPEWRITER_INTERVAL_MS);
+
+    return () => window.clearInterval(timer);
+  }, []);
+
+  return (
+    <div className="min-w-0">
+      <MarkdownMessage content={displayContent} />
+      {displayContent.length < targetContent.length && (
+        <span
+          className="ml-0.5 inline-block h-4 w-1 animate-pulse rounded-full bg-[#7bd8b4] align-[-0.15em]"
+          aria-hidden="true"
+        />
+      )}
+    </div>
+  );
+}
+
 function MarkdownMessage({ content }: { content: string }) {
   const displayContent = sanitizeAssistantText(content);
 
@@ -1710,20 +1929,9 @@ function FilesPanel({
         headers['makers-conversation-id'] = cid;
         headers['conversationId'] = cid;
       }
-      console.debug('[file-read:client]', {
-        path,
-        hasConversationId: Boolean(conversationId),
-        conversationId: maskConversationIdForLog(cid),
-        conversationSource: conversationId ? 'state.conversationId' : 'localStorage',
-      });
       const resp = await fetch(`/file?path=${encodeURIComponent(path)}`, {
         method: 'GET',
         headers,
-      });
-      console.debug('[file-read:client]', {
-        path,
-        status: resp.status,
-        ok: resp.ok,
       });
       const data = (await resp.json()) as {
         ok?: boolean;
@@ -1733,14 +1941,6 @@ function FilesPanel({
         truncated?: boolean;
         error?: string;
       };
-      console.debug('[file-read:client]', {
-        path,
-        responsePath: data.path,
-        responseOk: data.ok,
-        responseError: data.error,
-        responseSize: data.size,
-        responseTruncated: data.truncated,
-      });
       // Discard this response if the user selected another file while it was loading.
       if (latestRequestRef.current !== path) {
         return;
@@ -1760,10 +1960,6 @@ function FilesPanel({
       if (latestRequestRef.current !== path) {
         return;
       }
-      console.debug('[file-read:client]', {
-        path,
-        error: err instanceof Error ? err.message : copy.requestFailed,
-      });
       setPreview({
         status: 'error',
         path,

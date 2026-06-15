@@ -33,6 +33,7 @@ import {
   sanitizeAssistantText,
   truncateForStream,
 } from './utils/_text';
+import { debugLog, isDebugEnabled } from './utils/_debug';
 
 function pickEnvValue(context: any, key: string) {
   const value = context?.env?.[key];
@@ -74,6 +75,114 @@ function isBrowserSandboxToolName(name: string) {
   return name.toLowerCase().includes('browser');
 }
 
+function extractVisibleNarrationDelta(event: SDKMessage) {
+  if (event.type !== 'stream_event') {
+    return '';
+  }
+  const streamEvent = (event as any).event;
+  if (streamEvent?.type !== 'content_block_delta') {
+    return '';
+  }
+  const delta = streamEvent.delta;
+  if (delta?.type === 'text_delta' && typeof delta.text === 'string') {
+    return sanitizeNarrationText(delta.text);
+  }
+  if (delta?.type === 'thinking_delta' && typeof delta.thinking === 'string') {
+    return sanitizeNarrationText(delta.thinking);
+  }
+  return '';
+}
+
+function sanitizeNarrationText(input: string) {
+  if (!input) return '';
+  return input
+    .replace(/\x1b\[[0-9;?]*[~A-Za-z]/g, '')
+    .replace(/\[20[01]~/g, '')
+    .replace(/\x1b\][^\x07]*\x07/g, '')
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '')
+    .replace(/<think\b[^>]*>/gi, '')
+    .replace(/<\/think>/gi, '')
+    .replace(/\n{4,}/g, '\n\n\n');
+}
+
+type StreamingToolUseBlock = {
+  id: string;
+  name: string;
+  inputJson: string;
+  input?: unknown;
+};
+
+function isToolUseContentBlock(block: unknown): block is {
+  type: string;
+  id?: string;
+  name?: string;
+  input?: unknown;
+} {
+  const record = block && typeof block === 'object'
+    ? block as Record<string, unknown>
+    : {};
+  return record.type === 'tool_use' || record.type === 'mcp_tool_use';
+}
+
+function extractThinkingBlockText(block: unknown) {
+  const record = block && typeof block === 'object'
+    ? block as Record<string, unknown>
+    : {};
+  if (record.type !== 'thinking' || typeof record.thinking !== 'string') {
+    return '';
+  }
+  return sanitizeNarrationText(record.thinking);
+}
+
+function parseToolInputJson(rawJson: string, fallback: unknown) {
+  if (!rawJson.trim()) {
+    return fallback ?? {};
+  }
+  try {
+    return JSON.parse(rawJson);
+  } catch {
+    return fallback ?? {};
+  }
+}
+
+function summarizeSdkMessage(event: SDKMessage): Record<string, unknown> {
+  if (event.type === 'stream_event') {
+    const streamEvent = (event as any).event;
+    return {
+      type: event.type,
+      uuid: typeof event.uuid === 'string' ? event.uuid : '',
+      eventType: streamEvent?.type,
+      index: typeof streamEvent?.index === 'number' ? streamEvent.index : undefined,
+      deltaType: streamEvent?.delta?.type,
+      blockType: streamEvent?.content_block?.type,
+      toolName: typeof streamEvent?.content_block?.name === 'string'
+        ? streamEvent.content_block.name
+        : undefined,
+    };
+  }
+
+  if (event.type === 'assistant') {
+    const blocks = (event as any).message?.content;
+    return {
+      type: event.type,
+      uuid: typeof (event as any).uuid === 'string' ? (event as any).uuid : '',
+      blocks: Array.isArray(blocks)
+        ? blocks.map((block: any) => ({
+            type: block?.type,
+            id: typeof block?.id === 'string' ? block.id : undefined,
+            name: typeof block?.name === 'string' ? block.name : undefined,
+          }))
+        : [],
+    };
+  }
+
+  return {
+    type: event.type,
+    uuid: typeof (event as any).uuid === 'string' ? (event as any).uuid : '',
+    subtype: typeof (event as any).subtype === 'string' ? (event as any).subtype : undefined,
+  };
+}
+
 function isInstallCommand(cmd: string) {
   const normalized = cmd.toLowerCase();
   return (
@@ -109,7 +218,7 @@ function inferToolProgress(name: string, input: unknown): {
   if (toolName === 'publish_preview' || toolName === 'get_preview_link') {
     return { phaseHint: 'preview' };
   }
-  if (toolName === 'files_write' || toolName === 'files_make_dir' || toolName === 'files_remove') {
+  if (toolName === 'files_write' || toolName === 'write_files' || toolName === 'files_make_dir' || toolName === 'files_remove') {
     return { phaseHint: 'code' };
   }
   if (toolName === 'write_project_files') {
@@ -333,6 +442,7 @@ export async function runCodingAgent(
       // Disable Claude Code built-in local tools so the model can only read,
       // write, and execute through EdgeOne sandbox MCP tools.
       tools: [],
+      includePartialMessages: true,
       mcpServers: {
         [mcpServerName]: sandboxMcpServer,
       },
@@ -344,9 +454,9 @@ export async function runCodingAgent(
       // readiness, and publishes the getHost(9000)/preview/ preview link.
       cwd: process.cwd(),
       settingSources: ['project'],
-      debug: true,
+      debug: isDebugEnabled(context),
       stderr: (data: string) => {
-        console.log('[claude-code stderr]', data.trimEnd());
+        debugLog(context, '[claude-code stderr]', data.trimEnd());
       },
     };
 
@@ -364,43 +474,151 @@ export async function runCodingAgent(
     // Not Found, make all later tool calls fail. Retrying only consumes turns and
     // pollutes context, so stop this query immediately with a clear upper-layer error.
     let fatalError: string | null = null;
-    // Diagnostic probe: independently record tool_use_id -> tool context for tool_result
-    // lookup, without relying on pendingToolUses, which is deleted in extractCodeSnapshotsFromEvent.
-    const probeToolContext = new Map<string, { name: string; command?: string }>();
+    // Independently record tool_use_id -> tool context so tool_result events
+    // can update the correct progress step even when model providers stream
+    // partial tool inputs differently.
+    const toolContextById = new Map<string, { name: string; command?: string }>();
+    const pendingToolUseBlocks = new Map<number, StreamingToolUseBlock>();
+    const emittedToolUseProgress = new Map<string, string>();
+    let emittedNarration = '';
     const SCAFFOLD_TOOL_NAME = `mcp__${mcpServerName}__ensure_project_scaffold`;
     // Push file_tree immediately at most once per turn after scaffold, avoiding duplicate find calls.
     let scaffoldHandled = false;
 
+    const emitNarration = (rawText: string, uuid: string, complete = false) => {
+      const text = sanitizeNarrationText(rawText);
+      if (!text) {
+        return;
+      }
+
+      const trimmedText = text.trim();
+      if (complete && trimmedText && emittedNarration.includes(trimmedText)) {
+        return;
+      }
+
+      const cleanNextText = sanitizeNarrationText(text);
+      if (!cleanNextText) {
+        return;
+      }
+
+      emittedNarration = sanitizeNarrationText(`${emittedNarration}${cleanNextText}`);
+      onProgress?.({
+        type: 'text_segment',
+        data: {
+          uuid,
+          text: cleanNextText,
+        },
+      });
+    };
+
+    const emitToolUseProgress = (toolUse: {
+      id?: string;
+      name?: string;
+      input?: unknown;
+    }) => {
+      const toolName = typeof toolUse.name === 'string' ? toolUse.name : '<unknown>';
+      const toolUseId = typeof toolUse.id === 'string' ? toolUse.id : '';
+      const shortToolName = shortenToolName(toolName);
+      const command = shortToolName === 'commands' ? extractSandboxCommand(toolUse.input) : '';
+      const progress = typeof toolUse.name === 'string'
+        ? inferToolProgress(toolName, toolUse.input)
+        : {};
+      const progressSignature = JSON.stringify({
+        name: toolName,
+        command,
+        phaseHint: progress.phaseHint || '',
+        fileCount: progress.fileCount || 0,
+      });
+      if (toolUseId) {
+        const previousSignature = emittedToolUseProgress.get(toolUseId);
+        if (previousSignature === progressSignature) {
+          return;
+        }
+        emittedToolUseProgress.set(toolUseId, progressSignature);
+      }
+
+      if (toolUseId && typeof toolUse.name === 'string') {
+        toolContextById.set(toolUseId, {
+          name: toolUse.name,
+          ...(command ? { command } : {}),
+        });
+      }
+      onProgress?.({
+        type: 'tool_use',
+        data: {
+          id: toolUseId,
+          name: toolName,
+          ...(command ? { command } : {}),
+          ...progress,
+        },
+      });
+    };
+
     for await (const event of sdkQuery as AsyncIterable<SDKMessage>) {
-      console.log('event', JSON.stringify(event, null, 2));
-      // Forward only structured tool progress to the frontend. Model thinking,
-      // pre-tool narration, and tool input stay out of the UI to avoid exposing
-      // reasoning and raw JSON.
-      if (event.type === 'assistant') {
+      debugLog(context, '[agent-event]', summarizeSdkMessage(event));
+      // Forward structured tool progress and high-level model narration. Tool
+      // input JSON and non-text stream deltas stay out of the UI.
+      if (event.type === 'stream_event') {
+        emitNarration(
+          extractVisibleNarrationDelta(event),
+          typeof event.uuid === 'string' ? event.uuid : '',
+          false,
+        );
+        const streamEvent = (event as any).event;
+        if (streamEvent?.type === 'content_block_start') {
+          const contentBlock = streamEvent.content_block;
+          if (isToolUseContentBlock(contentBlock) && typeof streamEvent.index === 'number') {
+            pendingToolUseBlocks.set(streamEvent.index, {
+              id: typeof contentBlock.id === 'string' ? contentBlock.id : '',
+              name: typeof contentBlock.name === 'string' ? contentBlock.name : '',
+              inputJson: '',
+              input: contentBlock.input,
+            });
+            emitToolUseProgress({
+              id: contentBlock.id,
+              name: contentBlock.name,
+              input: contentBlock.input,
+            });
+          }
+        } else if (streamEvent?.type === 'content_block_delta') {
+          const delta = streamEvent.delta;
+          const pendingToolUse = typeof streamEvent.index === 'number'
+            ? pendingToolUseBlocks.get(streamEvent.index)
+            : undefined;
+          if (
+            pendingToolUse
+            && delta?.type === 'input_json_delta'
+            && typeof delta.partial_json === 'string'
+          ) {
+            pendingToolUse.inputJson += delta.partial_json;
+          }
+        } else if (streamEvent?.type === 'content_block_stop') {
+          const pendingToolUse = typeof streamEvent.index === 'number'
+            ? pendingToolUseBlocks.get(streamEvent.index)
+            : undefined;
+          if (pendingToolUse) {
+            pendingToolUseBlocks.delete(streamEvent.index);
+            emitToolUseProgress({
+              id: pendingToolUse.id,
+              name: pendingToolUse.name,
+              input: parseToolInputJson(pendingToolUse.inputJson, pendingToolUse.input),
+            });
+          }
+        }
+      } else if (event.type === 'assistant') {
         const blocks = (event as any).message?.content;
         if (Array.isArray(blocks)) {
           for (const b of blocks) {
-            if (b?.type === 'tool_use') {
-              const toolName = typeof b.name === 'string' ? b.name : '<unknown>';
-              const shortToolName = shortenToolName(toolName);
-              const command = shortToolName === 'commands' ? extractSandboxCommand(b.input) : '';
-              if (typeof b.id === 'string' && typeof b.name === 'string') {
-                probeToolContext.set(b.id, {
-                  name: b.name,
-                  ...(command ? { command } : {}),
-                });
-              }
-              const progress = typeof b.name === 'string'
-                ? inferToolProgress(toolName, b.input)
-                : {};
-              onProgress?.({
-                type: 'tool_use',
-                data: {
-                  id: typeof b.id === 'string' ? b.id : '',
-                  name: toolName,
-                  ...(command ? { command } : {}),
-                  ...progress,
-                },
+            emitNarration(
+              extractThinkingBlockText(b),
+              typeof event.uuid === 'string' ? event.uuid : '',
+              true,
+            );
+            if (isToolUseContentBlock(b)) {
+              emitToolUseProgress({
+                id: b.id,
+                name: b.name,
+                input: b.input,
               });
             }
           }
@@ -413,17 +631,8 @@ export async function runCodingAgent(
               const text = Array.isArray(b.content)
                 ? b.content.map((c: any) => (typeof c?.text === 'string' ? c.text : '')).join(' ')
                 : (typeof b.content === 'string' ? b.content : '');
-              const toolContext = probeToolContext.get(b.tool_use_id);
+              const toolContext = toolContextById.get(b.tool_use_id);
               const toolName = toolContext?.name || '<unknown>';
-              // Full dump: tool name, error flag, and complete content without truncation,
-              // useful for short failures such as exit status 1.
-              // console.log(
-              //   '[probe] tool_result',
-              //   'tool=', toolName,
-              //   'id=', b.tool_use_id,
-              //   'is_error=', b.is_error === true,
-              //   'content=', JSON.stringify(b.content),
-              // );
               onProgress?.({
                 type: 'tool_result',
                 data: {
@@ -445,7 +654,7 @@ export async function runCodingAgent(
                 try {
                   await onScaffoldDone?.();
                 } catch (err) {
-                  console.log('[scaffold-done] onScaffoldDone failed', err);
+                  console.warn('[scaffold-done] onScaffoldDone failed', err);
                 }
               }
               // Detect sandbox infrastructure failures only on is_error=true tool
@@ -454,7 +663,7 @@ export async function runCodingAgent(
                 const fatal = detectFatalToolError(text);
                 if (fatal) {
                   fatalError = `${fatal} (tool=${toolName})`;
-                  console.log('[fatal] aborting agent loop:', fatalError);
+                  console.warn('[fatal] aborting agent loop:', fatalError);
                 }
               }
             }
@@ -462,7 +671,7 @@ export async function runCodingAgent(
         }
       }
       if (event.type === 'system' && event.subtype === 'init') {
-        console.log('mcp servers', event.mcp_servers);
+        debugLog(context, '[agent-init]', { mcpServers: event.mcp_servers });
       }
       if (event.type === 'result') {
         resultMessage = event;
@@ -502,14 +711,6 @@ export async function runCodingAgent(
         previewTouched,
         wasCreated,
       };
-    }
-
-    // Probe the real resultMessage shape, truncated, when debugging SDK output pollution.
-    try {
-      const probe = JSON.stringify(resultMessage);
-      // console.log('[probe] resultMessage', probe ? probe.slice(0, 4000) : '<unstringifiable>');
-    } catch (err) {
-      // console.log('[probe] resultMessage stringify failed', err);
     }
 
     if (resultMessage.subtype !== 'success') {

@@ -8,6 +8,7 @@ import {
   PREVIEW_MAX_BYTES,
 } from './_constants';
 import type { BuildResult, BuildStatus, FileTreeItem, ProjectState, ScaffoldLog } from './_types';
+import { debugLog } from './utils/_debug';
 import { readFileExtension, safeSegment } from './utils/_paths';
 import { detectFatalToolError } from './utils/_text';
 
@@ -178,8 +179,7 @@ export async function ensureProjectScaffold(
   if (existing.exitCode !== 0) {
     throw new Error(existing.stderr || existing.stdout || 'Workspace inspection failed.');
   }
-  const sandboxInfo = context.sandbox.getInfo();
-  console.log('sandbox info', sandboxInfo);
+  debugLog(context, '[sandbox-info]', { available: Boolean(context.sandbox.getInfo()) });
 
   // One conversation_id maps to one long-lived project. Reuse existing business
   // files without overwriting them.
@@ -348,7 +348,7 @@ export async function resolvePublicLinks(context: any) {
   const accessToken = context.sandbox.envdAccessToken;
   const previewBaseUrl = normalizePublicUrl(previewHost);
   const sandboxDebugUrl = normalizePublicUrl(context.sandbox.browser?.liveUrl);
-  console.log('checking preview link generation conditions', {
+  debugLog(context, '[preview-link]', {
     internalPort: PREVIEW_SERVER_PORT,
     publicPort: PREVIEW_PUBLIC_PORT,
     proxyPath: PREVIEW_PATH_PREFIX,
@@ -719,7 +719,7 @@ async function readPackageMetadata(
       'node -e "',
       'const fs=require(\'fs\');',
       'const p=JSON.parse(fs.readFileSync(\'package.json\',\'utf8\'));',
-      'console.log(JSON.stringify({scripts:p.scripts||{},deps:{...(p.dependencies||{}),...(p.devDependencies||{})}}));',
+      'process.stdout.write(JSON.stringify({scripts:p.scripts||{},deps:{...(p.dependencies||{}),...(p.devDependencies||{})}}));',
       '"',
     ].join(''),
     {

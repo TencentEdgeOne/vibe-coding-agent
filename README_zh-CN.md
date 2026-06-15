@@ -2,11 +2,9 @@
 
 > 一个基于 Claude Agent SDK 和 EdgeOne Makers 的沙箱 Web 开发 Agent。
 
-**框架：** Claude Agent SDK · **分类：** Coding <!-- TODO: confirm --> · **语言：** TypeScript
+**框架：** Claude Agent SDK · **分类：** Coding · **语言：** TypeScript
 
 [![部署到 EdgeOne Makers](https://cdnstatic.tencentcs.com/edgeone/pages/deploy.svg)](https://console.cloud.tencent.com/edgeone/makers/new?template=vibe-coding-agent&from=within&fromAgent=1&agentLang=typescript)
-
-<!-- TODO: confirm: 如需预览图，请在 ./assets/preview.png 添加截图。 -->
 
 ## 概览
 
@@ -24,13 +22,14 @@ Web Dev Agent 可以把自然语言需求转换为可运行的 Web 项目。每�
 |----------|----------|-------------|
 | `AI_GATEWAY_API_KEY` | 是 | 模型网关 API Key。使用 Makers Models API Key，或任意 OpenAI 兼容供应商的 Key。 |
 | `AI_GATEWAY_BASE_URL` | 是 | 网关 Base URL。使用 Makers Models 时填写 `https://ai-gateway.edgeone.link/v1`。 |
-| `AI_GATEWAY_MODEL` | 否 | 模型 ID。默认值为 `@makers/hy3-preview`（免费内置模型）。 |
+| `AI_GATEWAY_MODEL` | 否 | 模型 ID。默认值为 `@makers/minimax-m2.7`（Makers 内置模型）。 |
+| `WEB_DEV_AGENT_DEBUG` | 否 | 设置为 `true` 或 `1` 时启用脱敏的服务端调试日志。默认关闭。 |
 
 本模板遵循 OpenAI 兼容标准，可以将这些变量指向 Makers Models 或任意兼容供应商。
 
 ### 如何获取 `AI_GATEWAY_API_KEY`
 
-1. 打开 [Makers Console]([https://console.cloud.tencent.com/edgeone/makers](https://edgeone.ai/makers/new?s_url=https://console.tencentcloud.com/edgeone/makers))。
+1. 打开 [Makers Console](https://edgeone.ai/makers/new?s_url=https://console.tencentcloud.com/edgeone/makers)。
 2. 登录并启用 Makers。
 3. 进入 **Makers → Models → API Key** 并创建 Key。
 4. 将它填写到 `AI_GATEWAY_API_KEY`。
@@ -96,7 +95,7 @@ web-dev-agent/
 
 Agent 在 `agents/` 下以会话模式运行。带有相同 `conversation_id` 的请求会路由到同一个运行时实例，并在沙箱生命周期内复用同一个临时项目工作区。
 
-1. **请求入口** — 前端携带消息和 `Markers-Conversation-Id` 请求头调用 `/chat`。从首页发起的新请求也可以设置 `resetProject: true` 来重建项目工作区。
+1. **请求入口** — 前端携带消息和 `Makers-Conversation-Id` 请求头调用 `/chat`。从首页发起的新请求也可以设置 `resetProject: true` 来重建项目工作区。
 2. **状态恢复** — Chat pipeline 从 `context.store` 读取对话历史，并加载当前临时沙箱项目的元数据。
 3. **LLM 与工具循环** — Claude Agent SDK 使用 `edgeone-sandbox` MCP 服务、`permissionMode: 'dontAsk'` 和仅限沙箱的工具运行。Agent 必须先调用 `ensure_project_scaffold`，再读取或写入项目文件。
 4. **项目编辑** — 生成的源码通过 `write_project_files` 或沙箱文件工具写入。命令执行和依赖安装都在沙箱内完成。

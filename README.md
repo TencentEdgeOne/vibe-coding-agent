@@ -2,11 +2,9 @@
 
 > A sandbox-based web development agent built with the Claude Agent SDK on EdgeOne Makers.
 
-**Framework:** Claude Agent SDK · **Category:** Coding <!-- TODO: confirm --> · **Language:** TypeScript
+**Framework:** Claude Agent SDK · **Category:** Coding · **Language:** TypeScript
 
 [![Deploy to EdgeOne Makers](https://cdnstatic.tencentcs.com/edgeone/pages/deploy.svg)](https://edgeone.ai/makers/new?template=vibe-coding-agent&from=within&fromAgent=1&agentLang=typescript)
-
-<!-- TODO: confirm: add a preview image at ./assets/preview.png if available. -->
 
 ## Overview
 
@@ -24,7 +22,8 @@ Web Dev Agent turns natural-language requests into runnable web projects. For ea
 |----------|----------|-------------|
 | `AI_GATEWAY_API_KEY` | Yes | Model gateway API key. Use your Makers Models API Key, or any OpenAI-compatible provider key. |
 | `AI_GATEWAY_BASE_URL` | Yes | Gateway base URL. For Makers Models, use `https://ai-gateway.edgeone.link/v1`. |
-| `AI_GATEWAY_MODEL` | No | Model ID. Defaults to `@makers/hy3-preview` (a free built-in model). |
+| `AI_GATEWAY_MODEL` | No | Model ID. Defaults to `@makers/minimax-m2.7` (a built-in Makers model). |
+| `WEB_DEV_AGENT_DEBUG` | No | Set to `true` or `1` to enable redacted server-side debug logs. Defaults to off. |
 
 This template follows the OpenAI-compatible standard — point these at Makers Models or any compatible provider.
 
@@ -96,7 +95,7 @@ Files prefixed with `_` are private modules — not exposed as public routes by 
 
 The agent runs in session mode under `agents/`. Requests with the same `conversation_id` are routed to the same runtime instance and reuse the same temporary project workspace for the sandbox lifetime.
 
-1. **Request** — the frontend calls `/chat` with a message and the `Markers-Conversation-Id` header. A new request from the home view can also set `resetProject: true` to recreate the project workspace.
+1. **Request** — the frontend calls `/chat` with a message and the `Makers-Conversation-Id` header. A new request from the home view can also set `resetProject: true` to recreate the project workspace.
 2. **State restore** — the chat pipeline reads conversation history from `context.store` and loads metadata for the current temporary sandbox project.
 3. **LLM and tool loop** — the Claude Agent SDK runs with the `edgeone-sandbox` MCP server, `permissionMode: 'dontAsk'`, and sandbox-only tools. The agent must call `ensure_project_scaffold` before reading or writing project files.
 4. **Project editing** — generated source files are written through `write_project_files` or sandbox file tools. Commands and dependency installation run inside the sandbox.
