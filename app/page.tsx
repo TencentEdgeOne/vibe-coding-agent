@@ -24,11 +24,16 @@ type NormalizedStep = {
   summary: string;
 };
 
+type ProcessEvent =
+  | { kind: 'thinking'; content: string }
+  | { kind: 'step'; phase: NormalizedStepPhase; step: NormalizedStep };
+
 type ChatMessage = {
   id: string;
   role: 'user' | 'assistant';
   content: string;
   thinkingContent?: string;
+  processEvents?: ProcessEvent[];
   steps?: TimelineStep[];
   status?: AssistantStatus;
 };
@@ -148,6 +153,7 @@ const TYPEWRITER_INTERVAL_MS = 18;
 const TYPEWRITER_CHARS_PER_TICK = 3;
 const NARRATION_TYPEWRITER_INTERVAL_MS = 34;
 const NARRATION_TYPEWRITER_CHARS_PER_TICK = 1;
+const PROCESS_STEP_REVEAL_DELAY_MS = 420;
 
 const TRANSLATIONS = {
   zh: {
@@ -180,7 +186,8 @@ const TRANSLATIONS = {
       buildThread: '构建线程',
       hideSteps: '隐藏',
       viewSteps: '查看',
-      steps: '步骤',
+      steps: '过程',
+      keepThinking: '保留思考',
       changePlaceholder: '描述你想修改的内容',
       send: '发送',
       sandboxEyebrow: '沙箱',
@@ -286,7 +293,8 @@ const TRANSLATIONS = {
       buildThread: 'Build thread',
       hideSteps: 'Hide',
       viewSteps: 'View',
-      steps: 'steps',
+      steps: 'process',
+      keepThinking: 'Keep thinking',
       changePlaceholder: 'Ask for a change',
       send: 'Send',
       sandboxEyebrow: 'Sandbox',
@@ -437,6 +445,21 @@ function sanitizeThinkingContent(value: string) {
     .replace(/<t(?:h(?:i(?:n(?:k(?:\b[^>]*)?)?)?)?)?$/i, '');
 }
 
+function getAssistantScrollSignature(message: ChatMessage) {
+  const events = message.processEvents ?? [];
+  const processSignature = events.map((event) =>
+    event.kind === 'thinking'
+      ? `thinking:${event.content}`
+      : `step:${event.phase}:${event.step.status}:${event.step.summary}`,
+  ).join('\u001e');
+  return [
+    message.status || '',
+    message.content,
+    events.length,
+    processSignature,
+  ].join('\u001f');
+}
+
 export default function Home() {
   const [language, setLanguage] = useState<Locale>('zh');
   const [deployUrl, setDeployUrl] = useState(TENCENT_CLOUD_DEPLOY_URL);
@@ -450,6 +473,7 @@ export default function Home() {
   // Per-assistant-message progress expansion state. The running message is
   // expanded while active, then collapsed by default.
   const [openSteps, setOpenSteps] = useState<Record<string, boolean>>({});
+  const [showProcessThinking, setShowProcessThinking] = useState(true);
   const [sandboxTab, setSandboxTab] = useState<'preview' | 'files'>('preview');
   const [fileTree, setFileTree] = useState<FileTree | null>(null);
   const [filesRefreshing, setFilesRefreshing] = useState(false);
@@ -462,21 +486,17 @@ export default function Home() {
   const activePreviewUrlRef = useRef('');
   const activePreviewRevisionRef = useRef(0);
   const previewRevisionRef = useRef(0);
+  const processStepRevealTimersRef = useRef<Record<string, number>>({});
+  const showProcessThinkingRef = useRef(true);
 
   const t = TRANSLATIONS[language];
   const canSend = input.trim().length > 0 && !loading;
   const hasWorkspace = messages.length > 0 || Boolean(preview) || Boolean(build);
   const fileCount = fileTree?.items.filter((item) => item.type === 'file').length ?? 0;
-  const latestMessage = messages[messages.length - 1];
-  const latestAssistantContent = latestMessage?.role === 'assistant' ? latestMessage.content : '';
-  const latestAssistantThinkingContent = latestMessage?.role === 'assistant'
-    ? latestMessage.thinkingContent || ''
+  const latestAssistantMessage = messages.findLast((message) => message.role === 'assistant');
+  const latestAssistantScrollSignature = latestAssistantMessage
+    ? getAssistantScrollSignature(latestAssistantMessage)
     : '';
-  const latestAssistantStatus = latestMessage?.role === 'assistant' ? latestMessage.status : '';
-  const latestAssistantStepCount = latestMessage?.role === 'assistant'
-    ? latestMessage.steps?.length ?? 0
-    : 0;
-
   useEffect(() => {
     const { domain } = extractProjectName();
     setDeployUrl(getDeployUrl(domain));
@@ -499,18 +519,16 @@ export default function Home() {
   }, [language]);
 
   useEffect(() => {
+    showProcessThinkingRef.current = showProcessThinking;
+  }, [showProcessThinking]);
+
+  useEffect(() => {
     const container = conversationScrollRef.current;
     if (!container) {
       return;
     }
     container.scrollTop = container.scrollHeight;
-  }, [
-    messages.length,
-    latestAssistantContent,
-    latestAssistantThinkingContent,
-    latestAssistantStatus,
-    latestAssistantStepCount,
-  ]);
+  }, [messages.length, latestAssistantScrollSignature]);
 
   const promotePendingPreview = () => {
     if (!pendingPreviewUrl) {
@@ -595,6 +613,7 @@ export default function Home() {
         role: 'assistant',
         content: '',
         thinkingContent: '',
+        processEvents: [],
         status: 'running',
         steps: [],
       },
@@ -616,11 +635,64 @@ export default function Home() {
       );
     };
 
+    const clearProcessStepRevealTimer = () => {
+      const timer = processStepRevealTimersRef.current[assistantMessageId];
+      if (timer) {
+        window.clearTimeout(timer);
+        delete processStepRevealTimersRef.current[assistantMessageId];
+      }
+    };
+
+    const scheduleProcessStepReveal = () => {
+      clearProcessStepRevealTimer();
+      processStepRevealTimersRef.current[assistantMessageId] = window.setTimeout(() => {
+        delete processStepRevealTimersRef.current[assistantMessageId];
+        setMessages((current) =>
+          current.map((item) =>
+            item.id === assistantMessageId
+              ? {
+                  ...item,
+                  thinkingContent: '',
+                  processEvents: appendPendingProcessSteps(
+                    item.processEvents ?? [],
+                    item.steps ?? [],
+                    t.timeline,
+                  ),
+                }
+              : item,
+          ),
+        );
+      }, PROCESS_STEP_REVEAL_DELAY_MS);
+    };
+
     const appendStep = (step: TimelineStep) => {
       setMessages((current) =>
         current.map((item) =>
           item.id === assistantMessageId
-            ? { ...item, steps: appendOrUpdateTimelineStep(item.steps ?? [], step) }
+            ? (() => {
+                const nextSteps = appendOrUpdateTimelineStep(item.steps ?? [], step);
+                const previousProcessEvents = item.processEvents ?? [];
+                const nextProcessEvents = appendOrUpdateProcessStep(
+                  previousProcessEvents,
+                  nextSteps,
+                  step,
+                  t.timeline,
+                );
+                const didAppendProcessStep = countProcessSteps(nextProcessEvents) > countProcessSteps(previousProcessEvents);
+                if (showProcessThinkingRef.current && shouldDelayProcessStepReveal(previousProcessEvents, nextProcessEvents)) {
+                  scheduleProcessStepReveal();
+                  return {
+                    ...item,
+                    steps: nextSteps,
+                  };
+                }
+                return {
+                  ...item,
+                  steps: nextSteps,
+                  thinkingContent: didAppendProcessStep && !showProcessThinkingRef.current ? '' : item.thinkingContent,
+                  processEvents: nextProcessEvents,
+                };
+              })()
             : item,
         ),
       );
@@ -633,7 +705,14 @@ export default function Home() {
             return item;
           }
           const nextThinkingContent = sanitizeThinkingContent(`${item.thinkingContent || ''}${text}`);
-          return { ...item, thinkingContent: nextThinkingContent };
+          if (!nextThinkingContent) {
+            return item;
+          }
+          return {
+            ...item,
+            thinkingContent: nextThinkingContent,
+            processEvents: appendOrUpdateProcessThinking(item.processEvents ?? [], nextThinkingContent),
+          };
         }),
       );
     };
@@ -642,7 +721,20 @@ export default function Home() {
       finalContent: string,
       finalStatus: AssistantStatus,
     ) => {
-      patchAssistant({ content: finalContent, thinkingContent: '', status: finalStatus });
+      clearProcessStepRevealTimer();
+      setMessages((current) =>
+        current.map((item) =>
+          item.id === assistantMessageId
+            ? {
+                ...item,
+                content: finalContent,
+                thinkingContent: '',
+                processEvents: appendPendingProcessSteps(item.processEvents ?? [], item.steps ?? [], t.timeline),
+                status: finalStatus,
+              }
+            : item,
+        ),
+      );
       // Collapse progress by default when the stream ends. The running-phase
       // forced expansion is temporary.
       setOpenSteps((current) => ({ ...current, [assistantMessageId]: false }));
@@ -862,6 +954,7 @@ export default function Home() {
       appendStep({ kind: 'error', text: msg });
       finalizeAssistant(msg, 'error');
     } finally {
+      clearProcessStepRevealTimer();
       // Fallback: ensure a running message cannot get stuck after an unexpected stream break.
       setMessages((current) =>
         current.map((item) =>
@@ -871,6 +964,7 @@ export default function Home() {
                 status: 'done',
                 content: item.content || t.response.agentFlowEnded,
                 thinkingContent: '',
+                processEvents: appendPendingProcessSteps(item.processEvents ?? [], item.steps ?? [], t.timeline),
               }
             : item,
         ),
@@ -1001,55 +1095,42 @@ export default function Home() {
                 const status: AssistantStatus = message.status || 'done';
                 const steps = message.steps ?? [];
                 const isOpen = openSteps[message.id] ?? status === 'running';
-                const hasDisplayableTimelineSteps = normalizeTimelineSteps(steps, t.timeline).length > 0;
-                const runningContent = message.thinkingContent || message.content;
+                const processEvents = message.processEvents ?? [];
+                const hasProcessEvents = processEvents.length > 0;
+                const hasProcessPanel = status === 'running' || hasProcessEvents;
+                const hasAssistantBubble = Boolean(message.content);
 
                 return (
                   <div
                     key={message.id}
-                    className="mr-8 min-w-0 overflow-hidden break-words rounded-2xl bg-white/[0.07] px-4 py-3 text-sm leading-6 text-[#ececf0]"
+                    className="mr-8 min-w-0 space-y-2"
                   >
-                    {status === 'running' ? (
-                      <>
-                        {runningContent ? (
-                          <RunningNarrationPanel
-                            content={runningContent}
-                          />
-                        ) : (
-                          <AssistantTimeline steps={steps} running copy={t.timeline} />
-                        )}
-                        {runningContent && hasDisplayableTimelineSteps && (
-                          <div className="mt-3 border-t border-white/10 pt-2">
-                            <AssistantTimeline steps={steps} running copy={t.timeline} />
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      <>
-                        {message.content && <TypewriterMarkdownMessage content={message.content} />}
-                        {hasDisplayableTimelineSteps && (
-                          <div className="mt-3 border-t border-white/10 pt-2">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setOpenSteps((current) => ({
-                                  ...current,
-                                  [message.id]: !isOpen,
-                                }))
-                              }
-                              className="flex items-center gap-1.5 text-[11px] font-medium text-[#7bd8b4] transition hover:text-[#a8eccd]"
-                            >
-                              <span aria-hidden="true">{isOpen ? '▾' : '▸'}</span>
-                              {isOpen ? t.workspace.hideSteps : t.workspace.viewSteps}{t.workspace.steps}
-                            </button>
-                            {isOpen && (
-                              <div className="mt-2">
-                                <AssistantTimeline steps={steps} running={false} copy={t.timeline} />
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </>
+                    {hasProcessPanel && (
+                      <ProcessPanel
+                        events={processEvents}
+                        running={status === 'running'}
+                        open={isOpen}
+                        showThinking={showProcessThinking}
+                        onToggle={() =>
+                          setOpenSteps((current) => ({
+                            ...current,
+                            [message.id]: !isOpen,
+                          }))
+                        }
+                        onToggleThinking={() => setShowProcessThinking((current) => !current)}
+                        copy={t.timeline}
+                        labels={{
+                          hide: t.workspace.hideSteps,
+                          view: t.workspace.viewSteps,
+                          steps: t.workspace.steps,
+                          keepThinking: t.workspace.keepThinking,
+                        }}
+                      />
+                    )}
+                    {hasAssistantBubble && (
+                      <div className="min-w-0 overflow-hidden break-words rounded-2xl bg-white/[0.07] px-4 py-3 text-sm leading-6 text-[#ececf0]">
+                        <TypewriterMarkdownMessage content={message.content} />
+                      </div>
                     )}
                   </div>
                 );
@@ -1194,53 +1275,221 @@ export default function Home() {
   );
 }
 
-const AssistantTimeline = memo(function AssistantTimeline({
-  steps,
+const ProcessPanel = memo(function ProcessPanel({
+  events,
   running,
+  open,
+  showThinking,
+  onToggle,
+  onToggleThinking,
   copy,
+  labels,
 }: {
-  steps: TimelineStep[];
+  events: ProcessEvent[];
   running: boolean;
+  open: boolean;
+  showThinking: boolean;
+  onToggle: () => void;
+  onToggleThinking: () => void;
   copy: TimelineCopy;
+  labels: {
+    hide: string;
+    view: string;
+    steps: string;
+    keepThinking: string;
+  };
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  const normalizedSteps = useMemo(
-    () => normalizeTimelineSteps(steps, copy),
-    [steps, copy],
+  const hasProcessEvents = events.length > 0;
+  const visibleEvents = useMemo(
+    () => showThinking
+      ? events
+      : events.filter((event) => event.kind !== 'thinking'),
+    [events, showThinking],
   );
+  const isOpen = hasProcessEvents ? open : true;
 
-  // Auto-scroll while running so the latest step stays visible.
   useEffect(() => {
-    if (!running || !scrollRef.current) return;
+    if (!running || !scrollRef.current) {
+      return;
+    }
     scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [steps.length, normalizedSteps.length, running]);
+  }, [visibleEvents, running, isOpen]);
+
+  if (!hasProcessEvents && !running) {
+    return null;
+  }
 
   return (
-    <div
-      ref={scrollRef}
-      className={`min-w-0 max-w-full space-y-2 overflow-y-auto pr-1 text-[12px] leading-5 ${
-        running ? 'max-h-64' : 'max-h-80'
-      }`}
-    >
-      {normalizedSteps.length === 0 ? (
-        running ? (
-          <div className="flex min-w-0 items-center gap-2 text-[#7bd8b4]">
-            <Spinner />
-            <span className="min-w-0 flex-1 break-words [overflow-wrap:anywhere]">{copy.empty}</span>
-          </div>
-        ) : null
-      ) : (
-        normalizedSteps.map((step) => <NormalizedStepCard key={step.phase} step={step} copy={copy} />)
+    <div className="min-w-0 rounded-xl border border-white/10 bg-black/15 px-3 py-2 text-[12px] leading-5 text-[#cfd5d1]">
+      {hasProcessEvents && (
+        <div
+          role="button"
+          tabIndex={0}
+          aria-label={open ? `${labels.hide}${labels.steps}` : `${labels.view}${labels.steps}`}
+          onClick={onToggle}
+          onKeyDown={(event) => {
+            if (event.key !== 'Enter' && event.key !== ' ') {
+              return;
+            }
+            event.preventDefault();
+            onToggle();
+          }}
+          className="flex min-w-0 w-full cursor-pointer flex-wrap items-center justify-between gap-2 rounded-lg px-1 py-1 text-left transition focus:outline-none focus-visible:ring-1 focus-visible:ring-[#7bd8b4]/60"
+        >
+          <span className="flex size-6 items-center justify-center rounded-full text-[#7bd8b4] transition hover:text-[#a8eccd]">
+            <span
+              aria-hidden="true"
+              className={`block size-0 border-y-[5px] border-y-transparent border-l-[8px] border-l-current transition-transform ${
+                open ? 'rotate-90' : ''
+              }`}
+            />
+          </span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={showThinking}
+            onClick={(event) => {
+              event.stopPropagation();
+              onToggleThinking();
+            }}
+            onKeyDown={(event) => event.stopPropagation()}
+            className={`flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-medium transition ${
+              showThinking
+                ? 'bg-[#7bd8b4]/15 text-[#a8eccd]'
+                : 'bg-white/5 text-white/45 hover:text-white/70'
+            }`}
+          >
+            <span
+              className={`size-1.5 rounded-full ${
+                showThinking ? 'bg-[#7bd8b4]' : 'bg-white/35'
+              }`}
+              aria-hidden="true"
+            />
+            {labels.keepThinking}
+          </button>
+        </div>
       )}
-      {running && normalizedSteps.length > 0 && (
-        <div className="flex min-w-0 items-center gap-2 pt-1 text-[#7bd8b4]">
-          <Spinner />
-          <span className="min-w-0 flex-1 break-words text-[11px] [overflow-wrap:anywhere]">{copy.processing}</span>
+      {isOpen && (
+        <div
+          ref={scrollRef}
+          className={`${hasProcessEvents ? 'mt-2' : ''} min-w-0 space-y-2`}
+        >
+          {visibleEvents.length === 0 ? (
+            running ? (
+              <ProcessWaitingItem copy={copy} />
+            ) : null
+          ) : (
+            <>
+              {visibleEvents.map((event, index) => (
+                <ProcessEventItem
+                  key={getProcessEventKey(event, index)}
+                  event={event}
+                  copy={copy}
+                />
+              ))}
+              {running && visibleEvents[visibleEvents.length - 1]?.kind !== 'thinking' && (
+                <ProcessWaitingItem copy={copy} />
+              )}
+            </>
+          )}
         </div>
       )}
     </div>
   );
 });
+
+function ProcessWaitingItem({ copy }: { copy: TimelineCopy }) {
+  return (
+    <div className="flex min-w-0 items-center gap-2 pt-1 text-[#7bd8b4]">
+      <Spinner />
+      <span className="min-w-0 flex-1 break-words text-[11px] [overflow-wrap:anywhere]">{copy.processing}</span>
+    </div>
+  );
+}
+
+function ProcessEventItem({
+  event,
+  copy,
+}: {
+  event: ProcessEvent;
+  copy: TimelineCopy;
+}) {
+  if (event.kind === 'thinking') {
+    return <ProcessThinkingItem content={event.content} />;
+  }
+  return <NormalizedStepCard step={event.step} copy={copy} />;
+}
+
+function ProcessThinkingItem({ content }: { content: string }) {
+  return <SmoothThinkingText content={content} />;
+}
+
+function SmoothThinkingText({ content }: { content: string }) {
+  const [segments, setSegments] = useState({ stable: '', incoming: '' });
+
+  useEffect(() => {
+    const prefersReducedMotion = typeof window !== 'undefined'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (prefersReducedMotion) {
+      setSegments({ stable: content, incoming: '' });
+      return;
+    }
+
+    setSegments((current) => {
+      const rendered = `${current.stable}${current.incoming}`;
+      if (content === rendered) {
+        return current;
+      }
+      if (content.startsWith(rendered)) {
+        return {
+          stable: current.stable,
+          incoming: `${current.incoming}${content.slice(rendered.length)}`,
+        };
+      }
+      if (content.startsWith(current.stable)) {
+        return {
+          stable: current.stable,
+          incoming: content.slice(current.stable.length),
+        };
+      }
+      return {
+        stable: '',
+        incoming: content,
+      };
+    });
+  }, [content]);
+
+  const settleIncoming = () => {
+    setSegments((current) => {
+      if (!current.incoming) {
+        return current;
+      }
+      return {
+        stable: `${current.stable}${current.incoming}`,
+        incoming: '',
+      };
+    });
+  };
+
+  return (
+    <div className="process-thinking-text">
+      {segments.stable}
+      {segments.incoming && (
+        <span className="process-thinking-delta" onAnimationEnd={settleIncoming}>
+          {segments.incoming}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function getProcessEventKey(event: ProcessEvent, index: number) {
+  if (event.kind === 'thinking') {
+    return `thinking-${index}`;
+  }
+  return `step-${event.phase}`;
+}
 
 function appendOrUpdateTimelineStep(steps: TimelineStep[], nextStep: TimelineStep): TimelineStep[] {
   if (nextStep.kind !== 'tool_use' || !nextStep.id) {
@@ -1266,6 +1515,126 @@ function appendOrUpdateTimelineStep(steps: TimelineStep[], nextStep: TimelineSte
       fileCount: nextStep.fileCount || step.fileCount,
     };
   });
+}
+
+function appendOrUpdateProcessThinking(events: ProcessEvent[], content: string): ProcessEvent[] {
+  const tail = events[events.length - 1];
+  if (tail?.kind === 'thinking') {
+    return events.map((event, index) =>
+      index === events.length - 1 && event.kind === 'thinking'
+        ? { ...event, content }
+        : event,
+    );
+  }
+  return [...events, { kind: 'thinking', content }];
+}
+
+function appendOrUpdateProcessStep(
+  events: ProcessEvent[],
+  steps: TimelineStep[],
+  changedStep: TimelineStep,
+  copy: TimelineCopy,
+): ProcessEvent[] {
+  const processStep = getProcessStepForTimelineStep(changedStep, steps, copy);
+  if (!processStep) {
+    return events;
+  }
+
+  const existingIndex = events.findIndex((event) =>
+    event.kind === 'step' && event.phase === processStep.phase,
+  );
+  if (existingIndex >= 0) {
+    return events.map((event, index) =>
+      index === existingIndex ? processStep : event,
+    );
+  }
+
+  return [...events, processStep];
+}
+
+function shouldDelayProcessStepReveal(previousEvents: ProcessEvent[], nextEvents: ProcessEvent[]) {
+  const previousTail = previousEvents[previousEvents.length - 1];
+  return previousTail?.kind === 'thinking'
+    && countProcessSteps(nextEvents) > countProcessSteps(previousEvents);
+}
+
+function appendPendingProcessSteps(
+  events: ProcessEvent[],
+  steps: TimelineStep[],
+  copy: TimelineCopy,
+): ProcessEvent[] {
+  const existingPhases = new Set(
+    events
+      .filter((event): event is Extract<ProcessEvent, { kind: 'step' }> => event.kind === 'step')
+      .map((event) => event.phase),
+  );
+  const pendingSteps = normalizeTimelineSteps(steps, copy)
+    .filter((step) => !existingPhases.has(step.phase));
+  if (pendingSteps.length === 0) {
+    return events;
+  }
+  return [
+    ...events,
+    ...pendingSteps.map((step): Extract<ProcessEvent, { kind: 'step' }> => ({
+      kind: 'step',
+      phase: step.phase,
+      step,
+    })),
+  ];
+}
+
+function countProcessSteps(events: ProcessEvent[]) {
+  return events.reduce((count, event) => count + (event.kind === 'step' ? 1 : 0), 0);
+}
+
+function getProcessStepForTimelineStep(
+  changedStep: TimelineStep,
+  steps: TimelineStep[],
+  copy: TimelineCopy,
+): Extract<ProcessEvent, { kind: 'step' }> | null {
+  const phase = getTimelineStepPhase(changedStep, steps, copy);
+  if (!phase) {
+    return null;
+  }
+  const normalizedStep = normalizeTimelineSteps(steps, copy)
+    .find((step) => step.phase === phase);
+  return normalizedStep ? { kind: 'step', phase, step: normalizedStep } : null;
+}
+
+function getTimelineStepPhase(
+  step: TimelineStep,
+  steps: TimelineStep[],
+  copy: TimelineCopy,
+): NormalizedStepPhase | null {
+  if (step.kind === 'tool_use') {
+    return classifyToolUse(step, copy)?.phase ?? null;
+  }
+  if (step.kind === 'tool_result') {
+    const relatedToolUse = [...steps].reverse().find((item) =>
+      item.kind === 'tool_use' && item.id === step.toolUseId,
+    ) as Extract<TimelineStep, { kind: 'tool_use' }> | undefined;
+    if (relatedToolUse) {
+      return classifyToolUse(relatedToolUse, copy)?.phase ?? null;
+    }
+    if (!step.ok && step.command) {
+      return isInstallCommand(step.command) ? 'install' : 'code';
+    }
+    return null;
+  }
+  if (step.kind === 'status') {
+    return classifyStatusText(step.text, copy)?.phase ?? null;
+  }
+  if (step.kind === 'log') {
+    return classifyLogText(step.text, step.stream, copy)?.phase ?? null;
+  }
+  if (step.kind === 'error') {
+    return /preview|预览|link|链接/i.test(step.text)
+      ? 'link'
+      : isInstallText(step.text)
+        ? 'install'
+        : 'code';
+  }
+  return null;
 }
 
 function normalizeTimelineSteps(steps: TimelineStep[], copy: TimelineCopy): NormalizedStep[] {
@@ -1665,32 +2034,6 @@ function Spinner() {
       className="inline-block size-3 animate-spin rounded-full border-2 border-[#7bd8b4]/40 border-t-[#7bd8b4]"
       aria-hidden="true"
     />
-  );
-}
-
-function RunningNarrationPanel({
-  content,
-}: {
-  content: string;
-}) {
-  const scrollRef = useRef<HTMLDivElement | null>(null);
-  const [displayedContent, setDisplayedContent] = useState('');
-
-  useEffect(() => {
-    const container = scrollRef.current;
-    if (!container) {
-      return;
-    }
-    container.scrollTop = container.scrollHeight;
-  }, [content, displayedContent]);
-
-  return (
-    <div
-      ref={scrollRef}
-      className="h-28 min-w-0 overflow-y-auto rounded-lg text-[#aaa] px-3 py-2 pr-2"
-    >
-      <TypewriterNarrationText content={content} onDisplayChange={setDisplayedContent} />
-    </div>
   );
 }
 

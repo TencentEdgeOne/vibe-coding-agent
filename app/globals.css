@@ -91,6 +91,41 @@ input::placeholder {
     0 0 1px rgba(242, 199, 121, 0.6);
 }
 
+.process-thinking-text {
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  color: rgba(223, 248, 239, 0.76);
+}
+
+.process-thinking-delta {
+  display: inline;
+  position: relative;
+  animation: process-thinking-delta-enter 180ms ease-out both;
+}
+
+@keyframes process-thinking-delta-enter {
+  from {
+    opacity: 0;
+    filter: blur(1px);
+    top: 3px;
+  }
+
+  to {
+    opacity: 1;
+    filter: blur(0);
+    top: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .process-thinking-delta {
+    animation: none;
+    filter: none;
+  }
+}
+
 .prompt-shell {
   min-height: 292px;
   border: 10px solid rgba(255, 255, 255, 0.08);
