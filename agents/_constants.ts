@@ -15,6 +15,30 @@ export const GATEWAY_CONVERSATION_ID_HEADER_NAME = 'Makers-Conversation-Id';
 
 export const SANDBOX_MCP_SERVER_NAME = 'edgeone-sandbox';
 
+// Upper bound for the downloadable source archive, guarding against streaming an
+// unexpectedly huge archive out of the sandbox and through the function response.
+export const DOWNLOAD_ARCHIVE_MAX_BYTES = 60 * 1024 * 1024;
+
+// Directories excluded from the downloadable source archive: build output,
+// caches, and dependency/VCS folders that are large and regenerable.
+export const ARCHIVE_EXCLUDED_DIRECTORIES = [
+  'node_modules',
+  '.next',
+  '.git',
+  'dist',
+  'build',
+  'out',
+  'coverage',
+  '.cache',
+  '.turbo',
+  '.vite',
+  '.parcel-cache',
+  '__pycache__',
+  '.venv',
+  'venv',
+];
+
+
 export const PREVIEW_BINARY_EXTENSIONS = new Set([
   '.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.bmp', '.avif',
   '.pdf', '.zip', '.tar', '.gz', '.tgz', '.7z', '.rar',

@@ -195,6 +195,8 @@ const TRANSLATIONS = {
       files: '文件',
       preview: '预览',
       downloadSource: '下载源码',
+      downloading: '打包中...',
+      downloadFailed: '下载失败，请重试。',
       loadingPreview: '正在加载实时预览...',
       previewEmpty: '首次构建完成后会在这里显示预览。',
       constructionDisclaimer: '当前仅为模板演示流程使用，模型效果可能较差，简易部署后替换自有模型',
@@ -302,6 +304,8 @@ const TRANSLATIONS = {
       files: 'Files',
       preview: 'Preview',
       downloadSource: 'Download source',
+      downloading: 'Packaging...',
+      downloadFailed: 'Download failed, please retry.',
       loadingPreview: 'Loading live preview...',
       previewEmpty: 'Preview will appear after the first build finishes.',
       constructionDisclaimer: 'This is only a template demo flow. Model quality may be limited; replace it with your own model after simple deployment.',
@@ -406,6 +410,17 @@ function getDeployUrl(domain: string) {
   return domain === 'edgeone.dev' ? EDGEONE_AI_DEPLOY_URL : TENCENT_CLOUD_DEPLOY_URL;
 }
 
+// Decode a base64 string into a Blob. The source archive arrives base64-encoded
+// inside a JSON envelope (the agent proxy only transports text reliably).
+function base64ToBlob(base64: string, contentType: string): Blob {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new Blob([bytes], { type: contentType });
+}
+
 function getOrCreateCachedConversationId() {
   if (typeof window === 'undefined') {
     return createConversationId();
@@ -468,6 +483,7 @@ export default function Home() {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [preview, setPreview] = useState<LinkInfo | null>(null);
   const [download, setDownload] = useState<LinkInfo | null>(null);
+  const [downloadBusy, setDownloadBusy] = useState(false);
   const [build, setBuild] = useState<BuildInfo | null>(null);
   const [loading, setLoading] = useState(false);
   // Per-assistant-message progress expansion state. The running message is
@@ -983,6 +999,49 @@ export default function Home() {
     await sendMessage(input);
   }
 
+  async function handleDownload() {
+    if (!download?.url || downloadBusy) {
+      return;
+    }
+    setDownloadBusy(true);
+    setDownload((current) => (current ? { ...current, error: undefined } : current));
+    try {
+      // /download must hit the same sandbox the project lives in; sticky routing
+      // keys off the conversation id header, so send it like /file and /chat do
+      // (a plain <a download> could not set this header).
+      const headers: HeadersInit = {};
+      const cid = conversationId || getOrCreateCachedConversationId();
+      if (cid) {
+        headers['makers-conversation-id'] = cid;
+        headers['conversationId'] = cid;
+      }
+      const resp = await fetch(download.url, { method: 'GET', headers });
+      const data = (await resp.json().catch(() => null)) as
+        | { ok?: boolean; base64?: string; filename?: string; contentType?: string; error?: string }
+        | null;
+      if (!resp.ok || !data?.ok || !data.base64) {
+        const message = data?.error || `${resp.status}`;
+        setDownload((current) => (current ? { ...current, error: message } : current));
+        return;
+      }
+      const blob = base64ToBlob(data.base64, data.contentType || 'application/zip');
+      const filename = data.filename || download.filename || 'source.zip';
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : t.workspace.downloadFailed;
+      setDownload((current) => (current ? { ...current, error: message } : current));
+    } finally {
+      setDownloadBusy(false);
+    }
+  }
+
   return (
     <main className="min-h-screen overflow-hidden bg-[#0a0d0b] text-white">
       <nav className="fixed inset-x-0 top-0 z-50 px-4">
@@ -1196,13 +1255,26 @@ export default function Home() {
                   </button>
                 </div>
                 {download?.url && (
-                  <a
-                    href={download.url}
-                    download={download.filename || 'source.zip'}
-                    className="rounded-full bg-[#f2c779] px-3 py-1 text-xs font-semibold text-[#21170a] transition hover:bg-[#ffd98a]"
+                  <button
+                    type="button"
+                    onClick={handleDownload}
+                    disabled={downloadBusy}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-[#5ec7a0]/40 bg-[#5ec7a0]/10 px-3 py-1 text-xs font-semibold text-[#7bd8b4] transition hover:border-[#5ec7a0]/70 hover:bg-[#5ec7a0]/20 hover:text-[#dff8ef] disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {t.workspace.downloadSource}
-                  </a>
+                    {downloadBusy ? (
+                      <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                        <circle className="opacity-25" cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="3" />
+                        <path className="opacity-90" d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                      </svg>
+                    ) : (
+                      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M12 3v12" />
+                        <path d="m7 11 5 5 5-5" />
+                        <path d="M5 21h14" />
+                      </svg>
+                    )}
+                    {downloadBusy ? t.workspace.downloading : t.workspace.downloadSource}
+                  </button>
                 )}
               </div>
             </header>

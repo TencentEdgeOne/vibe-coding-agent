@@ -8,6 +8,7 @@ import {
 } from './_memory';
 import {
   createProjectState,
+  createProjectArchive,
   getFileTree,
   readFileFromSandbox,
   resetProjectWorkspace,
@@ -342,6 +343,59 @@ export async function runFileReadPipeline(context: any): Promise<Response> {
   );
 }
 
+export async function runProjectDownloadPipeline(context: any): Promise<Response> {
+  const contextConversationId = String(context.conversation_id || '');
+  const pagesHeaderConversationId = getRequestHeader(context, 'makers-conversation-id');
+  const headerConversationId = getRequestHeader(context, 'conversationId');
+  // Query-param fallback so a plain navigation can still target the right
+  // sandbox; the frontend prefers the headers.
+  const queryConversationId = getRequestQueryParam(context, 'cid').value
+    || getRequestQueryParam(context, 'conversationId').value;
+  const conversationId = contextConversationId
+    || pagesHeaderConversationId
+    || headerConversationId
+    || queryConversationId;
+
+  const jsonError = (error: string, status = 400) => new Response(
+    JSON.stringify({ ok: false, error }),
+    { status, headers: { 'content-type': 'application/json; charset=utf-8' } },
+  );
+
+  if (!conversationId) {
+    return jsonError('missing conversation_id');
+  }
+
+  const state = await getProjectState(context, conversationId);
+
+  let archive;
+  try {
+    archive = await createProjectArchive(context, state);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to package the project.';
+    return jsonError(message, 500);
+  }
+
+  if (!archive.ok) {
+    return jsonError(archive.error, 409);
+  }
+
+  return new Response(
+    JSON.stringify({
+      ok: true,
+      filename: archive.filename,
+      contentType: archive.contentType,
+      size: archive.size,
+      base64: archive.base64,
+    }),
+    {
+      headers: {
+        'content-type': 'application/json; charset=utf-8',
+        'cache-control': 'no-store',
+      },
+    },
+  );
+}
+
 export async function runChatPipeline(
   context: any,
   message: string,
@@ -581,6 +635,11 @@ export async function runChatPipeline(
   let autoFixApplied = false;
   let autoFixReply = '';
 
+  // The project has files on disk from here on, so expose a download link. The
+  // archive is built on demand by /download; this is just a pointer (the
+  // authoritative filename comes from the /download response).
+  const downloadLink = { url: '/download', filename: 'source.zip' };
+
   if (build.fatal) {
     const fatalReply = build.stderr || 'The task failed, and the remaining workflow was stopped.';
     await appendTurn(context, conversationId, 'user', message);
@@ -602,6 +661,7 @@ export async function runChatPipeline(
           root: state.appDir,
           items: fileTree,
         },
+        download: downloadLink,
         preview: {},
       },
     });
@@ -678,6 +738,7 @@ export async function runChatPipeline(
             root: state.appDir,
             items: fileTree,
           },
+          download: downloadLink,
           preview: {},
         },
       });
@@ -745,6 +806,7 @@ export async function runChatPipeline(
         root: state.appDir,
         items: fileTree,
       },
+      download: downloadLink,
       preview: {
         url: state.previewUrl,
         sandboxDebugUrl: state.sandboxDebugUrl,
