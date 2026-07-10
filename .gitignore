@@ -6,3 +6,4 @@ node_modules
 .agents
 skills-lock.json
 plan*
+.codegraph
