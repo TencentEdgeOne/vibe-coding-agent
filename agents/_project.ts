@@ -9,7 +9,7 @@ import {
   ARCHIVE_EXCLUDED_DIRECTORIES,
   DOWNLOAD_ARCHIVE_MAX_BYTES,
 } from './_constants';
-import type { BuildResult, BuildStatus, FileTreeItem, ProjectState, ScaffoldLog } from './_types';
+import type { BuildResult, BuildStatus, FileTreeItem, ProjectSnapshot, ProjectState, ScaffoldLog } from './_types';
 import { debugLog } from './utils/_debug';
 import { readFileExtension, safeSegment } from './utils/_paths';
 import { detectFatalToolError } from './utils/_text';
@@ -1028,4 +1028,75 @@ export async function createProjectArchive(
     contentType,
     size: expectedSize,
   };
+}
+
+// Inverse of createProjectArchive: restore a persisted base64 archive back into
+// the (empty/recycled) sandbox appDir, then reinstall dependencies. Used when the
+// sandbox no longer has the code but a snapshot exists in the store (agents/
+// _memory.ts). Binary must be produced inside the sandbox via `base64 -d` — the
+// sandbox files.write API is UTF-8 only — so we write the base64 as text and
+// decode + extract with shell, mirroring createProjectArchive's packing path.
+export async function restoreProjectArchive(
+  context: any,
+  state: ProjectState,
+  snapshot: ProjectSnapshot,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!snapshot?.base64) {
+    return { ok: false, error: 'Snapshot is empty; nothing to restore.' };
+  }
+  assertResettableProjectPath(state);
+
+  const sandbox = context.sandbox;
+  await sandbox.files.makeDir(state.sessionDir);
+  await sandbox.files.makeDir(state.appDir);
+
+  const format = snapshot.filename.endsWith('.tar.gz') || snapshot.contentType === 'application/gzip'
+    ? 'tar.gz'
+    : 'zip';
+  const sessionSlug = safeSegment(state.sessionDir.replace(/^projects\//, '')) || 'project';
+  const b64Path = `/tmp/eo-restore-${sessionSlug}.b64`;
+  const archivePath = `/tmp/eo-restore-${sessionSlug}.${format === 'tar.gz' ? 'tar.gz' : 'zip'}`;
+
+  // Write the base64 as a UTF-8 temp file, then decode to binary and extract into
+  // appDir. zip entries were packed relatively from appDir, so extraction targets appDir.
+  await sandbox.files.write(b64Path, snapshot.base64);
+
+  const extractCmd = format === 'tar.gz'
+    ? `tar -xzf ${shellQuote(archivePath)} -C ${shellQuote(state.appDir)}`
+    : `unzip -o -q ${shellQuote(archivePath)} -d ${shellQuote(state.appDir)}`;
+
+  const restoreScript = [
+    'set -e;',
+    `base64 -d ${shellQuote(b64Path)} > ${shellQuote(archivePath)};`,
+    `${extractCmd};`,
+    `rm -f ${shellQuote(b64Path)} ${shellQuote(archivePath)};`,
+  ].join(' ');
+
+  const restored = await runSandboxCommand(context, restoreScript, { timeout: 120 });
+  if (restored.exitCode !== 0) {
+    // Best-effort cleanup of the temp files on failure.
+    try {
+      await runSandboxCommand(context, `rm -f ${shellQuote(b64Path)} ${shellQuote(archivePath)}`, { timeout: 15 });
+    } catch {
+      // Non-fatal.
+    }
+    return { ok: false, error: restored.stderr || restored.stdout || 'Failed to restore the project from snapshot.' };
+  }
+
+  // Reinstall dependencies (the snapshot excludes node_modules). Non-fatal: even if
+  // install fails, the source files are back; the later verification/preview step
+  // will surface any dependency problem.
+  const hasPackageJson = await sandbox.files.exists(`${state.appDir}/package.json`);
+  if (hasPackageJson) {
+    try {
+      await runSandboxCommand(context, 'npm install --no-audit --no-fund', {
+        cwd: state.appDir,
+        timeout: 300,
+      });
+    } catch {
+      // Non-fatal — see comment above.
+    }
+  }
+
+  return { ok: true };
 }

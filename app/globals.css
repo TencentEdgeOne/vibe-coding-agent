@@ -1,7 +1,77 @@
 @import 'tailwindcss';
 
+@custom-variant dark (&:is(.dark *));
+
+/* ============================================================
+   Theme — light / blue, per plan/design-mockup.html
+   ============================================================ */
 :root {
-  color-scheme: dark;
+  --radius: 0.875rem; /* 14px, mockup --radius */
+
+  --background: #f6f7f9; /* mockup --bg */
+  --foreground: #14161a; /* mockup --text */
+
+  --card: #ffffff; /* mockup --panel */
+  --card-foreground: #14161a;
+  --popover: #ffffff;
+  --popover-foreground: #14161a;
+
+  --primary: #2f6bff; /* mockup --brand */
+  --primary-foreground: #ffffff;
+
+  --secondary: #eef0f3; /* mockup --edge-soft */
+  --secondary-foreground: #454b56; /* mockup --text-soft */
+
+  --muted: #f4f6fa;
+  --muted-foreground: #8b93a1; /* mockup --muted */
+
+  --accent: rgba(47, 107, 255, 0.08); /* mockup --brand-faint */
+  --accent-foreground: #0052d9; /* mockup --brand-deep */
+
+  --destructive: #e5484d;
+
+  --border: #e6e8ec; /* mockup --edge */
+  --input: #e6e8ec;
+  --ring: #2f6bff;
+
+  /* brand extras used directly by custom UI */
+  --brand: #2f6bff;
+  --brand-deep: #0052d9;
+  --ok: #16a34a; /* mockup --ok */
+  --gold: #c98a1a; /* mockup --gold */
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-brand: var(--brand);
+  --color-brand-deep: var(--brand-deep);
+  --color-ok: var(--ok);
+  --color-gold: var(--gold);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 }
 
 * {
@@ -15,21 +85,47 @@ body {
 
 body {
   margin: 0;
-  background: #0a0d0b;
-  color: #e2e8f0;
+  background: var(--background);
+  color: var(--foreground);
   font-size: 14px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
   font-family:
-    Inter,
-    ui-sans-serif,
-    system-ui,
     -apple-system,
     BlinkMacSystemFont,
     'Segoe UI',
+    'PingFang SC',
+    'Microsoft YaHei',
+    Roboto,
+    Helvetica,
+    Arial,
     sans-serif;
+}
+
+/* Subtle backdrop — faint blue dot grid + soft brand glows, so the light
+   canvas isn't a flat fill. Sits behind all content; workspace panels have
+   their own solid surfaces and cover it. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    radial-gradient(circle at 15% 6%, rgba(47, 107, 255, 0.1), transparent 42%),
+    radial-gradient(circle at 88% 12%, rgba(47, 107, 255, 0.07), transparent 40%),
+    radial-gradient(circle at 50% 112%, rgba(0, 82, 217, 0.06), transparent 48%),
+    radial-gradient(rgba(47, 107, 255, 0.06) 1px, transparent 1px);
+  background-size:
+    100% 100%,
+    100% 100%,
+    100% 100%,
+    22px 22px;
 }
 
 button,
 textarea,
+input,
 a {
   font: inherit;
 }
@@ -39,64 +135,69 @@ input::placeholder {
   opacity: 1;
 }
 
-.hero-glow {
-  position: absolute;
-  inset: 0;
-  z-index: -4;
-  background:
-    radial-gradient(circle at 26% 18%, rgba(94, 199, 160, 0.22), transparent 31rem),
-    radial-gradient(circle at 76% 36%, rgba(242, 199, 121, 0.14), transparent 26rem),
-    radial-gradient(circle at 50% 79%, rgba(94, 199, 160, 0.24), transparent 30rem),
-    linear-gradient(180deg, #121a17 0%, #10221c 46%, #0a0d0b 86%);
+/* GitHub export result dialog — fade the backdrop, pop the card in. */
+.gh-overlay {
+  animation: gh-overlay-in 160ms ease-out both;
 }
 
-.aurora-band {
-  position: absolute;
-  left: 50%;
-  z-index: -3;
-  width: 150vw;
-  min-width: 1320px;
-  pointer-events: none;
-  transform-origin: center;
+.gh-card {
+  animation: gh-card-in 200ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
-.aurora-band-wide {
-  top: 58%;
-  height: 190px;
-  transform: translateX(-50%) rotate(-5deg);
-  background:
-    linear-gradient(90deg, transparent 0%, rgba(94, 199, 160, 0.05) 10%, rgba(94, 199, 160, 0.72) 42%, rgba(242, 199, 121, 0.7) 52%, rgba(94, 199, 160, 0.62) 62%, transparent 100%);
-  filter: blur(18px);
-  opacity: 0.78;
+@keyframes gh-overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
-.aurora-band-slim {
-  top: 61%;
-  height: 8px;
-  transform: translateX(-50%) rotate(-5deg);
-  background:
-    linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.86) 30%, #f2c779 52%, rgba(255, 255, 255, 0.72) 72%, transparent 100%);
-  box-shadow:
-    0 0 26px rgba(94, 199, 160, 0.62),
-    0 0 62px rgba(242, 199, 121, 0.28);
+@keyframes gh-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
-.build-word {
-  display: inline-block;
-  color: #75ddb7;
-  font-style: italic;
-  letter-spacing: 0;
-  text-shadow:
-    0 0 30px rgba(94, 199, 160, 0.34),
-    0 0 1px rgba(242, 199, 121, 0.6);
+/* Brand gradient — shared by primary buttons, send keys, user bubbles.
+   Mirrors mockup's linear-gradient(135deg, --brand, --brand-deep). */
+.btn-brand {
+  background: linear-gradient(135deg, var(--brand), var(--brand-deep));
+  color: #fff;
+  box-shadow: 0 8px 20px -10px rgba(47, 107, 255, 0.6);
 }
 
+.btn-brand:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.btn-brand:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  box-shadow: none;
+}
+
+/* Blue gradient text (hero accent, mockup .accent) */
+.text-brand-gradient {
+  background: linear-gradient(120deg, var(--brand) 10%, var(--brand-deep) 90%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+/* Streaming "thinking" text animation (behavior unchanged, recolored light) */
 .process-thinking-text {
   min-width: 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   word-break: break-word;
-  color: rgba(223, 248, 239, 0.76);
+  color: var(--secondary-foreground);
 }
 
 .process-thinking-delta {
@@ -126,66 +227,60 @@ input::placeholder {
   }
 }
 
-.prompt-shell {
-  min-height: 292px;
-  border: 10px solid rgba(255, 255, 255, 0.08);
-  border-radius: 28px;
-  background:
-    linear-gradient(180deg, rgba(36, 44, 39, 0.96), rgba(29, 34, 31, 0.96)),
-    #202621;
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.12),
-    0 30px 88px rgba(0, 0, 0, 0.46),
-    0 0 80px rgba(94, 199, 160, 0.11);
-}
-
-.import-pill {
+/* Toolbar icon buttons — icon only, reveal label on hover (mockup .icon-act) */
+.action-chip {
   display: inline-flex;
-  height: 56px;
   align-items: center;
-  justify-content: center;
-  gap: 14px;
-  border: 2px solid rgba(255, 255, 255, 0.1);
+  gap: 0;
+  height: 32px;
+  width: 32px;
+  padding: 0;
+  overflow: hidden;
+  white-space: nowrap;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.025);
-  padding: 0 26px;
-  font-weight: 500;
-  color: #d7ddd9;
   transition:
-    border-color 160ms ease,
-    background-color 160ms ease,
-    color 160ms ease;
+    width 0.42s cubic-bezier(0.4, 0, 0.2, 1),
+    gap 0.42s cubic-bezier(0.4, 0, 0.2, 1),
+    padding 0.42s cubic-bezier(0.4, 0, 0.2, 1),
+    background-color 0.3s ease,
+    border-color 0.3s ease,
+    color 0.3s ease;
 }
 
-.import-pill:hover {
-  border-color: rgba(94, 199, 160, 0.55);
-  background: rgba(94, 199, 160, 0.08);
-  color: white;
+.action-chip .action-chip-icon {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
 }
 
-@media (max-width: 720px) {
-  .aurora-band {
-    width: 240vw;
-    min-width: 920px;
-  }
+.action-chip .action-chip-label {
+  max-width: 0;
+  opacity: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  transition:
+    max-width 0.42s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.32s ease 0.06s;
+}
 
-  .aurora-band-wide {
-    top: 56%;
-    height: 140px;
-  }
+.action-chip:hover:not(:disabled),
+.action-chip:focus-visible {
+  width: auto;
+  gap: 2px;
+  padding-right: 14px;
+}
 
-  .aurora-band-slim {
-    top: 59%;
-  }
+.action-chip:hover:not(:disabled) .action-chip-label,
+.action-chip:focus-visible .action-chip-label {
+  max-width: 160px;
+  opacity: 1;
+}
 
-  .prompt-shell {
-    min-height: 260px;
-    border-width: 10px;
-    border-radius: 28px;
-  }
-
-  .import-pill {
-    height: 48px;
-    padding: 0 20px;
+@media (prefers-reduced-motion: reduce) {
+  .action-chip,
+  .action-chip .action-chip-label {
+    transition: none;
   }
 }

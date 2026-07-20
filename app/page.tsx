@@ -3,7 +3,14 @@
 import { FormEvent, memo, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { AlertCircle, ArrowUp, CheckCircle2, Download, ExternalLink, Plus, Sparkles, X } from 'lucide-react';
+import { Highlight, type PrismTheme } from 'prism-react-renderer';
 import { sanitizeAssistantText } from '../agents/utils/_text';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Textarea } from '@/components/ui/textarea';
 
 type TimelineStep =
   | { kind: 'status'; text: string }
@@ -148,6 +155,13 @@ type Locale = 'zh' | 'en';
 const LANGUAGE_STORAGE_KEY = 'web-dev-agent-language';
 const EDGEONE_AI_DEPLOY_URL = 'https://edgeone.ai/makers/new?template=vibe-coding-agent&from=within&fromAgent=1&agentLang=typescript';
 const TENCENT_CLOUD_DEPLOY_URL = 'https://console.cloud.tencent.com/edgeone/makers/new?template=vibe-coding-agent&from=within&fromAgent=1&agentLang=typescript';
+// 认领部署（EdgeOne）功能暂不上线，先隐藏入口。上线时改回 true 即可。
+const CLAIM_DEPLOY_ENABLED = false;
+
+// Toolbar "Export to GitHub" (plan/github-oauth-claim.md). Visibility is decided at
+// runtime by probing GET /github/config — an instance without GITHUB_CLIENT_ID
+// hides the button and stays fully usable (users still have "Download source").
+
 const PHASE_ORDER: NormalizedStepPhase[] = ['scaffold', 'modify', 'code', 'install', 'preview', 'link'];
 const TYPEWRITER_INTERVAL_MS = 18;
 const TYPEWRITER_CHARS_PER_TICK = 3;
@@ -168,11 +182,14 @@ const TRANSLATIONS = {
       placeholder: '请输入你想构建的内容',
       buildNow: '立即构建',
       building: '构建中...',
+      fastBuild: '极速生成',
       examples: [
         '做一个简洁好用的 Todolist',
         '为产品设计师创建一个作品集网站',
         '做一个带统计和主题切换的番茄钟',
       ],
+      galleryTitle: '灵感作品墙',
+      gallerySubtitle: '官方精选样例，点开即可作为起点',
     },
     response: {
       noDisplay: '已编写完成，请查看结果。',
@@ -196,7 +213,32 @@ const TRANSLATIONS = {
       preview: '预览',
       downloadSource: '下载源码',
       downloading: '打包中...',
+      newProject: '新建项目',
+      resuming: '正在恢复上次的项目…',
       downloadFailed: '下载失败，请重试。',
+      exportGithub: '导出到 GitHub',
+      githubExporting: '跳转中...',
+      githubSuccessPrefix: '已推送到 ',
+      githubErrorPrefix: 'GitHub 导出失败：',
+      githubSuccessTitle: '已推送到 GitHub',
+      githubSuccessDesc: '项目代码已作为首次提交推送到你的仓库。',
+      githubErrorTitle: '导出失败',
+      githubOpenRepo: '打开仓库',
+      githubRetry: '重试',
+      githubClose: '关闭',
+      githubReasons: {
+        not_ready: '代码尚未就绪，请稍候重试。',
+        repo_exists: '同名仓库已存在，请重试。',
+        token_exchange_failed: 'GitHub 授权失败，请重试。',
+        push_failed: '推送失败，请稍后重试。',
+        state_expired: '授权已过期，请重新发起。',
+        state_mismatch: '授权校验失败，请重新发起。',
+        not_configured: '未配置 GitHub OAuth。',
+        missing_cid: '缺少会话标识，请重试。',
+        invalid_request: '请求无效，请重试。',
+      } as Record<string, string>,
+      claimDeploy: '认领部署',
+      claimDeployHint: '认领部署到我的账号',
       loadingPreview: '正在加载实时预览...',
       previewEmpty: '首次构建完成后会在这里显示预览。',
       constructionDisclaimer: '当前仅为模板演示流程使用，模型效果可能较差，简易部署后替换自有模型',
@@ -257,6 +299,7 @@ const TRANSLATIONS = {
     files: {
       empty: '暂无文件。',
       refreshing: '更新中...',
+      projectFiles: '项目文件',
       selectFile: '从左侧选择一个文件以预览内容。',
       loading: (path: string) => `正在加载 ${path}...`,
       readFailed: '读取失败',
@@ -277,11 +320,14 @@ const TRANSLATIONS = {
       placeholder: "Let's build a",
       buildNow: 'Build now',
       building: 'Building...',
+      fastBuild: 'Fast build',
       examples: [
         'Build a SaaS dashboard for an analytics startup',
         'Create a portfolio site for a product designer',
         'Make a Pomodoro timer with stats and themes',
       ],
+      galleryTitle: 'Inspiration gallery',
+      gallerySubtitle: 'Official picks — open one to use as a starting point',
     },
     response: {
       noDisplay: 'The agent did not return anything displayable.',
@@ -305,7 +351,32 @@ const TRANSLATIONS = {
       preview: 'Preview',
       downloadSource: 'Download source',
       downloading: 'Packaging...',
+      newProject: 'New project',
+      resuming: 'Restoring your last project…',
       downloadFailed: 'Download failed, please retry.',
+      exportGithub: 'Export to GitHub',
+      githubExporting: 'Redirecting...',
+      githubSuccessPrefix: 'Pushed to ',
+      githubErrorPrefix: 'GitHub export failed: ',
+      githubSuccessTitle: 'Pushed to GitHub',
+      githubSuccessDesc: 'Your project code was pushed as the initial commit to your repository.',
+      githubErrorTitle: 'Export failed',
+      githubOpenRepo: 'Open repository',
+      githubRetry: 'Retry',
+      githubClose: 'Close',
+      githubReasons: {
+        not_ready: 'The code is not ready yet. Please retry shortly.',
+        repo_exists: 'A repository with that name already exists. Please retry.',
+        token_exchange_failed: 'GitHub authorization failed. Please retry.',
+        push_failed: 'Push failed. Please try again later.',
+        state_expired: 'The authorization expired. Please start again.',
+        state_mismatch: 'Authorization check failed. Please start again.',
+        not_configured: 'GitHub OAuth is not configured.',
+        missing_cid: 'Missing conversation id. Please retry.',
+        invalid_request: 'Invalid request. Please retry.',
+      } as Record<string, string>,
+      claimDeploy: 'Claim deployment',
+      claimDeployHint: 'Claim this deployment to my account',
       loadingPreview: 'Loading live preview...',
       previewEmpty: 'Preview will appear after the first build finishes.',
       constructionDisclaimer: 'This is only a template demo flow. Model quality may be limited; replace it with your own model after simple deployment.',
@@ -366,6 +437,7 @@ const TRANSLATIONS = {
     files: {
       empty: 'No files captured yet.',
       refreshing: 'Refreshing...',
+      projectFiles: 'Project files',
       selectFile: 'Select a file from the left to preview its contents.',
       loading: (path: string) => `Loading ${path}...`,
       readFailed: 'Read failed',
@@ -436,6 +508,16 @@ function getOrCreateCachedConversationId() {
   return next;
 }
 
+// Read the cached conversationId without minting a new one. Returns null on a
+// first visit — used to decide whether there is anything to resume at all, so a
+// brand-new visitor skips the "restoring…" screen entirely.
+function getStoredConversationId() {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  return window.localStorage.getItem(CONVERSATION_STORAGE_KEY)?.trim() || null;
+}
+
 function cacheConversationId(value: string) {
   const trimmed = value.trim();
   if (!trimmed || typeof window === 'undefined') {
@@ -475,15 +557,130 @@ function getAssistantScrollSignature(message: ChatMessage) {
   ].join('\u001f');
 }
 
+// Typewriter placeholder: types each phrase left-to-right, holds, deletes, then
+// cycles to the next (mirrors the script in plan/design-mockup.html). Returns a
+// static first phrase when the user prefers reduced motion, and idles (keeps the
+// last rendered text) whenever `enabled` is false.
+function useTypewriterPlaceholder(phrases: readonly string[], enabled: boolean) {
+  const [text, setText] = useState('');
+
+  useEffect(() => {
+    if (!enabled || phrases.length === 0) {
+      return;
+    }
+
+    const prefersReducedMotion =
+      typeof window !== 'undefined'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (prefersReducedMotion) {
+      setText(phrases[0]);
+      return;
+    }
+
+    let phraseIndex = 0;
+    let charIndex = 0;
+    let deleting = false;
+    let timer = 0;
+
+    const tick = () => {
+      const full = phrases[phraseIndex];
+      if (!deleting) {
+        charIndex += 1;
+        setText(full.slice(0, charIndex));
+        if (charIndex === full.length) {
+          deleting = true;
+          timer = window.setTimeout(tick, 1600);
+          return;
+        }
+        timer = window.setTimeout(tick, 70);
+      } else {
+        charIndex -= 1;
+        setText(full.slice(0, charIndex));
+        if (charIndex === 0) {
+          deleting = false;
+          phraseIndex = (phraseIndex + 1) % phrases.length;
+          timer = window.setTimeout(tick, 400);
+          return;
+        }
+        timer = window.setTimeout(tick, 35);
+      }
+    };
+
+    setText('');
+    timer = window.setTimeout(tick, 70);
+    return () => window.clearTimeout(timer);
+  }, [enabled, phrases]);
+
+  return text;
+}
+
+// 语言切换：两个文字按钮 中 / En，选中的高亮为蓝色并略放大，点击切换。
+function LanguageSwitch({
+  language,
+  onChange,
+  ariaLabel,
+  className = '',
+}: {
+  language: Locale;
+  onChange: (next: Locale) => void;
+  ariaLabel: string;
+  className?: string;
+}) {
+  const itemClass = (active: boolean) =>
+    `font-semibold leading-none transition-all ${
+      active
+        ? 'scale-110 text-primary'
+        : 'text-muted-foreground hover:text-foreground'
+    }`;
+  return (
+    <div
+      role="group"
+      aria-label={ariaLabel}
+      className={`flex items-center gap-1.5 text-sm ${className}`}
+    >
+      <button
+        type="button"
+        onClick={() => onChange('zh')}
+        aria-pressed={language === 'zh'}
+        className={itemClass(language === 'zh')}
+      >
+        中
+      </button>
+      <span className="text-muted-foreground/40">/</span>
+      <button
+        type="button"
+        onClick={() => onChange('en')}
+        aria-pressed={language === 'en'}
+        className={itemClass(language === 'en')}
+      >
+        En
+      </button>
+    </div>
+  );
+}
+
 export default function Home() {
   const [language, setLanguage] = useState<Locale>('zh');
   const [deployUrl, setDeployUrl] = useState(TENCENT_CLOUD_DEPLOY_URL);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [conversationId, setConversationId] = useState<string | null>(null);
+  // Resume-on-load: rehydrate the last conversation's workspace after a refresh.
+  // `resumeChecked` gates the first render. It MUST init to a constant (not from
+  // localStorage): SSR has no localStorage, so deriving it there would mismatch the
+  // client's first paint and trigger a hydration error. Start `true` (render home),
+  // matching SSR — a first-time visitor then stays on home and never flashes the
+  // "restoring…" screen. A returning visitor is switched to `false` inside the
+  // client-only effect below (after hydration), which shows the restore screen
+  // while /resume runs.
+  const [resumeChecked, setResumeChecked] = useState(true);
   const [preview, setPreview] = useState<LinkInfo | null>(null);
   const [download, setDownload] = useState<LinkInfo | null>(null);
   const [downloadBusy, setDownloadBusy] = useState(false);
+  const [githubEnabled, setGithubEnabled] = useState(true);
+  const [githubBusy, setGithubBusy] = useState(false);
+  const [githubNotice, setGithubNotice] = useState<{ ok: boolean; repo?: string; reason?: string } | null>(null);
+  const githubPopupRef = useRef<Window | null>(null);
   const [build, setBuild] = useState<BuildInfo | null>(null);
   const [loading, setLoading] = useState(false);
   // Per-assistant-message progress expansion state. The running message is
@@ -509,6 +706,13 @@ export default function Home() {
   const canSend = input.trim().length > 0 && !loading;
   const hasWorkspace = messages.length > 0 || Boolean(preview) || Boolean(build);
   const fileCount = fileTree?.items.filter((item) => item.type === 'file').length ?? 0;
+  // Cycling typewriter placeholder for the landing prompt (see plan/design-mockup.html).
+  // Reuses the localized example prompts; pauses while the field has text.
+  const placeholderPhrases = useMemo(() => t.home.examples.map((example) => `${example}…`), [t]);
+  const typedPlaceholder = useTypewriterPlaceholder(
+    placeholderPhrases,
+    !hasWorkspace && input.length === 0,
+  );
   const latestAssistantMessage = messages.findLast((message) => message.role === 'assistant');
   const latestAssistantScrollSignature = latestAssistantMessage
     ? getAssistantScrollSignature(latestAssistantMessage)
@@ -526,12 +730,172 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    setConversationId(getOrCreateCachedConversationId());
+    // On load, reuse the cached conversationId and ask the backend to restore the
+    // last project (it unzips the persisted snapshot into a fresh sandbox, restarts
+    // the preview, and returns history + files + preview). This is what makes a
+    // refresh keep the generated code instead of dropping back to an empty home.
+    let cancelled = false;
+    // A first-time visitor has no cached conversationId, so there is nothing to
+    // restore. Mint an in-memory id only (do NOT persist it) and go straight to
+    // the home screen — skip the /resume round-trip and its "restoring…" screen.
+    // Persisting here would make a refresh look like a returning user; the build
+    // flow caches its own fresh id once the user actually starts a project.
+    const existing = getStoredConversationId();
+    if (!existing) {
+      // resumeChecked already defaults to true → stay on the home screen.
+      setConversationId(createConversationId());
+      return;
+    }
+
+    // Returning visitor: switch to the "restoring…" screen now (client-only, after
+    // hydration — so it never affects SSR match) and keep it until /resume settles.
+    setResumeChecked(false);
+    setConversationId(existing);
+
+    (async () => {
+      try {
+        const resp = await fetch('/resume', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            conversationId: existing,
+            'makers-conversation-id': existing,
+          },
+          body: '{}',
+        });
+        const data = (await resp.json().catch(() => null)) as
+          | {
+              ok?: boolean;
+              conversation_id?: string;
+              messages?: { role: 'user' | 'assistant'; content: string }[];
+              hasProject?: boolean;
+              preview?: LinkInfo;
+              files?: FileTree;
+              download?: LinkInfo;
+            }
+          | null;
+        if (cancelled || !data?.ok) {
+          return;
+        }
+        const history = Array.isArray(data.messages) ? data.messages : [];
+        if (!data.hasProject && history.length === 0) {
+          return; // Nothing to resume — stay on the home screen.
+        }
+        if (data.conversation_id) {
+          setConversationId(data.conversation_id);
+        }
+        setMessages(
+          history.map((item) => ({
+            id: createMessageId(item.role),
+            role: item.role,
+            content: item.content,
+            status: 'done' as AssistantStatus,
+          })),
+        );
+        if (data.files) {
+          setFileTree(data.files);
+        }
+        if (data.download?.url) {
+          setDownload(data.download);
+        }
+        if (data.preview) {
+          setPreview(data.preview);
+          if (data.preview.url) {
+            const revision = previewRevisionRef.current + 1;
+            previewRevisionRef.current = revision;
+            activePreviewUrlRef.current = data.preview.url;
+            activePreviewRevisionRef.current = revision;
+            setActivePreviewUrl(data.preview.url);
+            setActivePreviewRevision(revision);
+            setActivePreviewLoaded(false);
+          }
+        }
+      } catch {
+        // Resume is best-effort; on failure the user just sees the home screen.
+      } finally {
+        if (!cancelled) {
+          setResumeChecked(true);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    // Probe GitHub OAuth config. Optimistic default (button shown): only hide when
+    // the endpoint explicitly reports it is not configured, so a stale route or a
+    // transient failure never wrongly hides a configured instance.
+    // (plan/github-oauth-claim.md §6)
+    let cancelled = false;
+    fetch('/github/config')
+      .then((r) => r.json())
+      .then((d) => {
+        if (!cancelled) setGithubEnabled(d?.enabled !== false);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    // Fallback path only: when the popup was blocked, the OAuth flow ran as a full-page
+    // navigation and the callback redirected this tab back with ?github=... Read it,
+    // then strip the query so a refresh does not re-show it. The normal (popup) path
+    // delivers the result via postMessage below and never reloads this page.
+    const params = new URLSearchParams(window.location.search);
+    const github = params.get('github');
+    if (!github) {
+      return;
+    }
+    if (github === 'success') {
+      setGithubNotice({ ok: true, repo: params.get('repo') || undefined });
+    } else {
+      setGithubNotice({ ok: false, reason: params.get('reason') || 'push_failed' });
+    }
+    window.history.replaceState({}, '', window.location.pathname);
+  }, []);
+
+  useEffect(() => {
+    // Normal path: the OAuth popup posts its result back here (see oauthPopupResult in
+    // agents/utils/_request.ts), so the main page shows the outcome without reloading.
+    function onMessage(event: MessageEvent) {
+      if (event.origin !== window.location.origin) return;
+      const data = event.data as { source?: string; github?: string; repo?: string; reason?: string };
+      if (!data || data.source !== 'github-oauth') return;
+      setGithubBusy(false);
+      if (data.github === 'success') {
+        setGithubNotice({ ok: true, repo: data.repo || undefined });
+      } else {
+        setGithubNotice({ ok: false, reason: data.reason || 'push_failed' });
+      }
+      if (githubPopupRef.current && !githubPopupRef.current.closed) {
+        githubPopupRef.current.close();
+      }
+      githubPopupRef.current = null;
+    }
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
   }, []);
 
   useEffect(() => {
     document.documentElement.lang = language === 'zh' ? 'zh-CN' : 'en';
     window.localStorage.setItem(LANGUAGE_STORAGE_KEY, language);
+    // 语言切换后，用每条消息保留的原始 steps 重刷已渲染的过程卡片文案。
+    const copy = TRANSLATIONS[language].timeline;
+    setMessages((current) =>
+      current.map((item) =>
+        item.steps && item.steps.length > 0
+          ? {
+              ...item,
+              processEvents: relocalizeProcessEvents(item.processEvents ?? [], item.steps, copy),
+            }
+          : item,
+      ),
+    );
   }, [language]);
 
   useEffect(() => {
@@ -1042,82 +1406,154 @@ export default function Home() {
     }
   }
 
-  return (
-    <main className="min-h-screen overflow-hidden bg-[#0a0d0b] text-white">
-      <nav className="fixed inset-x-0 top-0 z-50 px-4">
-        <div className="mx-auto flex h-14 items-center justify-between gap-3">
-          <div className="min-w-0 text-sm font-semibold tracking-[0.06em] text-[#dff8ef] sm:text-base">
-            <span className="truncate">Coding Agent Starter</span>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <a
-              href={deployUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="rounded-full bg-[#45b98e] px-3.5 py-1.5 text-xs font-semibold text-black shadow-lg shadow-[#45b98e]/20 transition hover:bg-[#56c99f] sm:px-4"
-            >
-              {t.deployLabel}
-            </a>
-            <button
-              type="button"
-              onClick={() => setLanguage((current) => (current === 'zh' ? 'en' : 'zh'))}
-              aria-label={t.languageToggleAria}
-              className="rounded-full border border-white/15 bg-[#141917]/90 px-3 py-1.5 text-xs font-semibold text-[#dff8ef] shadow-lg shadow-black/20 transition hover:border-[#7bd8b4] hover:text-white"
-            >
-              {t.languageToggleLabel}
-            </button>
-          </div>
-        </div>
-      </nav>
-      {!hasWorkspace && (
-        <section className="relative isolate flex min-h-screen flex-col items-center px-5 pb-16 pt-28 text-center md:pt-36 lg:pt-40">
-          <div className="hero-glow" />
-          <div className="aurora-band aurora-band-wide" />
-          <div className="aurora-band aurora-band-slim" />
+  // Kick off the GitHub OAuth push in a popup window so the main page never reloads.
+  // The popup runs /github/start → GitHub → /github/callback, which posts the result
+  // back via postMessage (handled above). If the popup is blocked, fall back to a
+  // full-page navigation. See plan/github-oauth-claim.md §6.
+  function handleExportGithub() {
+    const cid = conversationId || getOrCreateCachedConversationId();
+    if (!cid || githubBusy) {
+      return;
+    }
+    setGithubBusy(true);
+    const url = `/github/start?cid=${encodeURIComponent(cid)}`;
+    const w = 520;
+    const h = 680;
+    const left = window.screenX + Math.max(0, (window.outerWidth - w) / 2);
+    const top = window.screenY + Math.max(0, (window.outerHeight - h) / 2);
+    const popup = window.open(url, 'github-oauth', `width=${w},height=${h},left=${left},top=${top}`);
+    if (!popup) {
+      // Popup blocked: full-page navigation (result comes back via ?github= on reload).
+      window.location.href = url;
+      return;
+    }
+    githubPopupRef.current = popup;
+    // Reset the spinner if the user closes the popup without finishing.
+    const timer = window.setInterval(() => {
+      if (githubPopupRef.current && githubPopupRef.current.closed) {
+        window.clearInterval(timer);
+        githubPopupRef.current = null;
+        setGithubBusy(false);
+      }
+    }, 600);
+  }
 
-          <div className="relative z-10 w-full max-w-7xl">
-            <h1 className="mx-auto max-w-5xl text-balance text-[clamp(1.85rem,3.6vw,3.35rem)] font-extrabold leading-[1.08]">
+  // Placeholder for "claim deployment" (plan §3.1). Until the platform drop/claim API
+  // is ready, this opens the EdgeOne console (plan's option A: finish the claim there).
+  function handleClaimDeploy() {
+    window.open(deployUrl, '_blank', 'noreferrer');
+  }
+
+  // Start a fresh project. Needed because resume-on-load means a refresh no longer
+  // clears the workspace, so this is the explicit way back to an empty home screen
+  // with a brand-new conversation.
+  function handleNewProject() {
+    if (loading) {
+      return;
+    }
+    const next = createConversationId();
+    cacheConversationId(next);
+    setConversationId(next);
+    setMessages([]);
+    setPreview(null);
+    setDownload(null);
+    setBuild(null);
+    setFileTree(null);
+    setFilesRefreshing(false);
+    setSandboxTab('preview');
+    activePreviewUrlRef.current = '';
+    activePreviewRevisionRef.current = 0;
+    previewRevisionRef.current = 0;
+    setActivePreviewUrl('');
+    setActivePreviewRevision(0);
+    setActivePreviewLoaded(false);
+    setPendingPreviewUrl('');
+    setPendingPreviewRevision(0);
+    setInput('');
+  }
+
+  // Hold the first paint until the resume check resolves, so a returning user does
+  // not see the home screen flash before their project is restored.
+  if (!resumeChecked) {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center gap-4 text-foreground">
+        <span
+          className="size-8 animate-spin rounded-full border-2 border-primary/30 border-t-primary"
+          aria-hidden="true"
+        />
+        <p className="text-sm text-muted-foreground">{t.workspace.resuming}</p>
+      </main>
+    );
+  }
+
+  return (
+    <main
+      className={`flex flex-col text-foreground ${
+        hasWorkspace ? 'h-screen overflow-hidden' : 'min-h-screen'
+      }`}
+    >
+      {!hasWorkspace && (
+        <LanguageSwitch
+          language={language}
+          onChange={setLanguage}
+          ariaLabel={t.languageToggleAria}
+          className="fixed right-4 top-3 z-50"
+        />
+      )}
+      {!hasWorkspace && (
+        <section className="flex flex-1 flex-col items-center justify-center px-6 py-16 text-center">
+          <div className="w-full max-w-[820px]">
+            <h1 className="text-[clamp(2.1rem,4.6vw,3.1rem)] font-extrabold leading-[1.16] tracking-[-0.025em]">
               {t.home.titleBefore}
               {language === 'en' ? ' ' : ''}
-              <span className="build-word">{t.home.titleAccent}</span>
+              <span className="text-brand-gradient">{t.home.titleAccent}</span>
               {language === 'en' ? ' ' : ''}
               {t.home.titleAfter}
             </h1>
-            <p className="mt-7 text-[clamp(0.95rem,1.15vw,1.25rem)] font-semibold text-[#b5c4be]">
+            <p className="mt-4 text-[clamp(0.95rem,1.4vw,1.15rem)] text-muted-foreground">
               {t.home.subtitle}
             </p>
 
-            <form
-              onSubmit={handleSubmit}
-              className="prompt-shell mx-auto mt-10 flex w-full max-w-[1260px] flex-col text-left"
-            >
-              <textarea
-                value={input}
-                onChange={(event) => setInput(event.target.value)}
-                placeholder={t.home.placeholder}
-                className="min-h-[180px] w-full resize-none rounded-t-[20px] border-0 bg-transparent px-8 py-7 text-[clamp(1.25rem,2vw,2rem)] font-medium text-white outline-none placeholder:text-[#bac3bd]"
-              />
-              <div className="flex justify-end px-6">
-                <button
-                  type="submit"
-                  disabled={!canSend}
-                  className="group inline-flex min-h-14 w-full cursor-pointer items-center justify-center gap-3 rounded-2xl bg-[#45b98e] px-7 py-4 text-lg font-semibold text-white shadow-lg shadow-[#45b98e]/20 transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#56c99f] hover:shadow-xl hover:shadow-[#45b98e]/35 active:translate-y-0 disabled:cursor-not-allowed disabled:bg-white/20 disabled:text-white/45 disabled:shadow-none disabled:hover:translate-y-0 sm:w-auto sm:min-w-[190px] sm:text-xl"
-                >
-                  {loading ? t.home.building : t.home.buildNow}
-                  <span className="transition-transform duration-200 group-hover:translate-x-1">
-                    <ArrowIcon />
-                  </span>
-                </button>
-              </div>
-            </form>
+            <Card className="mt-10 gap-0 rounded-2xl border-border p-5 text-left shadow-[0_18px_50px_-30px_rgba(20,30,60,0.45)] transition-shadow focus-within:border-primary/50 focus-within:shadow-[0_20px_60px_-28px_rgba(47,107,255,0.35)]">
+              <form onSubmit={handleSubmit}>
+                <Textarea
+                  value={input}
+                  onChange={(event) => setInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && !event.shiftKey) {
+                      event.preventDefault();
+                      void sendMessage(input);
+                    }
+                  }}
+                  placeholder={typedPlaceholder || t.home.placeholder}
+                  rows={3}
+                  className="min-h-[124px] resize-none border-0 bg-transparent px-2 py-1 text-lg leading-relaxed shadow-none focus-visible:ring-0 md:text-lg"
+                />
+                <div className="mt-3 flex items-center gap-2.5">
+                  <button
+                    type="submit"
+                    disabled={!canSend}
+                    aria-label={t.home.fastBuild}
+                    className="btn-brand ml-auto inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {loading ? (
+                      <span className="size-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                    ) : (
+                      <Sparkles className="size-4" />
+                    )}
+                    {t.home.fastBuild}
+                  </button>
+                </div>
+              </form>
+            </Card>
 
-            <div className="mx-auto mt-8 flex w-full max-w-[1260px] flex-wrap justify-center gap-3">
+            <div className="mt-5 flex flex-wrap justify-center gap-2.5">
               {t.home.examples.map((example) => (
                 <button
                   key={example}
                   type="button"
                   onClick={() => setInput(example)}
-                  className="rounded-full border border-white/10 bg-white/[0.06] px-4 py-2 text-sm text-[#cfd5d1] transition hover:border-[#7bd8b4] hover:text-white"
+                  className="rounded-full border border-border bg-card px-3.5 py-1.5 text-[13px] text-secondary-foreground transition hover:border-primary/45 hover:text-accent-foreground"
                 >
                   {example}
                 </button>
@@ -1128,221 +1564,355 @@ export default function Home() {
       )}
 
       <section
-        className={`relative z-20 h-screen w-full overflow-hidden p-3 pt-16 md:p-4 md:pt-16 ${
-          hasWorkspace ? 'block' : 'hidden'
+        className={`min-h-0 flex-1 grid-rows-[minmax(0,0.44fr)_minmax(0,0.56fr)] lg:grid-cols-[minmax(400px,34%)_1fr] lg:grid-rows-1 ${
+          hasWorkspace ? 'grid' : 'hidden'
         }`}
       >
-        <div className="grid h-full min-h-0 grid-rows-[minmax(0,0.44fr)_minmax(0,0.56fr)] gap-4 lg:grid-cols-[420px_minmax(0,1fr)] lg:grid-rows-1">
-          <section className="flex min-h-0 flex-col overflow-hidden rounded-[20px] border border-white/10 bg-[#141917] shadow-2xl shadow-black/35">
-            <header className="flex min-h-12 items-center gap-3 border-b border-white/10 px-4 py-2">
-              <p className="shrink-0 text-sm font-semibold uppercase tracking-[0.14em] text-[#7bd8b4]">{t.workspace.conversationEyebrow}</p>
-            </header>
-
-            <div ref={conversationScrollRef} className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
-              {messages.map((message) => {
-                if (message.role === 'user') {
-                  return (
-                    <div
-                      key={message.id}
-                      className="ml-8 min-w-0 overflow-hidden break-words rounded-2xl bg-[#5ec7a0] px-4 py-3 text-sm leading-6 text-[#10241d]"
-                    >
-                      <span className="whitespace-pre-wrap">{message.content}</span>
-                    </div>
-                  );
-                }
-
-                const status: AssistantStatus = message.status || 'done';
-                const steps = message.steps ?? [];
-                const isOpen = openSteps[message.id] ?? status === 'running';
-                const processEvents = message.processEvents ?? [];
-                const hasProcessEvents = processEvents.length > 0;
-                const hasProcessPanel = status === 'running' || hasProcessEvents;
-                const hasAssistantBubble = Boolean(message.content);
-
+        {/* ===== LEFT: chat + events ===== */}
+        <div className="flex min-h-0 flex-col border-b border-border bg-[#fbfbfc] lg:border-r lg:border-b-0">
+          <div
+            ref={conversationScrollRef}
+            className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-[22px]"
+          >
+            {messages.map((message) => {
+              if (message.role === 'user') {
                 return (
-                  <div
-                    key={message.id}
-                    className="mr-8 min-w-0 space-y-2"
-                  >
-                    {hasProcessPanel && (
-                      <ProcessPanel
-                        events={processEvents}
-                        running={status === 'running'}
-                        open={isOpen}
-                        showThinking={showProcessThinking}
-                        onToggle={() =>
-                          setOpenSteps((current) => ({
-                            ...current,
-                            [message.id]: !isOpen,
-                          }))
-                        }
-                        onToggleThinking={() => setShowProcessThinking((current) => !current)}
-                        copy={t.timeline}
-                        labels={{
-                          hide: t.workspace.hideSteps,
-                          view: t.workspace.viewSteps,
-                          steps: t.workspace.steps,
-                          keepThinking: t.workspace.keepThinking,
-                        }}
-                      />
-                    )}
-                    {hasAssistantBubble && (
-                      <div className="min-w-0 overflow-hidden break-words rounded-2xl bg-white/[0.07] px-4 py-3 text-sm leading-6 text-[#ececf0]">
-                        <TypewriterMarkdownMessage content={message.content} />
-                      </div>
-                    )}
+                  <div key={message.id} className="flex justify-end">
+                    <div className="btn-brand max-w-[80%] min-w-0 overflow-hidden rounded-[16px_16px_4px_16px] px-[15px] py-[11px] text-sm leading-6">
+                      <span className="whitespace-pre-wrap break-words">{message.content}</span>
+                    </div>
                   </div>
                 );
-              })}
-            </div>
+              }
 
-            <div className="space-y-3 border-t border-white/10 p-4">
-              <form onSubmit={handleSubmit} className="flex gap-2">
-                <input
-                  value={input}
-                  onChange={(event) => setInput(event.target.value)}
-                  placeholder={t.workspace.changePlaceholder}
-                  className="min-h-12 min-w-0 flex-1 rounded-full border border-white/10 bg-black/25 px-4 text-sm outline-none placeholder:text-white/35 focus:border-[#7bd8b4]"
-                />
-                <button
-                  type="submit"
-                  disabled={!canSend}
-                  className="rounded-full bg-[#f2c779] px-5 text-sm font-semibold text-[#21170a] transition hover:bg-[#ffd98a] disabled:cursor-not-allowed disabled:bg-white/20 disabled:text-white/40"
-                >
-                  {t.workspace.send}
-                </button>
-              </form>
-            </div>
-          </section>
+              const status: AssistantStatus = message.status || 'done';
+              const isOpen = openSteps[message.id] ?? status === 'running';
+              const processEvents = message.processEvents ?? [];
+              const hasProcessEvents = processEvents.length > 0;
+              const hasProcessPanel = status === 'running' || hasProcessEvents;
+              const hasAssistantBubble = Boolean(message.content);
 
-          <section className="flex min-h-0 flex-col overflow-hidden rounded-[20px] border border-white/10 bg-[#141917] shadow-2xl shadow-black/35">
-            <header className="flex min-h-12 items-center justify-between gap-3 border-b border-white/10 px-4 py-2">
-              <div className="flex min-w-0 items-center gap-3">
-                <p className="shrink-0 text-sm font-semibold uppercase tracking-[0.14em] text-[#7bd8b4]">{t.workspace.sandboxEyebrow}</p>
-                <h2 className="min-w-0 truncate text-[0.86em] font-semibold text-[#dff8ef]">
-                  {sandboxTab === 'preview' ? t.workspace.livePreview : t.workspace.files}
-                </h2>
-              </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <div className="flex rounded-full border border-white/10 bg-black/25 p-1 text-xs">
-                  <button
-                    type="button"
-                    onClick={() => setSandboxTab('preview')}
-                    className={`rounded-full px-3 py-1 transition ${
-                      sandboxTab === 'preview'
-                        ? 'bg-[#5ec7a0] text-[#10241d]'
-                        : 'text-[#cfd5d1] hover:text-white'
-                    }`}
-                  >
-                    {t.workspace.preview}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSandboxTab('files')}
-                    className={`rounded-full px-3 py-1 transition ${
-                      sandboxTab === 'files'
-                        ? 'bg-[#5ec7a0] text-[#10241d]'
-                        : 'text-[#cfd5d1] hover:text-white'
-                    }`}
-                  >
-                    {t.workspace.files}
-                    {fileCount ? ` ${fileCount}` : ''}
-                    {filesRefreshing && (
-                      <span className="ml-1 text-[10px] opacity-70">
-                        {t.files.refreshing}
-                      </span>
-                    )}
-                  </button>
-                </div>
-                {download?.url && (
-                  <button
-                    type="button"
-                    onClick={handleDownload}
-                    disabled={downloadBusy}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-[#5ec7a0]/40 bg-[#5ec7a0]/10 px-3 py-1 text-xs font-semibold text-[#7bd8b4] transition hover:border-[#5ec7a0]/70 hover:bg-[#5ec7a0]/20 hover:text-[#dff8ef] disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {downloadBusy ? (
-                      <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                        <circle className="opacity-25" cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="3" />
-                        <path className="opacity-90" d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-                      </svg>
-                    ) : (
-                      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <path d="M12 3v12" />
-                        <path d="m7 11 5 5 5-5" />
-                        <path d="M5 21h14" />
-                      </svg>
-                    )}
-                    {downloadBusy ? t.workspace.downloading : t.workspace.downloadSource}
-                  </button>
-                )}
-              </div>
-            </header>
-
-            <div className="relative min-h-0 flex-1 overflow-hidden bg-white">
-              {sandboxTab === 'preview' ? (
-                preview?.url ? (
-                  <div className="flex h-full min-h-0 flex-col bg-white">
-                    <div className="relative min-h-0 flex-1 bg-white">
-                      {!activePreviewLoaded && (
-                        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-[#101412]/85 px-6 text-center text-[#b5c4be]">
-                          {t.workspace.loadingPreview}
-                        </div>
-                      )}
-                      {activePreviewUrl && (
-                        <iframe
-                          key={`${activePreviewUrl}:${activePreviewRevision}`}
-                          title="sandbox-preview"
-                          src={activePreviewUrl}
-                          onLoad={() => setActivePreviewLoaded(true)}
-                          className="h-full w-full border-0"
-                        />
-                      )}
-                      {pendingPreviewUrl && (
-                        <iframe
-                          key={`pending:${pendingPreviewUrl}:${pendingPreviewRevision}`}
-                          title="sandbox-preview-pending"
-                          src={pendingPreviewUrl}
-                          onLoad={promotePendingPreview}
-                          className="invisible pointer-events-none absolute inset-0 h-full w-full border-0"
-                        />
-                      )}
+              return (
+                <div key={message.id} className="flex min-w-0 flex-col gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <span
+                      aria-hidden="true"
+                      className="grid size-[26px] shrink-0 place-items-center rounded-lg text-[11px] font-bold text-white"
+                      style={{ background: 'linear-gradient(135deg, #2f6bff, #0052d9)' }}
+                    >
+                      EO
+                    </span>
+                    <span className="text-[13px] font-bold text-foreground">EdgeOne Agent</span>
+                  </div>
+                  {hasProcessPanel && (
+                    <ProcessPanel
+                      events={processEvents}
+                      running={status === 'running'}
+                      open={isOpen}
+                      showThinking={showProcessThinking}
+                      onToggle={() =>
+                        setOpenSteps((current) => ({
+                          ...current,
+                          [message.id]: !isOpen,
+                        }))
+                      }
+                      onToggleThinking={() => setShowProcessThinking((current) => !current)}
+                      copy={t.timeline}
+                      labels={{
+                        hide: t.workspace.hideSteps,
+                        view: t.workspace.viewSteps,
+                        steps: t.workspace.steps,
+                        keepThinking: t.workspace.keepThinking,
+                      }}
+                    />
+                  )}
+                  {hasAssistantBubble && (
+                    <div className="min-w-0 overflow-hidden text-sm leading-[1.6] break-words text-secondary-foreground">
+                      <TypewriterMarkdownMessage content={message.content} />
                     </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="p-4">
+            <form
+              onSubmit={handleSubmit}
+              className="flex items-center gap-2.5 rounded-xl border border-border bg-card px-3 py-2.5 shadow-[0_6px_18px_-14px_rgba(20,30,60,0.4)] focus-within:border-primary/50"
+            >
+              <Input
+                value={input}
+                onChange={(event) => setInput(event.target.value)}
+                placeholder={t.workspace.changePlaceholder}
+                className="h-auto min-w-0 flex-1 border-0 bg-transparent p-0 text-sm shadow-none focus-visible:ring-0"
+              />
+              <button
+                type="button"
+                onClick={handleNewProject}
+                disabled={loading}
+                title={t.workspace.newProject}
+                aria-label={t.workspace.newProject}
+                className="grid size-8 shrink-0 place-items-center rounded-[9px] border border-border bg-muted text-secondary-foreground transition hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <Plus className="size-4" />
+              </button>
+              <button
+                type="submit"
+                disabled={!canSend}
+                aria-label={t.workspace.send}
+                className="btn-brand grid size-8 shrink-0 place-items-center rounded-[9px]"
+              >
+                <ArrowUp className="size-4" />
+              </button>
+            </form>
+          </div>
+        </div>
+
+        {/* ===== RIGHT: preview / files ===== */}
+        <div className="flex min-h-0 flex-col bg-[#fbfbfc]">
+          <div className="flex items-center gap-1 px-3.5 py-2.5">
+            <Tabs
+              value={sandboxTab}
+              onValueChange={(value) => setSandboxTab(value as 'preview' | 'files')}
+            >
+              <TabsList className="h-auto gap-1 bg-transparent p-0">
+                <TabsTrigger
+                  value="preview"
+                  className="h-auto rounded-[8px] px-3 py-1.5 text-[13px] font-semibold text-muted-foreground transition hover:text-secondary-foreground data-[state=active]:bg-accent data-[state=active]:text-accent-foreground data-[state=active]:shadow-none"
+                >
+                  {t.workspace.preview}
+                </TabsTrigger>
+                <TabsTrigger
+                  value="files"
+                  className="h-auto rounded-[8px] px-3 py-1.5 text-[13px] font-semibold text-muted-foreground transition hover:text-secondary-foreground data-[state=active]:bg-accent data-[state=active]:text-accent-foreground data-[state=active]:shadow-none"
+                >
+                  {t.workspace.files}
+                  {fileCount ? ` ${fileCount}` : ''}
+                  {filesRefreshing && (
+                    <span className="ml-1 text-[10px] opacity-70">{t.files.refreshing}</span>
+                  )}
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
+            <span className="flex-1" />
+            {download?.url && (
+              <button
+                type="button"
+                onClick={handleDownload}
+                disabled={downloadBusy}
+                title={t.workspace.downloadSource}
+                className="action-chip bg-muted text-secondary-foreground hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <span className="action-chip-icon">
+                  {downloadBusy ? (
+                    <span className="size-4 animate-spin rounded-full border-2 border-transparent border-t-current" />
+                  ) : (
+                    <Download className="size-4" />
+                  )}
+                </span>
+                <span className="action-chip-label">
+                  {downloadBusy ? t.workspace.downloading : t.workspace.downloadSource}
+                </span>
+              </button>
+            )}
+            {githubEnabled && download?.url && (
+              <button
+                type="button"
+                onClick={handleExportGithub}
+                disabled={githubBusy}
+                title={t.workspace.exportGithub}
+                className="action-chip bg-muted text-secondary-foreground hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <span className="action-chip-icon">
+                  {githubBusy ? (
+                    <span className="size-4 animate-spin rounded-full border-2 border-transparent border-t-current" />
+                  ) : (
+                    <GitHubIcon />
+                  )}
+                </span>
+                <span className="action-chip-label">
+                  {githubBusy ? t.workspace.githubExporting : t.workspace.exportGithub}
+                </span>
+              </button>
+            )}
+            {CLAIM_DEPLOY_ENABLED && (
+              <button
+                type="button"
+                onClick={handleClaimDeploy}
+                title={t.workspace.claimDeployHint}
+                className="action-chip bg-muted text-accent-foreground hover:bg-accent"
+              >
+                <span className="action-chip-icon">
+                  <img src="/edgeone.png" alt="EdgeOne" className="size-[22px] rounded-full" />
+                </span>
+                <span className="action-chip-label">{t.workspace.claimDeploy}</span>
+              </button>
+            )}
+            <LanguageSwitch
+              language={language}
+              onChange={setLanguage}
+              ariaLabel={t.languageToggleAria}
+              className="ml-4"
+            />
+          </div>
+
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            {sandboxTab === 'preview' ? (
+              preview?.url ? (
+                <div className="m-3.5 flex min-h-0 flex-1 overflow-hidden rounded-[12px] bg-white shadow-[0_10px_30px_-22px_rgba(20,30,60,0.35)]">
+                  <div className="relative min-h-0 flex-1 bg-white">
+                    {!activePreviewLoaded && (
+                      <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-white/85 px-6 text-center text-muted-foreground">
+                        {t.workspace.loadingPreview}
+                      </div>
+                    )}
+                    {activePreviewUrl && (
+                      <iframe
+                        key={`${activePreviewUrl}:${activePreviewRevision}`}
+                        title="sandbox-preview"
+                        src={activePreviewUrl}
+                        onLoad={() => setActivePreviewLoaded(true)}
+                        className="h-full w-full border-0"
+                      />
+                    )}
+                    {pendingPreviewUrl && (
+                      <iframe
+                        key={`pending:${pendingPreviewUrl}:${pendingPreviewRevision}`}
+                        title="sandbox-preview-pending"
+                        src={pendingPreviewUrl}
+                        onLoad={promotePendingPreview}
+                        className="invisible pointer-events-none absolute inset-0 h-full w-full border-0"
+                      />
+                    )}
                   </div>
-                ) : (
-                  <div className="flex h-full min-h-0 flex-col items-center justify-center bg-[#101412] px-6 text-center text-[#b5c4be]">
-                    <p>{t.workspace.previewEmpty}</p>
-                    <p className="mt-3 max-w-xl text-xs leading-5 text-[#8fa098]">
-                      {t.workspace.constructionDisclaimer}
-                    </p>
-                  </div>
-                )
+                </div>
               ) : (
-                <FilesPanel
-                  tree={fileTree}
-                  refreshing={filesRefreshing}
-                  conversationId={conversationId}
-                  copy={t.files}
-                />
+                <div className="m-3.5 flex min-h-0 flex-1 flex-col items-center justify-center rounded-[12px] bg-white px-6 text-center text-secondary-foreground">
+                  <p>{t.workspace.previewEmpty}</p>
+                  <p className="mt-3 max-w-xl text-xs leading-5 text-muted-foreground">
+                    {t.workspace.constructionDisclaimer}
+                  </p>
+                </div>
+              )
+            ) : (
+              <FilesPanel
+                tree={fileTree}
+                refreshing={filesRefreshing}
+                conversationId={conversationId}
+                copy={t.files}
+              />
+            )}
+          </div>
+
+          {(build?.status === 'failed' || download?.error || preview?.error) && (
+            <div className="space-y-2 border-t border-border bg-card p-4 text-xs text-secondary-foreground">
+              {build?.status === 'failed' && (
+                <p className="text-destructive">
+                  {build.autoFixApplied && build.autoFixAttempts
+                    ? t.workspace.buildFailedAfter(build.autoFixAttempts)
+                    : t.workspace.buildFailedMessage}
+                </p>
+              )}
+              {preview?.error && (
+                <p>
+                  {t.workspace.previewError}
+                  {preview.error}
+                </p>
+              )}
+              {download?.error && (
+                <p>
+                  {t.workspace.downloadError}
+                  {download.error}
+                </p>
               )}
             </div>
-
-            {(build?.status === 'failed' || download?.error || preview?.error) && (
-              <div className="space-y-2 border-t border-white/10 bg-[#101412] p-4 text-xs text-[#cfd5d1]">
-                {build?.status === 'failed' && (
-                  <p className="text-rose-300">
-                    {build.autoFixApplied && build.autoFixAttempts
-                      ? t.workspace.buildFailedAfter(build.autoFixAttempts)
-                      : t.workspace.buildFailedMessage}
-                  </p>
-                )}
-                {preview?.error && <p>{t.workspace.previewError}{preview.error}</p>}
-                {download?.error && <p>{t.workspace.downloadError}{download.error}</p>}
-              </div>
-            )}
-          </section>
+          )}
         </div>
       </section>
+
+      {githubNotice && (
+        <div
+          className="gh-overlay fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-sm"
+          onClick={() => setGithubNotice(null)}
+        >
+          <Card
+            className="gh-card relative w-full max-w-sm overflow-hidden rounded-2xl border-border p-0 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              aria-label={t.workspace.githubClose}
+              onClick={() => setGithubNotice(null)}
+              className="absolute right-3 top-3 rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            >
+              <X className="h-4 w-4" />
+            </button>
+
+            <div className="flex flex-col items-center gap-3 px-6 pb-6 pt-8 text-center">
+              <span
+                className={`flex h-14 w-14 items-center justify-center rounded-full ${
+                  githubNotice.ok ? 'bg-primary/10' : 'bg-destructive/10'
+                }`}
+              >
+                {githubNotice.ok ? (
+                  <CheckCircle2 className="h-7 w-7 text-primary" />
+                ) : (
+                  <AlertCircle className="h-7 w-7 text-destructive" />
+                )}
+              </span>
+
+              <h3 className="text-base font-semibold text-foreground">
+                {githubNotice.ok ? t.workspace.githubSuccessTitle : t.workspace.githubErrorTitle}
+              </h3>
+              <p className="text-sm leading-relaxed text-muted-foreground">
+                {githubNotice.ok
+                  ? t.workspace.githubSuccessDesc
+                  : t.workspace.githubReasons[githubNotice.reason || 'push_failed']
+                    || t.workspace.githubReasons.push_failed}
+              </p>
+
+              {githubNotice.ok && githubNotice.repo && (
+                <a
+                  href={githubNotice.repo}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="max-w-full truncate rounded-lg bg-accent px-3 py-1.5 font-mono text-xs text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  {githubNotice.repo.replace(/^https?:\/\//, '')}
+                </a>
+              )}
+
+              <div className="mt-3 flex w-full gap-2">
+                <Button variant="outline" className="flex-1" onClick={() => setGithubNotice(null)}>
+                  {t.workspace.githubClose}
+                </Button>
+                {githubNotice.ok ? (
+                  githubNotice.repo && (
+                    <Button
+                      className="btn-brand flex-1"
+                      onClick={() => window.open(githubNotice.repo, '_blank', 'noreferrer')}
+                    >
+                      <ExternalLink className="mr-1.5 h-4 w-4" />
+                      {t.workspace.githubOpenRepo}
+                    </Button>
+                  )
+                ) : (
+                  <Button
+                    className="btn-brand flex-1"
+                    onClick={() => {
+                      setGithubNotice(null);
+                      handleExportGithub();
+                    }}
+                  >
+                    {t.workspace.githubRetry}
+                  </Button>
+                )}
+              </div>
+            </div>
+          </Card>
+        </div>
+      )}
     </main>
   );
 }
@@ -1393,7 +1963,7 @@ const ProcessPanel = memo(function ProcessPanel({
   }
 
   return (
-    <div className="min-w-0 rounded-xl border border-white/10 bg-black/15 px-3 py-2 text-[12px] leading-5 text-[#cfd5d1]">
+    <div className="min-w-0 rounded-xl border border-border bg-muted px-3 py-2 text-[12px] leading-5 text-muted-foreground">
       {hasProcessEvents && (
         <div
           role="button"
@@ -1407,9 +1977,9 @@ const ProcessPanel = memo(function ProcessPanel({
             event.preventDefault();
             onToggle();
           }}
-          className="flex min-w-0 w-full cursor-pointer flex-wrap items-center justify-between gap-2 rounded-lg px-1 py-1 text-left transition focus:outline-none focus-visible:ring-1 focus-visible:ring-[#7bd8b4]/60"
+          className="flex min-w-0 w-full cursor-pointer flex-wrap items-center justify-between gap-2 rounded-lg px-1 py-1 text-left transition focus:outline-none focus-visible:ring-1 focus-visible:ring-primary/50"
         >
-          <span className="flex size-6 items-center justify-center rounded-full text-[#7bd8b4] transition hover:text-[#a8eccd]">
+          <span className="flex size-6 items-center justify-center rounded-full text-primary transition hover:text-accent-foreground">
             <span
               aria-hidden="true"
               className={`block size-0 border-y-[5px] border-y-transparent border-l-[8px] border-l-current transition-transform ${
@@ -1428,13 +1998,13 @@ const ProcessPanel = memo(function ProcessPanel({
             onKeyDown={(event) => event.stopPropagation()}
             className={`flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-medium transition ${
               showThinking
-                ? 'bg-[#7bd8b4]/15 text-[#a8eccd]'
-                : 'bg-white/5 text-white/45 hover:text-white/70'
+                ? 'bg-accent text-accent-foreground'
+                : 'bg-secondary text-muted-foreground hover:text-foreground'
             }`}
           >
             <span
               className={`size-1.5 rounded-full ${
-                showThinking ? 'bg-[#7bd8b4]' : 'bg-white/35'
+                showThinking ? 'bg-primary' : 'bg-muted-foreground'
               }`}
               aria-hidden="true"
             />
@@ -1473,7 +2043,7 @@ const ProcessPanel = memo(function ProcessPanel({
 
 function ProcessWaitingItem({ copy }: { copy: TimelineCopy }) {
   return (
-    <div className="flex min-w-0 items-center gap-2 pt-1 text-[#7bd8b4]">
+    <div className="flex min-w-0 items-center gap-2 pt-1 text-primary">
       <Spinner />
       <span className="min-w-0 flex-1 break-words text-[11px] [overflow-wrap:anywhere]">{copy.processing}</span>
     </div>
@@ -1659,6 +2229,24 @@ function countProcessSteps(events: ProcessEvent[]) {
   return events.reduce((count, event) => count + (event.kind === 'step' ? 1 : 0), 0);
 }
 
+// 语言切换时重刷已渲染的卡片文案。processEvents 里的 title/summary 是事件到达时
+// 按当时语言算好的字符串，切换语言不会自动重算；但每条消息保留了语言无关的原始
+// `steps`，这里用当前 copy 重新派生 step 文案。thinking 是模型自由文本，原样保留。
+function relocalizeProcessEvents(
+  events: ProcessEvent[],
+  steps: TimelineStep[],
+  copy: TimelineCopy,
+): ProcessEvent[] {
+  const normalizedByPhase = new Map(
+    normalizeTimelineSteps(steps, copy).map((step) => [step.phase, step] as const),
+  );
+  return events.map((event) =>
+    event.kind === 'step'
+      ? { ...event, step: normalizedByPhase.get(event.phase) ?? event.step }
+      : event,
+  );
+}
+
 function getProcessStepForTimelineStep(
   changedStep: TimelineStep,
   steps: TimelineStep[],
@@ -1829,10 +2417,10 @@ const NormalizedStepCard = memo(function NormalizedStepCard({ step, copy }: { st
     <div
       className={`rounded-lg border px-3 py-2 ${
         isError
-          ? 'border-rose-400/30 bg-rose-400/10 text-rose-100'
+          ? 'border-destructive/30 bg-destructive/10 text-destructive'
           : isWaiting
-            ? 'border-white/10 bg-white/[0.03] text-white/45'
-            : 'border-white/10 bg-white/[0.06] text-[#dff8ef]'
+            ? 'border-border bg-card text-muted-foreground'
+            : 'border-border bg-card text-foreground'
       }`}
     >
       <div className="flex min-w-0 items-start gap-2">
@@ -1843,10 +2431,10 @@ const NormalizedStepCard = memo(function NormalizedStepCard({ step, copy }: { st
             <span
               className={`text-xs font-semibold ${
                 isError
-                  ? 'text-rose-300'
+                  ? 'text-destructive'
                   : step.status === 'done'
-                    ? 'text-emerald-300'
-                    : 'text-white/30'
+                    ? 'text-[var(--ok)]'
+                    : 'text-muted-foreground/60'
               }`}
             >
               {isError ? '!' : step.status === 'done' ? '✓' : '·'}
@@ -1855,19 +2443,19 @@ const NormalizedStepCard = memo(function NormalizedStepCard({ step, copy }: { st
         </span>
         <div className="min-w-0 flex-1">
           <div className="font-semibold">{step.title}</div>
-          <div className="mt-0.5 min-w-0 break-words text-[11px] text-white/55 [overflow-wrap:anywhere]">
+          <div className="mt-0.5 min-w-0 break-words text-[11px] text-muted-foreground [overflow-wrap:anywhere]">
             {step.summary}
           </div>
         </div>
         <span
           className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${
             isError
-              ? 'bg-rose-300/15 text-rose-200'
+              ? 'bg-destructive/15 text-destructive'
               : isRunning
-                ? 'bg-[#7bd8b4]/15 text-[#7bd8b4]'
+                ? 'bg-accent text-accent-foreground'
                 : step.status === 'done'
-                  ? 'bg-emerald-300/15 text-emerald-200'
-                  : 'bg-white/5 text-white/35'
+                  ? 'bg-[color-mix(in_srgb,var(--ok)_15%,transparent)] text-[var(--ok)]'
+                  : 'bg-secondary text-muted-foreground'
           }`}
         >
           {copy.statusLabels[step.status]}
@@ -2103,7 +2691,7 @@ function shortenToolName(name: string) {
 function Spinner() {
   return (
     <span
-      className="inline-block size-3 animate-spin rounded-full border-2 border-[#7bd8b4]/40 border-t-[#7bd8b4]"
+      className="inline-block size-3 animate-spin rounded-full border-2 border-primary/30 border-t-primary"
       aria-hidden="true"
     />
   );
@@ -2169,7 +2757,7 @@ function TypewriterNarrationText({
       <NarrationText content={displayContent} />
       {displayContent.length < content.length && (
         <span
-          className="ml-0.5 inline-block h-4 w-1 animate-pulse rounded-full bg-[#7bd8b4] align-[-0.15em]"
+          className="ml-0.5 inline-block h-4 w-1 animate-pulse rounded-full bg-primary align-[-0.15em]"
           aria-hidden="true"
         />
       )}
@@ -2220,7 +2808,7 @@ function TypewriterMarkdownMessage({ content }: { content: string }) {
       <MarkdownMessage content={displayContent} />
       {displayContent.length < targetContent.length && (
         <span
-          className="ml-0.5 inline-block h-4 w-1 animate-pulse rounded-full bg-[#7bd8b4] align-[-0.15em]"
+          className="ml-0.5 inline-block h-4 w-1 animate-pulse rounded-full bg-primary align-[-0.15em]"
           aria-hidden="true"
         />
       )}
@@ -2244,19 +2832,19 @@ function MarkdownMessage({ content }: { content: string }) {
             href={href}
             target="_blank"
             rel="noreferrer"
-            className="my-1 inline-flex max-w-full items-center gap-1.5 break-all rounded-full bg-[#5ec7a0] px-3 py-1.5 text-xs font-semibold text-[#10241d] no-underline transition hover:bg-[#74d9b4]"
+            className="btn-brand my-1 inline-flex max-w-full items-center gap-1.5 break-all rounded-full px-3 py-1.5 text-xs font-semibold no-underline"
           >
             {children}
           </a>
         ),
         pre: ({ children }) => (
-          <pre className="mb-2 max-w-full overflow-x-auto rounded-lg border border-white/10 bg-black/35 p-3 text-[12px] leading-5 last:mb-0">
+          <pre className="mb-2 max-w-full overflow-x-auto rounded-lg border border-border bg-muted p-3 text-[12px] leading-5 last:mb-0">
             {children}
           </pre>
         ),
         code: ({ children, className, ...props }) => (
           <code
-            className={`rounded bg-black/25 px-1 py-0.5 font-mono text-[0.92em] text-[#dff8ef] ${className || ''}`}
+            className={`rounded bg-muted px-1 py-0.5 font-mono text-[0.92em] text-foreground ${className || ''}`}
             {...props}
           >
             {children}
@@ -2385,22 +2973,20 @@ function FilesPanel({
 
   if (!tree || tree.items.length === 0) {
     return (
-      <div className="flex h-full min-h-0 items-center justify-center bg-[#0b0f0d] px-6 text-center text-[#b5c4be]">
+      <div className="m-3.5 flex min-h-0 flex-1 items-center justify-center rounded-[12px] bg-card px-6 text-center text-muted-foreground">
         {refreshing ? copy.refreshing : copy.empty}
       </div>
     );
   }
 
   return (
-    <div className="grid h-full min-h-0 grid-cols-[280px_minmax(0,1fr)] bg-[#0b0f0d] text-[#d7e5df]">
-      <aside className="flex min-h-0 flex-col border-r border-white/10">
-        <div className="border-b border-white/10 bg-[#101412] px-4 py-3">
-          <p className="truncate text-xs uppercase tracking-[0.16em] text-[#7bd8b4]">
-            {tree.root}
-          </p>
-        </div>
-        <div className="min-h-0 flex-1 overflow-auto p-3">
-          <div className="space-y-0.5 font-mono text-[12px] leading-5">
+    <div className="m-3.5 grid min-h-0 flex-1 grid-cols-[190px_minmax(0,1fr)] overflow-hidden rounded-[12px] bg-card text-secondary-foreground shadow-[0_10px_30px_-22px_rgba(20,30,60,0.35)]">
+      <aside className="flex min-h-0 flex-col border-r border-[#eef0f3] bg-[#fafbfd]">
+        <div className="min-h-0 flex-1 overflow-auto p-2">
+          <div className="px-2 pt-1.5 pb-1 text-[10px] font-medium uppercase tracking-[0.06em] text-muted-foreground">
+            {copy.projectFiles}
+          </div>
+          <div className="space-y-0.5 font-mono text-[12.5px] leading-5">
             {visibleItems.map((item) => {
               const isDirectory = item.type === 'directory';
               const isCollapsed = collapsedDirs.has(item.path);
@@ -2417,24 +3003,19 @@ function FilesPanel({
                       loadFile(item.path);
                     }
                   }}
-                  className={`flex w-full min-w-max items-center gap-2 rounded px-2 py-1 text-left transition ${
+                  className={`flex w-full min-w-max items-center gap-2 rounded-[7px] px-2 py-1.5 text-left transition ${
                     isSelected
-                      ? 'bg-[#7bd8b4]/15 text-[#edfff7]'
-                      : 'text-[#cfe0d9] hover:bg-white/[0.06]'
+                      ? 'bg-accent font-semibold text-accent-foreground'
+                      : 'text-secondary-foreground hover:bg-[#eef2f8]'
                   }`}
                   style={{ paddingLeft: `${8 + item.depth * 18}px` }}
                 >
-                  <span
-                    className={
-                      isDirectory ? 'text-[#f2c779]' : 'text-[#7bd8b4]'
-                    }
-                    aria-hidden="true"
-                  >
-                    {isDirectory ? (isCollapsed ? '▸' : '▾') : '•'}
-                  </span>
-                  <span className={isDirectory ? 'font-semibold' : ''}>
-                    {item.name}
-                  </span>
+                  {isDirectory && (
+                    <span className="text-muted-foreground" aria-hidden="true">
+                      {isCollapsed ? '▸' : '▾'}
+                    </span>
+                  )}
+                  <span>{item.name}</span>
                 </button>
               );
             })}
@@ -2449,10 +3030,81 @@ function FilesPanel({
   );
 }
 
+// Light syntax theme mirroring the GitHub-light tokens in plan/design-mockup.html
+// (tok-kw #cf222e, tok-fn #8250df, tok-str #0a7d33, tok-cm #8b949e, tok-tag #116329,
+// tok-num/attr #0550ae). Background stays transparent so the code surface shows through.
+const CODE_THEME: PrismTheme = {
+  plain: { color: '#24292f', backgroundColor: 'transparent' },
+  styles: [
+    { types: ['comment', 'prolog', 'doctype', 'cdata'], style: { color: '#8b949e', fontStyle: 'italic' } },
+    { types: ['punctuation'], style: { color: '#24292f' } },
+    { types: ['keyword', 'operator', 'boolean', 'important', 'atrule'], style: { color: '#cf222e' } },
+    { types: ['function', 'function-variable', 'method'], style: { color: '#8250df' } },
+    { types: ['string', 'char', 'attr-value', 'template-string', 'regex', 'url'], style: { color: '#0a7d33' } },
+    { types: ['number', 'unit'], style: { color: '#0550ae' } },
+    { types: ['tag', 'selector'], style: { color: '#116329' } },
+    { types: ['attr-name', 'constant', 'builtin', 'symbol'], style: { color: '#0550ae' } },
+    { types: ['class-name', 'maybe-class-name'], style: { color: '#953800' } },
+    { types: ['property', 'variable', 'parameter'], style: { color: '#24292f' } },
+    { types: ['deleted'], style: { color: '#cf222e' } },
+    { types: ['inserted'], style: { color: '#0a7d33' } },
+  ],
+};
+
+// Map a file path to a Prism language. Unknown extensions fall back to plain text
+// (Prism renders a single token, so the file still shows uncolored but intact).
+function prismLanguage(path: string): string {
+  const ext = path.split('.').pop()?.toLowerCase() ?? '';
+  switch (ext) {
+    case 'ts':
+      return 'typescript';
+    case 'tsx':
+      return 'tsx';
+    case 'js':
+    case 'mjs':
+    case 'cjs':
+      return 'javascript';
+    case 'jsx':
+      return 'jsx';
+    case 'json':
+      return 'json';
+    case 'css':
+      return 'css';
+    case 'scss':
+    case 'sass':
+      return 'scss';
+    case 'html':
+    case 'htm':
+    case 'xml':
+    case 'svg':
+    case 'vue':
+      return 'markup';
+    case 'md':
+    case 'mdx':
+    case 'markdown':
+      return 'markdown';
+    case 'py':
+      return 'python';
+    case 'sh':
+    case 'bash':
+    case 'zsh':
+      return 'bash';
+    case 'yml':
+    case 'yaml':
+      return 'yaml';
+    case 'go':
+      return 'go';
+    case 'rs':
+      return 'rust';
+    default:
+      return 'tsx';
+  }
+}
+
 function FileContentView({ preview, copy }: { preview: FilePreviewState; copy: FileCopy }) {
   if (preview.status === 'idle') {
     return (
-      <div className="flex h-full min-h-0 items-center justify-center px-6 text-center text-[#7d8c85]">
+      <div className="flex h-full min-h-0 items-center justify-center px-6 text-center text-muted-foreground">
         {copy.selectFile}
       </div>
     );
@@ -2460,13 +3112,13 @@ function FileContentView({ preview, copy }: { preview: FilePreviewState; copy: F
   if (preview.status === 'loading') {
     return (
       <div className="flex h-full min-h-0 flex-col">
-        <div className="flex items-center gap-2 border-b border-white/10 bg-[#101412] px-4 py-3 text-xs text-[#7bd8b4]">
+        <div className="flex items-center gap-2 border-b border-border bg-[#fafbfd] px-4 py-3 text-xs text-primary">
           <Spinner />
-          <span className="truncate font-mono text-[11px] text-white/55">
+          <span className="truncate font-mono text-[11px] text-muted-foreground">
             {copy.loading(preview.path)}
           </span>
         </div>
-        <div className="flex flex-1 items-center justify-center text-[#7d8c85]">
+        <div className="flex flex-1 items-center justify-center">
           <Spinner />
         </div>
       </div>
@@ -2475,10 +3127,10 @@ function FileContentView({ preview, copy }: { preview: FilePreviewState; copy: F
   if (preview.status === 'error') {
     return (
       <div className="flex h-full min-h-0 flex-col">
-        <div className="border-b border-white/10 bg-[#101412] px-4 py-3">
-          <p className="truncate font-mono text-[11px] text-white/55">{preview.path}</p>
+        <div className="border-b border-border bg-[#fafbfd] px-4 py-3">
+          <p className="truncate font-mono text-[11px] text-muted-foreground">{preview.path}</p>
         </div>
-        <div className="flex flex-1 items-center justify-center px-6 text-center text-rose-300">
+        <div className="flex flex-1 items-center justify-center px-6 text-center text-destructive">
           {preview.error}
         </div>
       </div>
@@ -2488,35 +3140,43 @@ function FileContentView({ preview, copy }: { preview: FilePreviewState; copy: F
   const lines = preview.content.split('\n');
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 bg-[#101412] px-4 py-3">
-        <p className="min-w-0 truncate font-mono text-[11px] text-white/65">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-[#fafbfd] px-4 py-3">
+        <p className="min-w-0 truncate font-mono text-[11px] text-secondary-foreground">
           {preview.path}
         </p>
-        <div className="flex shrink-0 items-center gap-2 font-mono text-[11px] text-white/40">
+        <div className="flex shrink-0 items-center gap-2 font-mono text-[11px] text-muted-foreground">
           <span>{copy.lines(lines.length)}</span>
           <span>{formatFileSize(preview.size)}</span>
           {preview.truncated && (
-            <span className="rounded-full bg-amber-400/15 px-2 py-0.5 text-amber-200">
+            <span className="rounded-full bg-[color-mix(in_srgb,var(--gold)_15%,transparent)] px-2 py-0.5 text-[var(--gold)]">
               {copy.truncated}
             </span>
           )}
         </div>
       </div>
-      <pre className="min-h-0 flex-1 overflow-auto bg-[#070a09] py-3 font-mono text-[12px] leading-5 text-[#cfe0d9]">
-        <code>
-          {lines.map((line, lineIndex) => (
-            <span
-              key={lineIndex}
-              className="grid min-w-max grid-cols-[3.5rem_minmax(0,1fr)] gap-3 px-4"
-            >
-              <span className="select-none text-right text-white/25">
-                {lineIndex + 1}
-              </span>
-              <span className="whitespace-pre">{line || ' '}</span>
-            </span>
-          ))}
-        </code>
-      </pre>
+      <Highlight code={preview.content} language={prismLanguage(preview.path)} theme={CODE_THEME}>
+        {({ tokens, getTokenProps }) => (
+          <pre className="min-h-0 flex-1 overflow-auto bg-white py-3 font-mono text-[12px] leading-5 text-foreground">
+            <code>
+              {tokens.map((line, lineIndex) => (
+                <span
+                  key={lineIndex}
+                  className="grid min-w-max grid-cols-[3.5rem_minmax(0,1fr)] gap-3 px-4"
+                >
+                  <span className="select-none text-right text-muted-foreground/60">
+                    {lineIndex + 1}
+                  </span>
+                  <span className="whitespace-pre">
+                    {line.map((token, key) => (
+                      <span key={key} {...getTokenProps({ token })} />
+                    ))}
+                  </span>
+                </span>
+              ))}
+            </code>
+          </pre>
+        )}
+      </Highlight>
     </div>
   );
 }

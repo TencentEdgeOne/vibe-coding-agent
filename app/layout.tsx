@@ -3,7 +3,7 @@ import './globals.css';
 
 export const metadata: Metadata = {
   title: 'Web Dev Agent',
-  description: 'Build, preview, and download sandbox projects with an AI agent.',
+  description: '把一个粗略想法变成精致的应用、网站或原型。',
 };
 
 export default function RootLayout({

@@ -10,6 +10,17 @@ export type ProjectState = {
   sandboxDebugUrl?: string;
 };
 
+// A base64 archive of the whole project, persisted outside the volatile sandbox so
+// the code survives sandbox recycling (see agents/_memory.ts snapshot helpers). The
+// fields mirror createProjectArchive's success result plus a write timestamp.
+export type ProjectSnapshot = {
+  base64: string;
+  filename: string;
+  contentType: string;
+  size: number;
+  updatedAt: number;
+};
+
 export type ConversationMessage = {
   role: 'user' | 'assistant';
   content: string;
