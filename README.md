@@ -24,6 +24,9 @@ Web Dev Agent turns natural-language requests into runnable web projects. For ea
 | `AI_GATEWAY_BASE_URL` | Yes | Gateway base URL. For Makers Models, use `https://ai-gateway.edgeone.link/v1`. |
 | `AI_GATEWAY_MODEL` | No | Model ID. Defaults to `@makers/minimax-m2.7` (a built-in Makers model). |
 | `WEB_DEV_AGENT_DEBUG` | No | Set to `true` or `1` to enable redacted server-side debug logs. Defaults to off. |
+| `GITHUB_CLIENT_ID` | No | GitHub OAuth App client ID. Enables the "Export to GitHub" feature; when unset, the export button is hidden. |
+| `GITHUB_CLIENT_SECRET` | No | GitHub OAuth App client secret. Required together with `GITHUB_CLIENT_ID` to complete the OAuth token exchange. |
+| `GITHUB_OAUTH_REDIRECT_URI` | No | OAuth callback URL. Defaults to `<origin>/github/callback`; override only if your GitHub App is configured with a different callback. |
 
 This template follows the OpenAI-compatible standard — point these at Makers Models or any compatible provider.
 
