@@ -1520,7 +1520,8 @@ export default function Home() {
                   value={input}
                   onChange={(event) => setInput(event.target.value)}
                   onKeyDown={(event) => {
-                    if (event.key === 'Enter' && !event.shiftKey) {
+                    // 输入法合成中（如中文选词）按回车只用于选中候选词，不应提交。
+                    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
                       event.preventDefault();
                       void sendMessage(input);
                     }
@@ -1644,6 +1645,12 @@ export default function Home() {
               <Input
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
+                onKeyDown={(event) => {
+                  // 输入法合成中（如中文选词）的回车用于选中候选词，阻止其触发表单提交。
+                  if (event.key === 'Enter' && event.nativeEvent.isComposing) {
+                    event.preventDefault();
+                  }
+                }}
                 placeholder={t.workspace.changePlaceholder}
                 className="h-auto min-w-0 flex-1 border-0 bg-transparent p-0 text-sm shadow-none focus-visible:ring-0"
               />
