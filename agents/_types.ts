@@ -26,6 +26,33 @@ export type ConversationMessage = {
   content: string;
 };
 
+export type ActivityStatus = 'running' | 'completed' | 'failed' | 'stopped';
+
+export type PersistedActivity =
+  | {
+      kind: 'text';
+      content: string;
+    }
+  | {
+      kind: 'tool';
+      toolUseId: string;
+      name: string;
+      status: ActivityStatus;
+      inputSummary?: string;
+      outputSummary?: string;
+      startedAt: number;
+      endedAt?: number;
+    };
+
+export type PersistedActivityTurn = {
+  id: string;
+  user: string;
+  assistant: string;
+  status: 'completed' | 'failed' | 'stopped';
+  createdAt: number;
+  activities: PersistedActivity[];
+};
+
 export type StreamSend = (event: Record<string, unknown>) => void;
 
 export type ScaffoldLog = {
@@ -41,6 +68,7 @@ export type CodingAgentResult = {
   previewTouched?: boolean;
   wasCreated: boolean;
   fatal?: boolean;
+  stopped?: boolean;
 };
 
 export type BuildResult = {
@@ -50,11 +78,6 @@ export type BuildResult = {
   autoFixAttempts?: number;
   autoFixApplied?: boolean;
   fatal?: boolean;
-};
-
-export type ProjectFileInput = {
-  path: string;
-  content: string;
 };
 
 export type FileTreeItem = {
@@ -75,6 +98,8 @@ export type AgentProgressEvent =
         command?: string;
         phaseHint?: 'scaffold' | 'code' | 'install' | 'preview' | 'link';
         fileCount?: number;
+        inputSummary?: string;
+        startedAt?: number;
       };
     }
   | {
@@ -85,6 +110,9 @@ export type AgentProgressEvent =
         command?: string;
         ok: boolean;
         preview: string;
+        outputSummary?: string;
+        status?: ActivityStatus;
+        endedAt?: number;
       };
     }
   | {

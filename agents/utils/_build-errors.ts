@@ -74,6 +74,7 @@ export function buildAutoFixPrompt(
     '- Read the error message carefully and identify the specific issue.',
     '- Make the smallest complete fix needed for verification to pass.',
     '- Do not regenerate all files or rewrite unrelated code.',
+    '- Use write_project_file for exactly one complete file per call. Wait for each result before writing another file.',
     '- After fixing, call publish_preview to publish the preview.',
     '- Final response must be a concrete conclusion tailored to the original user request, covering what was completed and the preview/verification result. Do not use a generic completion line.',
     '- Do not include preview URLs, sandboxDebugUrl, or preview buttons in the final response.',

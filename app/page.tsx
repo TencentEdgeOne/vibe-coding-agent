@@ -11,6 +11,11 @@ import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
+import {
+  AgentConversation,
+  type AssistantActivity,
+  type ConversationMessage as WorkspaceConversationMessage,
+} from './components/agent-conversation';
 
 type TimelineStep =
   | { kind: 'status'; text: string }
@@ -20,7 +25,7 @@ type TimelineStep =
   | { kind: 'log'; stream: 'stdout' | 'stderr' | 'status'; text: string }
   | { kind: 'error'; text: string };
 
-type AssistantStatus = 'running' | 'done' | 'error';
+type AssistantStatus = 'running' | 'done' | 'error' | 'stopped';
 type NormalizedStepStatus = 'waiting' | 'running' | 'done' | 'error';
 type NormalizedStepPhase = 'scaffold' | 'modify' | 'code' | 'install' | 'preview' | 'link';
 
@@ -35,14 +40,10 @@ type ProcessEvent =
   | { kind: 'thinking'; content: string }
   | { kind: 'step'; phase: NormalizedStepPhase; step: NormalizedStep };
 
-type ChatMessage = {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
+type ChatMessage = WorkspaceConversationMessage & {
   thinkingContent?: string;
   processEvents?: ProcessEvent[];
   steps?: TimelineStep[];
-  status?: AssistantStatus;
 };
 
 type BuildInfo = {
@@ -77,6 +78,42 @@ type FileTree = {
   items: FileTreeItem[];
 };
 
+type ResumeData = {
+  ok?: boolean;
+  conversation_id?: string;
+  messages?: { role: 'user' | 'assistant'; content: string }[];
+  hasProject?: boolean;
+  preview?: LinkInfo;
+  files?: FileTree;
+  download?: LinkInfo;
+  activityHistory?: Array<{
+    id: string;
+    user: string;
+    assistant: string;
+    status: 'completed' | 'failed' | 'stopped';
+    activities: AssistantActivity[];
+  }>;
+};
+
+const resumeRequests = new Map<string, Promise<ResumeData | null>>();
+
+function fetchResume(conversationId: string) {
+  const existing = resumeRequests.get(conversationId);
+  if (existing) return existing;
+  const request = fetch('/resume', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      conversationId,
+      'makers-conversation-id': conversationId,
+    },
+    body: '{}',
+  }).then((response) => response.json().catch(() => null) as Promise<ResumeData | null>);
+  resumeRequests.set(conversationId, request);
+  void request.finally(() => window.setTimeout(() => resumeRequests.delete(conversationId), 1_000));
+  return request;
+}
+
 type ChatResponse = {
   ok?: boolean;
   reply?: string;
@@ -86,6 +123,7 @@ type ChatResponse = {
   preview?: LinkInfo;
   download?: LinkInfo;
   error?: string;
+  stopped?: boolean;
 };
 
 type ChatStreamEvent =
@@ -120,6 +158,8 @@ type ChatStreamEvent =
         command?: string;
         phaseHint?: NormalizedStepPhase;
         fileCount?: number;
+        inputSummary?: string;
+        startedAt?: number;
       };
     }
   | {
@@ -130,6 +170,9 @@ type ChatStreamEvent =
         command?: string;
         ok?: boolean;
         preview?: string;
+        outputSummary?: string;
+        status?: 'running' | 'completed' | 'failed' | 'stopped';
+        endedAt?: number;
       };
     }
   | {
@@ -148,6 +191,10 @@ type ChatStreamEvent =
       phase?: 'scaffold' | 'agent';
       stream?: InitLog['stream'];
       message?: string;
+    }
+  | {
+      type: 'ping';
+      ts?: number;
     };
 
 type Locale = 'zh' | 'en';
@@ -207,10 +254,21 @@ const TRANSLATIONS = {
       keepThinking: '保留思考',
       changePlaceholder: '描述你想修改的内容',
       send: '发送',
+      stop: '停止生成',
+      you: '你',
+      agentName: 'EdgeOne Agent',
+      activityRunning: '正在执行',
+      activityCompleted: '已完成',
+      activityFailed: '失败',
+      activityStopped: '已停止',
+      activityInput: '输入',
+      activityOutput: '输出',
       sandboxEyebrow: '沙箱',
       livePreview: '实时预览',
       files: '文件',
       preview: '预览',
+      application: '应用',
+      code: '代码',
       downloadSource: '下载源码',
       downloading: '打包中...',
       newProject: '新建项目',
@@ -345,10 +403,21 @@ const TRANSLATIONS = {
       keepThinking: 'Keep thinking',
       changePlaceholder: 'Ask for a change',
       send: 'Send',
+      stop: 'Stop generation',
+      you: 'You',
+      agentName: 'EdgeOne Agent',
+      activityRunning: 'Running',
+      activityCompleted: 'Completed',
+      activityFailed: 'Failed',
+      activityStopped: 'Stopped',
+      activityInput: 'Input',
+      activityOutput: 'Output',
       sandboxEyebrow: 'Sandbox',
       livePreview: 'Live preview',
       files: 'Files',
       preview: 'Preview',
+      application: 'Application',
+      code: 'Code',
       downloadSource: 'Download source',
       downloading: 'Packaging...',
       newProject: 'New project',
@@ -530,6 +599,14 @@ function createMessageId(role: ChatMessage['role']) {
   return `${role}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+function createWorkspaceTitle(messages: ChatMessage[], fallback: string) {
+  const firstRequest = messages.find((message) => message.role === 'user')?.content
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!firstRequest) return fallback;
+  return firstRequest.length > 48 ? `${firstRequest.slice(0, 48).trimEnd()}…` : firstRequest;
+}
+
 function sanitizeThinkingContent(value: string) {
   return value
     .replace(/\x1b\[[0-9;?]*[~A-Za-z]/g, '')
@@ -688,6 +765,7 @@ export default function Home() {
   const [openSteps, setOpenSteps] = useState<Record<string, boolean>>({});
   const [showProcessThinking, setShowProcessThinking] = useState(true);
   const [sandboxTab, setSandboxTab] = useState<'preview' | 'files'>('preview');
+  const [showWorkspacePanel, setShowWorkspacePanel] = useState(false);
   const [fileTree, setFileTree] = useState<FileTree | null>(null);
   const [filesRefreshing, setFilesRefreshing] = useState(false);
   const [activePreviewUrl, setActivePreviewUrl] = useState('');
@@ -701,6 +779,9 @@ export default function Home() {
   const previewRevisionRef = useRef(0);
   const processStepRevealTimersRef = useRef<Record<string, number>>({});
   const showProcessThinkingRef = useRef(true);
+  const chatAbortControllerRef = useRef<AbortController | null>(null);
+  const activeTurnIdRef = useRef('');
+  const stoppingRef = useRef(false);
 
   const t = TRANSLATIONS[language];
   const canSend = input.trim().length > 0 && !loading;
@@ -717,6 +798,10 @@ export default function Home() {
   const latestAssistantScrollSignature = latestAssistantMessage
     ? getAssistantScrollSignature(latestAssistantMessage)
     : '';
+  const workspaceTitle = useMemo(
+    () => createWorkspaceTitle(messages, language === 'zh' ? '未命名项目' : 'Untitled project'),
+    [language, messages],
+  );
   useEffect(() => {
     const { domain } = extractProjectName();
     setDeployUrl(getDeployUrl(domain));
@@ -754,26 +839,7 @@ export default function Home() {
 
     (async () => {
       try {
-        const resp = await fetch('/resume', {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            conversationId: existing,
-            'makers-conversation-id': existing,
-          },
-          body: '{}',
-        });
-        const data = (await resp.json().catch(() => null)) as
-          | {
-              ok?: boolean;
-              conversation_id?: string;
-              messages?: { role: 'user' | 'assistant'; content: string }[];
-              hasProject?: boolean;
-              preview?: LinkInfo;
-              files?: FileTree;
-              download?: LinkInfo;
-            }
-          | null;
+        const data = await fetchResume(existing);
         if (cancelled || !data?.ok) {
           return;
         }
@@ -784,16 +850,32 @@ export default function Home() {
         if (data.conversation_id) {
           setConversationId(data.conversation_id);
         }
-        setMessages(
-          history.map((item) => ({
-            id: createMessageId(item.role),
-            role: item.role,
-            content: item.content,
-            status: 'done' as AssistantStatus,
-          })),
-        );
+        const activityHistory = Array.isArray(data.activityHistory) ? data.activityHistory : [];
+        setMessages(activityHistory.length > 0
+          ? activityHistory.flatMap((turn) => [
+              {
+                id: `${turn.id}-user`,
+                role: 'user' as const,
+                content: turn.user,
+                status: 'done' as AssistantStatus,
+              },
+              {
+                id: `${turn.id}-assistant`,
+                role: 'assistant' as const,
+                content: turn.assistant,
+                activities: turn.activities,
+                status: turn.status === 'completed' ? 'done' as const : turn.status === 'failed' ? 'error' as const : 'stopped' as const,
+              },
+            ])
+          : history.map((item) => ({
+              id: createMessageId(item.role),
+              role: item.role,
+              content: item.content,
+              status: 'done' as AssistantStatus,
+            })));
         if (data.files) {
           setFileTree(data.files);
+          if (data.files.items.some((item) => item.type === 'file')) setShowWorkspacePanel(true);
         }
         if (data.download?.url) {
           setDownload(data.download);
@@ -801,6 +883,7 @@ export default function Home() {
         if (data.preview) {
           setPreview(data.preview);
           if (data.preview.url) {
+            setShowWorkspacePanel(true);
             const revision = previewRevisionRef.current + 1;
             previewRevisionRef.current = revision;
             activePreviewUrlRef.current = data.preview.url;
@@ -970,6 +1053,7 @@ export default function Home() {
       setFileTree(null);
       setFilesRefreshing(false);
       setSandboxTab('preview');
+      setShowWorkspacePanel(false);
       activePreviewUrlRef.current = '';
       activePreviewRevisionRef.current = 0;
       previewRevisionRef.current = 0;
@@ -984,6 +1068,7 @@ export default function Home() {
 
     const userMessageId = createMessageId('user');
     const assistantMessageId = createMessageId('assistant');
+    activeTurnIdRef.current = assistantMessageId;
 
     setMessages((current) => [
       ...current,
@@ -994,6 +1079,7 @@ export default function Home() {
         content: '',
         thinkingContent: '',
         processEvents: [],
+        activities: [],
         status: 'running',
         steps: [],
       },
@@ -1078,23 +1164,61 @@ export default function Home() {
       );
     };
 
-    const appendThinkingSegment = (text: string) => {
+    const appendTextActivity = (text: string) => {
       setMessages((current) =>
         current.map((item) => {
           if (item.id !== assistantMessageId) {
             return item;
           }
-          const nextThinkingContent = sanitizeThinkingContent(`${item.thinkingContent || ''}${text}`);
-          if (!nextThinkingContent) {
+          const nextText = sanitizeThinkingContent(text);
+          if (!nextText) {
             return item;
           }
+          const activities = [...(item.activities ?? [])];
+          const last = activities.at(-1);
+          if (
+            last?.kind === 'text'
+            && nextText.trim().length > 24
+            && last.content.includes(nextText.trim())
+          ) {
+            return item;
+          }
+          if (last?.kind === 'text') last.content += nextText;
+          else activities.push({ kind: 'text', content: nextText });
           return {
             ...item,
-            thinkingContent: nextThinkingContent,
-            processEvents: appendOrUpdateProcessThinking(item.processEvents ?? [], nextThinkingContent),
+            activities,
           };
         }),
       );
+    };
+
+    const upsertToolActivity = (
+      toolUseId: string,
+      patch: Partial<Extract<AssistantActivity, { kind: 'tool' }>>,
+    ) => {
+      setMessages((current) => current.map((item) => {
+        if (item.id !== assistantMessageId) return item;
+        const activities = [...(item.activities ?? [])];
+        const index = activities.findIndex(
+          (activity) => activity.kind === 'tool' && activity.toolUseId === toolUseId,
+        );
+        if (index >= 0) {
+          activities[index] = { ...activities[index], ...patch } as AssistantActivity;
+        } else {
+          activities.push({
+            kind: 'tool',
+            toolUseId,
+            name: patch.name || '<unknown>',
+            status: patch.status || 'running',
+            inputSummary: patch.inputSummary,
+            outputSummary: patch.outputSummary,
+            startedAt: patch.startedAt || Date.now(),
+            endedAt: patch.endedAt,
+          });
+        }
+        return { ...item, activities };
+      }));
     };
 
     const finalizeAssistant = (
@@ -1105,10 +1229,19 @@ export default function Home() {
       setMessages((current) =>
         current.map((item) =>
           item.id === assistantMessageId
-            ? {
-                ...item,
-                content: finalContent,
-                thinkingContent: '',
+              ? {
+                  ...item,
+                  content: finalContent,
+                  activities: (item.activities ?? []).map((activity) =>
+                    activity.kind === 'tool' && activity.status === 'running'
+                      ? {
+                          ...activity,
+                          status: finalStatus === 'stopped' ? 'stopped' as const : finalStatus === 'error' ? 'failed' as const : 'completed' as const,
+                          endedAt: Date.now(),
+                        }
+                      : activity,
+                  ),
+                  thinkingContent: '',
                 processEvents: appendPendingProcessSteps(item.processEvents ?? [], item.steps ?? [], t.timeline),
                 status: finalStatus,
               }
@@ -1187,15 +1320,15 @@ export default function Home() {
       setFilesRefreshing(false);
 
       const finalText = data.reply || data.error || t.response.noDisplay;
-      const finalStatus: AssistantStatus = data.ok === false ? 'error' : 'done';
+      const finalStatus: AssistantStatus = data.stopped ? 'stopped' : data.ok === false ? 'error' : 'done';
       finalizeAssistant(finalText, finalStatus);
     };
 
     const handleStreamEvent = (event: ChatStreamEvent) => {
       if (event.type === 'status' && event.message) {
-        appendStep({ kind: 'status', text: event.message });
         return;
       }
+      if (event.type === 'ping') return;
       if (event.type === 'result' && event.data) {
         applyResponse(event.data);
         return;
@@ -1215,7 +1348,7 @@ export default function Home() {
         return;
       }
       if (event.type === 'text_segment' && event.data?.text) {
-        appendThinkingSegment(event.data.text);
+        appendTextActivity(event.data.text);
         return;
       }
       if (event.type === 'tool_use' && event.data) {
@@ -1233,18 +1366,29 @@ export default function Home() {
           appendStep({ kind: 'modify_marker' });
           insertedModifyMarker = true;
         }
-        appendStep(toolUseStep);
+        upsertToolActivity(toolUseStep.id, {
+          name: toolUseStep.name,
+          status: 'running',
+          inputSummary: event.data.inputSummary || event.data.command,
+          startedAt: event.data.startedAt,
+        });
+        const shortName = shortenToolName(toolUseStep.name);
+        if (
+          event.data.fileCount
+          || ['write_project_file', 'write_project_files', 'files_write', 'write_files', 'files_make_dir'].includes(shortName)
+        ) {
+          setShowWorkspacePanel(true);
+          setSandboxTab('files');
+        }
         return;
       }
       if (event.type === 'tool_result' && event.data) {
         sawProjectActivity = true;
-        appendStep({
-          kind: 'tool_result',
-          toolUseId: event.data.tool_use_id || '',
-          toolName: event.data.toolName,
-          command: event.data.command,
-          ok: event.data.ok !== false,
-          preview: event.data.preview || '',
+        upsertToolActivity(event.data.tool_use_id || '', {
+          name: event.data.toolName || '<unknown>',
+          status: event.data.status || (event.data.ok === false ? 'failed' : 'completed'),
+          outputSummary: event.data.outputSummary || event.data.preview,
+          endedAt: event.data.endedAt || Date.now(),
         });
         return;
       }
@@ -1252,16 +1396,17 @@ export default function Home() {
         sawProjectActivity = true;
         setFileTree(event.data);
         setFilesRefreshing(false);
+        if (event.data.items.some((item) => item.type === 'file')) {
+          setShowWorkspacePanel(true);
+          setSandboxTab((current) => preview?.url ? current : 'files');
+        }
         return;
       }
       if (event.type === 'preview_ready' && event.data) {
         sawProjectActivity = true;
         if (event.data.preview) {
+          setShowWorkspacePanel(true);
           activatePreview(event.data.preview);
-          appendStep({
-            kind: 'status',
-            text: event.data.preview.url ? t.workspace.previewLinkReady : t.workspace.previewLinkMissing,
-          });
         }
         if (event.data.download) {
           setDownload(event.data.download);
@@ -1269,21 +1414,18 @@ export default function Home() {
         return;
       }
       if (event.type === 'error') {
-        appendStep({ kind: 'error', text: event.error || t.response.processingFailed });
         finalizeAssistant(event.error || t.response.processingFailed, 'error');
         return;
       }
       if (event.type === 'log' && event.message) {
         sawProjectActivity = true;
-        appendStep({
-          kind: 'log',
-          stream: (event.stream as 'stdout' | 'stderr' | 'status') || 'stdout',
-          text: event.message || '',
-        });
       }
     };
 
     try {
+      const requestAbortController = new AbortController();
+      chatAbortControllerRef.current = requestAbortController;
+      stoppingRef.current = false;
       const response = await fetch('/chat', {
         method: 'POST',
         headers: {
@@ -1293,8 +1435,10 @@ export default function Home() {
         },
         body: JSON.stringify({
           message: trimmed,
+          turnId: assistantMessageId,
           ...(isStartingFromHome ? { resetProject: true } : {}),
         }),
+        signal: requestAbortController.signal,
       });
 
       const contentType = response.headers.get('content-type') || '';
@@ -1330,6 +1474,9 @@ export default function Home() {
         handleStreamEvent(JSON.parse(buffer) as ChatStreamEvent);
       }
     } catch (error) {
+      if ((error instanceof Error && error.name === 'AbortError') || stoppingRef.current) {
+        return;
+      }
       const msg = `${t.response.requestFailedPrefix}${error instanceof Error ? error.message : t.response.unknownError}`;
       appendStep({ kind: 'error', text: msg });
       finalizeAssistant(msg, 'error');
@@ -1355,12 +1502,79 @@ export default function Home() {
       });
       setLoading(false);
       setFilesRefreshing(false);
+      chatAbortControllerRef.current = null;
+      activeTurnIdRef.current = '';
+      stoppingRef.current = false;
     }
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await sendMessage(input);
+  }
+
+  async function handleStop() {
+    const cid = conversationId;
+    if (!loading || !cid || stoppingRef.current) return;
+    stoppingRef.current = true;
+    const stoppedText = language === 'zh'
+      ? '已停止本次生成，你可以继续描述下一步修改。'
+      : 'Generation stopped. You can continue with another change.';
+    setMessages((current) => current.map((item, index) => {
+      if (index !== current.length - 1 || item.role !== 'assistant' || item.status !== 'running') return item;
+      return {
+        ...item,
+        content: stoppedText,
+        status: 'stopped',
+        activities: (item.activities ?? []).map((activity) =>
+          activity.kind === 'tool' && activity.status === 'running'
+            ? { ...activity, status: 'stopped' as const, endedAt: Date.now() }
+            : activity,
+        ),
+      };
+    }));
+    setLoading(false);
+    setFilesRefreshing(false);
+
+    const currentAssistant = [...messages].reverse().find((item) => item.role === 'assistant' && item.status === 'running');
+    const currentUser = [...messages].reverse().find((item) => item.role === 'user');
+    const stoppedActivities = (currentAssistant?.activities ?? []).map((activity) =>
+      activity.kind === 'tool' && activity.status === 'running'
+        ? { ...activity, status: 'stopped' as const, endedAt: Date.now() }
+        : activity,
+    );
+    const stoppedTurn = {
+      id: activeTurnIdRef.current,
+      user: currentUser?.content || '',
+      assistant: stoppedText,
+      status: 'stopped',
+      createdAt: Date.now(),
+      activities: stoppedActivities,
+    };
+
+    const stopRequest = (async () => {
+      const request = (headers: HeadersInit) => fetch('/stop', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          conversation_id: cid,
+          turn: stoppedTurn,
+        }),
+      });
+      const response = await request({ 'content-type': 'application/json' });
+      if (response.status !== 400) return response;
+      const error = await response.clone().json().catch(() => null) as { code?: string } | null;
+      if (error?.code !== 'AGENT_CONVERSATION_ID_REQUIRED') return response;
+      // Older local Makers runtimes validate every agent route before reading the
+      // stop body. Retry with the header there; current production runtimes use
+      // the body-only request above so cancellation is not sticky-routed.
+      return request({
+        'content-type': 'application/json',
+        'makers-conversation-id': cid,
+      });
+    })().catch(() => null);
+    chatAbortControllerRef.current?.abort();
+    await stopRequest;
   }
 
   async function handleDownload() {
@@ -1461,6 +1675,7 @@ export default function Home() {
     setFileTree(null);
     setFilesRefreshing(false);
     setSandboxTab('preview');
+    setShowWorkspacePanel(false);
     activePreviewUrlRef.current = '';
     activePreviewRevisionRef.current = 0;
     previewRevisionRef.current = 0;
@@ -1565,119 +1780,43 @@ export default function Home() {
       )}
 
       <section
-        className={`min-h-0 flex-1 grid-rows-[minmax(0,0.44fr)_minmax(0,0.56fr)] lg:grid-cols-[minmax(400px,34%)_1fr] lg:grid-rows-1 ${
-          hasWorkspace ? 'grid' : 'hidden'
+        className={`min-h-0 min-w-0 w-full flex-1 ${
+          hasWorkspace
+            ? showWorkspacePanel
+              ? 'grid grid-rows-[minmax(0,0.46fr)_minmax(0,0.54fr)] lg:grid-cols-[minmax(420px,42%)_minmax(0,1fr)] lg:grid-rows-1'
+              : 'block'
+            : 'hidden'
         }`}
       >
-        {/* ===== LEFT: chat + events ===== */}
-        <div className="flex min-h-0 flex-col border-b border-border bg-[#fbfbfc] lg:border-r lg:border-b-0">
-          <div
-            ref={conversationScrollRef}
-            className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-[22px]"
-          >
-            {messages.map((message) => {
-              if (message.role === 'user') {
-                return (
-                  <div key={message.id} className="flex justify-end">
-                    <div className="btn-brand max-w-[80%] min-w-0 overflow-hidden rounded-[16px_16px_4px_16px] px-[15px] py-[11px] text-sm leading-6">
-                      <span className="whitespace-pre-wrap break-words">{message.content}</span>
-                    </div>
-                  </div>
-                );
-              }
-
-              const status: AssistantStatus = message.status || 'done';
-              const isOpen = openSteps[message.id] ?? status === 'running';
-              const processEvents = message.processEvents ?? [];
-              const hasProcessEvents = processEvents.length > 0;
-              const hasProcessPanel = status === 'running' || hasProcessEvents;
-              const hasAssistantBubble = Boolean(message.content);
-
-              return (
-                <div key={message.id} className="flex min-w-0 flex-col gap-3">
-                  <div className="flex items-center gap-2.5">
-                    <span
-                      aria-hidden="true"
-                      className="grid size-[26px] shrink-0 place-items-center rounded-lg text-[11px] font-bold text-white"
-                      style={{ background: 'linear-gradient(135deg, #2f6bff, #0052d9)' }}
-                    >
-                      EO
-                    </span>
-                    <span className="text-[13px] font-bold text-foreground">EdgeOne Agent</span>
-                  </div>
-                  {hasProcessPanel && (
-                    <ProcessPanel
-                      events={processEvents}
-                      running={status === 'running'}
-                      open={isOpen}
-                      showThinking={showProcessThinking}
-                      onToggle={() =>
-                        setOpenSteps((current) => ({
-                          ...current,
-                          [message.id]: !isOpen,
-                        }))
-                      }
-                      onToggleThinking={() => setShowProcessThinking((current) => !current)}
-                      copy={t.timeline}
-                      labels={{
-                        hide: t.workspace.hideSteps,
-                        view: t.workspace.viewSteps,
-                        steps: t.workspace.steps,
-                        keepThinking: t.workspace.keepThinking,
-                      }}
-                    />
-                  )}
-                  {hasAssistantBubble && (
-                    <div className="min-w-0 overflow-hidden text-sm leading-[1.6] break-words text-secondary-foreground">
-                      <TypewriterMarkdownMessage content={message.content} />
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="p-4">
-            <form
-              onSubmit={handleSubmit}
-              className="flex items-center gap-2.5 rounded-xl border border-border bg-card px-3 py-2.5 shadow-[0_6px_18px_-14px_rgba(20,30,60,0.4)] focus-within:border-primary/50"
-            >
-              <Input
-                value={input}
-                onChange={(event) => setInput(event.target.value)}
-                onKeyDown={(event) => {
-                  // 输入法合成中（如中文选词）的回车用于选中候选词，阻止其触发表单提交。
-                  if (event.key === 'Enter' && event.nativeEvent.isComposing) {
-                    event.preventDefault();
-                  }
-                }}
-                placeholder={t.workspace.changePlaceholder}
-                className="h-auto min-w-0 flex-1 border-0 bg-transparent p-0 text-sm shadow-none focus-visible:ring-0"
-              />
-              <button
-                type="button"
-                onClick={handleNewProject}
-                disabled={loading}
-                title={t.workspace.newProject}
-                aria-label={t.workspace.newProject}
-                className="grid size-8 shrink-0 place-items-center rounded-[9px] border border-border bg-muted text-secondary-foreground transition hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <Plus className="size-4" />
-              </button>
-              <button
-                type="submit"
-                disabled={!canSend}
-                aria-label={t.workspace.send}
-                className="btn-brand grid size-8 shrink-0 place-items-center rounded-[9px]"
-              >
-                <ArrowUp className="size-4" />
-              </button>
-            </form>
-          </div>
-        </div>
+        <AgentConversation
+          title={workspaceTitle}
+          messages={messages}
+          input={input}
+          loading={loading}
+          canSend={canSend}
+          compact={showWorkspacePanel}
+          copy={{
+            agentName: t.workspace.agentName,
+            you: t.workspace.you,
+            running: t.workspace.activityRunning,
+            completed: t.workspace.activityCompleted,
+            failed: t.workspace.activityFailed,
+            stopped: t.workspace.activityStopped,
+            input: t.workspace.activityInput,
+            output: t.workspace.activityOutput,
+            placeholder: t.workspace.changePlaceholder,
+            send: t.workspace.send,
+            stop: t.workspace.stop,
+            newProject: t.workspace.newProject,
+          }}
+          onInputChange={setInput}
+          onSubmit={() => void sendMessage(input)}
+          onStop={() => void handleStop()}
+          onNewProject={handleNewProject}
+        />
 
         {/* ===== RIGHT: preview / files ===== */}
-        <div className="flex min-h-0 flex-col bg-[#fbfbfc]">
+        {showWorkspacePanel && <div className="workspace-result-panel flex min-h-0 min-w-0 w-full flex-col overflow-hidden bg-[#fbfbfc]">
           <div className="flex items-center gap-1 px-3.5 py-2.5">
             <Tabs
               value={sandboxTab}
@@ -1688,13 +1827,13 @@ export default function Home() {
                   value="preview"
                   className="h-auto rounded-[8px] px-3 py-1.5 text-[13px] font-semibold text-muted-foreground transition hover:text-secondary-foreground data-[state=active]:bg-accent data-[state=active]:text-accent-foreground data-[state=active]:shadow-none"
                 >
-                  {t.workspace.preview}
+                  {t.workspace.application}
                 </TabsTrigger>
                 <TabsTrigger
                   value="files"
                   className="h-auto rounded-[8px] px-3 py-1.5 text-[13px] font-semibold text-muted-foreground transition hover:text-secondary-foreground data-[state=active]:bg-accent data-[state=active]:text-accent-foreground data-[state=active]:shadow-none"
                 >
-                  {t.workspace.files}
+                  {t.workspace.code}
                   {fileCount ? ` ${fileCount}` : ''}
                   {filesRefreshing && (
                     <span className="ml-1 text-[10px] opacity-70">{t.files.refreshing}</span>
@@ -1835,7 +1974,7 @@ export default function Home() {
               )}
             </div>
           )}
-        </div>
+        </div>}
       </section>
 
       {githubNotice && (
@@ -2491,7 +2630,7 @@ function classifyToolUse(step: Extract<TimelineStep, { kind: 'tool_use' }>, copy
     return { phase: 'scaffold', runningSummary: copy.summaries.scaffoldRunning };
   }
 
-  if (toolName === 'write_project_files' || toolName === 'write_files') {
+  if (toolName === 'write_project_file' || toolName === 'write_project_files' || toolName === 'write_files') {
     return {
       phase: 'code',
       runningSummary: copy.summaries.codeRunningUpdate,

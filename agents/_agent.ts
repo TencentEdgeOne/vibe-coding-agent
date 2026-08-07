@@ -19,7 +19,7 @@ import {
   buildPreviewLinkTool,
   buildProjectScaffoldTool,
   buildPublishPreviewTool,
-  buildWriteProjectFilesTool,
+  buildWriteProjectFileTool,
 } from './tools/_project-tools';
 import type {
   AgentProgressEvent,
@@ -34,6 +34,7 @@ import {
   truncateForStream,
 } from './utils/_text';
 import { debugLog, isDebugEnabled } from './utils/_debug';
+import { summarizeToolInput, summarizeToolOutput } from './utils/_activity';
 
 function pickEnvValue(context: any, key: string) {
   const value = context?.env?.[key];
@@ -75,6 +76,14 @@ function isBrowserSandboxToolName(name: string) {
   return name.toLowerCase().includes('browser');
 }
 
+function isGenericProjectWriteToolName(name: string) {
+  const normalized = name.toLowerCase();
+  return normalized === 'files_write'
+    || normalized === 'write_files'
+    || normalized.endsWith('__files_write')
+    || normalized.endsWith('__write_files');
+}
+
 function extractVisibleNarrationDelta(event: SDKMessage) {
   if (event.type !== 'stream_event') {
     return '';
@@ -86,9 +95,6 @@ function extractVisibleNarrationDelta(event: SDKMessage) {
   const delta = streamEvent.delta;
   if (delta?.type === 'text_delta' && typeof delta.text === 'string') {
     return sanitizeNarrationText(delta.text);
-  }
-  if (delta?.type === 'thinking_delta' && typeof delta.thinking === 'string') {
-    return sanitizeNarrationText(delta.thinking);
   }
   return '';
 }
@@ -124,14 +130,14 @@ function isToolUseContentBlock(block: unknown): block is {
   return record.type === 'tool_use' || record.type === 'mcp_tool_use';
 }
 
-function extractThinkingBlockText(block: unknown) {
+function extractVisibleTextBlock(block: unknown) {
   const record = block && typeof block === 'object'
     ? block as Record<string, unknown>
     : {};
-  if (record.type !== 'thinking' || typeof record.thinking !== 'string') {
+  if (record.type !== 'text' || typeof record.text !== 'string') {
     return '';
   }
-  return sanitizeNarrationText(record.thinking);
+  return sanitizeNarrationText(record.text);
 }
 
 function parseToolInputJson(rawJson: string, fallback: unknown) {
@@ -221,13 +227,8 @@ function inferToolProgress(name: string, input: unknown): {
   if (toolName === 'files_write' || toolName === 'write_files' || toolName === 'files_make_dir' || toolName === 'files_remove') {
     return { phaseHint: 'code' };
   }
-  if (toolName === 'write_project_files') {
-    const record = input && typeof input === 'object' ? input as Record<string, unknown> : {};
-    const files = Array.isArray(record.files) ? record.files : [];
-    return {
-      phaseHint: 'code',
-      ...(files.length > 0 ? { fileCount: files.length } : {}),
-    };
+  if (toolName === 'write_project_file') {
+    return { phaseHint: 'code', fileCount: 1 };
   }
   if (toolName === 'commands') {
     const cmd = extractSandboxCommand(input);
@@ -271,13 +272,14 @@ export function buildPrompt(
     [
       'If ensure_project_scaffold returns created=true, complete these steps in order:',
       '1. Choose the tech stack and file list based on the user request.',
-      '2. Call write_project_files once or a small number of times to batch-write complete runnable files. The argument must be {"files":[{"path":"relative/path","content":"complete file contents"}]}.',
+      '2. Write the project incrementally with write_project_file. Each call must contain exactly one complete file: {"path":"relative/path","content":"complete file contents"}. Call it once per file, in dependency order, and wait for each tool result before issuing the next write_project_file call. Never send multiple write_project_file calls in the same assistant message.',
       '3. Install dependencies for the generated project. Use npm install by default for Node/frontend projects, use pnpm/yarn only when explicitly requested, and use python -m pip install -r requirements.txt for Python projects.',
       `4. Call the publish_preview tool. It starts the internal service on port ${PREVIEW_SERVER_PORT}, verifies that ${PREVIEW_PATH_PREFIX} is HTTP-ready, and generates the public preview with sandbox.getHost(${PREVIEW_PUBLIC_PORT}) + ${PREVIEW_PATH_PREFIX} + envdAccessToken. Do not hand-write background npm run dev commands.`,
     ].join('\n'),
     'Do not write only placeholder pages. Generated files must be complete, internally consistent, and directly installable and runnable.',
-    'Prefer write_project_files to create or replace multiple project files. Paths must be relative to the project directory. Prefer passing files as an array, not a string.',
-    'write_project_files / files_write are only for UTF-8 text source and configuration files. Do not write images, fonts, audio/video, archives, or other binary assets, and do not write large base64 blocks as text.',
+    'Always use write_project_file for UTF-8 project source and configuration files, including one-file edits to existing projects. Do not use files_write, write_files, or shell commands to create or replace text source files.',
+    'write_project_file accepts exactly one file per call. Never pass an array, files map, entries object, or more than one path. Finish one tool call before starting the next so the user can see steady file-by-file progress.',
+    'write_project_file is only for UTF-8 text source and configuration files. Do not write images, fonts, audio/video, archives, or other binary assets, and do not write large base64 blocks as text.',
     'Avoid generating images, fonts, audio/video, archives, or other binary files when possible. Prefer CSS, SVG, emoji, public remote asset URLs, or existing dependency capabilities for visual effects to save tokens and write cost.',
     'Only create binary assets when the user explicitly requests them, the feature truly depends on them, and there is no lightweight alternative. In that case, use the sandbox commands tool inside the project directory to generate, download, or decode assets. Do not write them directly with file-writing tools.',
     'Do not hand-write lockfiles, node_modules, .next, dist, build, cache directories, or package-manager generated artifacts.',
@@ -316,6 +318,7 @@ export async function runCodingAgent(
   onScaffoldLog?: (log: ScaffoldLog) => void,
   onProgress?: (event: AgentProgressEvent) => void,
   onScaffoldDone?: () => void | Promise<void>,
+  abortSignal?: AbortSignal,
 ): Promise<CodingAgentResult> {
   // Prefer AI Gateway for model access, with backward-compatible Anthropic / DeepSeek config.
   const apiKey = pickEnvValue(context, 'AI_GATEWAY_API_KEY')
@@ -374,13 +377,25 @@ export async function runCodingAgent(
     sdkEnv.ANTHROPIC_API_KEY = authToken;
   }
   try {
+    if (abortSignal?.aborted) {
+      return {
+        success: false,
+        output: null,
+        error: null,
+        projectTouched: false,
+        wasCreated: false,
+        stopped: true,
+      };
+    }
     const mcpServerName = SANDBOX_MCP_SERVER_NAME;
     if (typeof context.tools?.toClaudeMcpServer !== 'function') {
       throw new Error('The current Pages Agent Runtime is missing context.tools.toClaudeMcpServer. Please upgrade to a runtime that supports the new pages-agent-toolkit Tools API.');
     }
     const edgeoneMcp = context.tools.toClaudeMcpServer(mcpServerName, { alwaysLoad: true });
-    const sandboxTools = edgeoneMcp.tools.filter((tool) => !isBrowserSandboxToolName(tool.name));
-    const sandboxAllowedTools = edgeoneMcp.allowedTools.filter((toolName) => !isBrowserSandboxToolName(toolName));
+    const sandboxTools = edgeoneMcp.tools.filter((tool) =>
+      !isBrowserSandboxToolName(tool.name) && !isGenericProjectWriteToolName(tool.name));
+    const sandboxAllowedTools = edgeoneMcp.allowedTools.filter((toolName) =>
+      !isBrowserSandboxToolName(toolName) && !isGenericProjectWriteToolName(toolName));
     let projectTouched = false;
     let previewTouched = false;
     let wasCreated = false;
@@ -407,7 +422,7 @@ export async function runCodingAgent(
         previewTouched = true;
       },
     );
-    const writeProjectFilesTool = buildWriteProjectFilesTool(
+    const writeProjectFileTool = buildWriteProjectFileTool(
       context,
       state,
       async () => {
@@ -418,14 +433,14 @@ export async function runCodingAgent(
     const mcpTools = [
       ...sandboxTools,
       scaffoldTool,
-      writeProjectFilesTool,
+      writeProjectFileTool,
       publishPreviewTool,
       previewLinkTool,
     ];
     const mcpAllowedTools = [
       ...sandboxAllowedTools,
       `mcp__${mcpServerName}__ensure_project_scaffold`,
-      `mcp__${mcpServerName}__write_project_files`,
+      `mcp__${mcpServerName}__write_project_file`,
       `mcp__${mcpServerName}__publish_preview`,
       `mcp__${mcpServerName}__get_preview_link`,
     ];
@@ -436,10 +451,13 @@ export async function runCodingAgent(
       alwaysLoad: true,
     });
 
+    const sdkAbortController = new AbortController();
+    const abortSdkQuery = () => sdkAbortController.abort();
+    abortSignal?.addEventListener('abort', abortSdkQuery, { once: true });
     const sdkOptions: Parameters<typeof query>[0]['options'] = {
       model,
       permissionMode: 'dontAsk',
-      // maxTurns: 100,
+      maxTurns: 100,
       // Disable Claude Code built-in local tools so the model can only read,
       // write, and execute through EdgeOne sandbox MCP tools.
       tools: [],
@@ -456,6 +474,7 @@ export async function runCodingAgent(
       cwd: process.cwd(),
       settingSources: ['project'],
       debug: isDebugEnabled(context),
+      abortController: sdkAbortController,
       stderr: (data: string) => {
         debugLog(context, '[claude-code stderr]', data.trimEnd());
       },
@@ -479,6 +498,7 @@ export async function runCodingAgent(
     // can update the correct progress step even when model providers stream
     // partial tool inputs differently.
     const toolContextById = new Map<string, { name: string; command?: string }>();
+    const toolStartedAtById = new Map<string, number>();
     const pendingToolUseBlocks = new Map<number, StreamingToolUseBlock>();
     const emittedToolUseProgress = new Map<string, string>();
     let emittedNarration = '';
@@ -524,11 +544,13 @@ export async function runCodingAgent(
       const progress = typeof toolUse.name === 'string'
         ? inferToolProgress(toolName, toolUse.input)
         : {};
+      const inputSummary = summarizeToolInput(toolName, toolUse.input, state.appDir);
       const progressSignature = JSON.stringify({
         name: toolName,
         command,
         phaseHint: progress.phaseHint || '',
         fileCount: progress.fileCount || 0,
+        inputSummary,
       });
       if (toolUseId) {
         const previousSignature = emittedToolUseProgress.get(toolUseId);
@@ -544,6 +566,10 @@ export async function runCodingAgent(
           ...(command ? { command } : {}),
         });
       }
+      const startedAt = toolUseId
+        ? toolStartedAtById.get(toolUseId) || Date.now()
+        : Date.now();
+      if (toolUseId) toolStartedAtById.set(toolUseId, startedAt);
       onProgress?.({
         type: 'tool_use',
         data: {
@@ -551,11 +577,17 @@ export async function runCodingAgent(
           name: toolName,
           ...(command ? { command } : {}),
           ...progress,
+          inputSummary,
+          startedAt,
         },
       });
     };
 
     for await (const event of sdkQuery as AsyncIterable<SDKMessage>) {
+      if (abortSignal?.aborted) {
+        sdkAbortController.abort();
+        break;
+      }
       debugLog(context, '[agent-event]', summarizeSdkMessage(event));
       // Forward structured tool progress and high-level model narration. Tool
       // input JSON and non-text stream deltas stay out of the UI.
@@ -611,7 +643,7 @@ export async function runCodingAgent(
         if (Array.isArray(blocks)) {
           for (const b of blocks) {
             emitNarration(
-              extractThinkingBlockText(b),
+              extractVisibleTextBlock(b),
               typeof event.uuid === 'string' ? event.uuid : '',
               true,
             );
@@ -642,6 +674,9 @@ export async function runCodingAgent(
                   ...(toolContext?.command ? { command: toolContext.command } : {}),
                   ok: b.is_error !== true,
                   preview: truncateForStream(text, 500),
+                  outputSummary: summarizeToolOutput(text, state.appDir),
+                  status: b.is_error === true ? 'failed' : 'completed',
+                  endedAt: Date.now(),
                 },
               });
               // Once ensure_project_scaffold succeeds, notify the outer pipeline to
@@ -682,6 +717,20 @@ export async function runCodingAgent(
       if (fatalError) {
         break;
       }
+    }
+
+    abortSignal?.removeEventListener('abort', abortSdkQuery);
+
+    if (abortSignal?.aborted || sdkAbortController.signal.aborted) {
+      return {
+        success: false,
+        output: null,
+        error: null,
+        projectTouched,
+        previewTouched,
+        wasCreated,
+        stopped: true,
+      };
     }
 
     // Fatal errors take priority over normal results, even if the SDK produced
@@ -736,6 +785,16 @@ export async function runCodingAgent(
       wasCreated,
     };
   } catch(e) {
+    if (abortSignal?.aborted || (e instanceof Error && e.name === 'AbortError')) {
+      return {
+        success: false,
+        output: null,
+        error: null,
+        projectTouched: false,
+        wasCreated: false,
+        stopped: true,
+      };
+    }
     console.error(e);
     const message = e instanceof Error ? e.message : String(e);
     const fatal = detectFatalToolError(message);

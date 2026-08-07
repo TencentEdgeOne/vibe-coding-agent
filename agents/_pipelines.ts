@@ -3,11 +3,13 @@ import { AUTO_FIX_MAX_ATTEMPTS } from './_constants';
 import {
   appendTurn,
   clearProjectSnapshot,
+  getActivityHistory,
   getHistory,
   getProjectSnapshot,
   getProjectState,
   saveProjectSnapshot,
   saveProjectState,
+  saveActivityTurn,
 } from './_memory';
 import {
   createProjectState,
@@ -26,6 +28,7 @@ import type {
   AgentProgressEvent,
   BuildStatus,
   FileTreeItem,
+  PersistedActivity,
   ProjectState,
   ScaffoldLog,
   StreamSend,
@@ -101,7 +104,10 @@ function isGenericCompletionReply(text: string) {
     || /^theagentdidnotreturnanythingdisplayable$/i.test(normalized);
 }
 
-export function createStreamResponse(run: (send: StreamSend) => Promise<void>) {
+export function createStreamResponse(
+  run: (send: StreamSend) => Promise<void>,
+  signal?: AbortSignal,
+) {
   const encoder = new TextEncoder();
   let closed = false;
 
@@ -111,20 +117,36 @@ export function createStreamResponse(run: (send: StreamSend) => Promise<void>) {
         if (closed) {
           return;
         }
-        controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+        try {
+          controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+        } catch {
+          closed = true;
+        }
       };
+
+      const heartbeat = setInterval(() => send({ type: 'ping', ts: Date.now() }), 5_000);
 
       run(send)
         .catch((error) => {
-          send({
-            type: 'error',
-            error: error instanceof Error ? error.message : 'Request processing failed.',
-          });
+          if (!signal?.aborted) {
+            send({
+              type: 'error',
+              error: error instanceof Error ? error.message : 'Request processing failed.',
+            });
+          }
         })
         .finally(() => {
+          clearInterval(heartbeat);
           closed = true;
-          controller.close();
+          try {
+            controller.close();
+          } catch {
+            // The client may already have disconnected.
+          }
         });
+    },
+    cancel() {
+      closed = true;
     },
   });
 
@@ -132,6 +154,8 @@ export function createStreamResponse(run: (send: StreamSend) => Promise<void>) {
     headers: {
       'content-type': 'application/x-ndjson; charset=utf-8',
       'cache-control': 'no-cache, no-transform',
+      connection: 'keep-alive',
+      'x-accel-buffering': 'no',
       'x-content-type-stream': 'true',
     },
   });
@@ -141,12 +165,9 @@ function getRequestHeader(context: any, name: string): string {
   const headers = context?.request?.headers;
   if (!headers) return '';
 
-  if (typeof headers.get === 'function') {
-    return String(headers.get(name) || '');
-  }
-
   const lowerName = name.toLowerCase();
-  const value = headers[name] ?? headers[lowerName];
+  const directValue = headers[name] ?? headers[lowerName];
+  const value = directValue ?? Object.entries(headers).find(([key]) => key.toLowerCase() === lowerName)?.[1];
   return typeof value === 'string' ? value : String(value || '');
 }
 
@@ -485,6 +506,7 @@ export async function runProjectResumePipeline(context: any): Promise<Response> 
 
   const state = await getProjectState(context, conversationId);
   const messages = await getHistory(context, conversationId);
+  const activityHistory = await getActivityHistory(context, conversationId);
 
   // Does the sandbox still hold the project files?
   let hasFiles = false;
@@ -509,7 +531,7 @@ export async function runProjectResumePipeline(context: any): Promise<Response> 
   if (!hasFiles) {
     // Nothing to resume (brand-new visitor, or never generated). The frontend
     // stays on the home screen. Still return any chat history for completeness.
-    return json({ ok: true, conversation_id: conversationId, messages, hasProject: false });
+    return json({ ok: true, conversation_id: conversationId, messages, activityHistory, hasProject: false });
   }
 
   state.created = true;
@@ -554,6 +576,7 @@ export async function runProjectResumePipeline(context: any): Promise<Response> 
     ok: true,
     conversation_id: conversationId,
     messages,
+    activityHistory,
     hasProject: true,
     preview,
     files: { root: state.appDir, items },
@@ -567,12 +590,13 @@ export async function runChatPipeline(
   context: any,
   message: string,
   send: StreamSend,
-  options: { resetProject?: boolean } = {},
+  options: { resetProject?: boolean; turnId?: string } = {},
 ) {
   const contextConversationId = String(context.conversation_id || '');
   const pagesHeaderConversationId = getRequestHeader(context, 'makers-conversation-id');
   const headerConversationId = getRequestHeader(context, 'conversationId');
   const conversationId = contextConversationId || pagesHeaderConversationId || headerConversationId;
+  const abortSignal = context?.request?.signal as AbortSignal | undefined;
 
   if (!message) {
     send({
@@ -655,6 +679,75 @@ export async function runChatPipeline(
   const history = shouldResetProject ? [] : await getHistory(context, conversationId);
   const isInitialProjectTurn = !state.created;
   const hiddenScaffoldToolUseIds = new Set<string>();
+  const activityTurnId = options.turnId
+    || String(context?.run_id || `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const activities: PersistedActivity[] = [];
+
+  const recordProgress = (event: AgentProgressEvent) => {
+    if (event.type === 'text_segment') {
+      const text = event.data.text;
+      if (!text) return;
+      const last = activities.at(-1);
+      if (last?.kind === 'text') last.content += text;
+      else activities.push({ kind: 'text', content: text });
+      return;
+    }
+
+    if (event.type === 'tool_use') {
+      const existing = activities.find(
+        (item): item is Extract<PersistedActivity, { kind: 'tool' }> =>
+          item.kind === 'tool' && item.toolUseId === event.data.id,
+      );
+      if (existing) {
+        existing.name = event.data.name || existing.name;
+        existing.inputSummary = event.data.inputSummary || existing.inputSummary;
+        return;
+      }
+      activities.push({
+        kind: 'tool',
+        toolUseId: event.data.id,
+        name: event.data.name,
+        status: 'running',
+        inputSummary: event.data.inputSummary,
+        startedAt: event.data.startedAt || Date.now(),
+      });
+      return;
+    }
+
+    const existing = activities.find(
+      (item): item is Extract<PersistedActivity, { kind: 'tool' }> =>
+        item.kind === 'tool' && item.toolUseId === event.data.tool_use_id,
+    );
+    if (existing) {
+      existing.status = event.data.status || (event.data.ok ? 'completed' : 'failed');
+      existing.outputSummary = event.data.outputSummary || event.data.preview;
+      existing.endedAt = event.data.endedAt || Date.now();
+    }
+  };
+
+  const persistConversationTurn = async (
+    assistant: string,
+    status: 'completed' | 'failed' | 'stopped',
+  ) => {
+    if (status === 'stopped') {
+      for (const activity of activities) {
+        if (activity.kind === 'tool' && activity.status === 'running') {
+          activity.status = 'stopped';
+          activity.endedAt = Date.now();
+        }
+      }
+    }
+    await appendTurn(context, conversationId, 'user', message);
+    await appendTurn(context, conversationId, 'assistant', assistant);
+    await saveActivityTurn(context, conversationId, {
+      id: activityTurnId,
+      user: message,
+      assistant,
+      status,
+      createdAt: Date.now(),
+      activities,
+    });
+  };
 
   const handleScaffoldLog = (log: ScaffoldLog) => {
     if (!isInitialProjectTurn) {
@@ -687,6 +780,7 @@ export async function runChatPipeline(
       if (text.length === 0) {
         return;
       }
+      recordProgress({ ...event, data: { ...event.data, text } });
       send({
         ...event,
         data: {
@@ -696,6 +790,7 @@ export async function runChatPipeline(
       } as unknown as Record<string, unknown>);
       return;
     }
+    recordProgress(event);
     send(event as unknown as Record<string, unknown>);
   };
   const pushFileTree = async (fallbackMessage: string): Promise<FileTreeItem[]> => {
@@ -737,7 +832,29 @@ export async function runChatPipeline(
     handleScaffoldLog,
     forwardProgress,
     pushEarlyFileTree,
+    abortSignal,
   );
+
+  if (modelResult.stopped || abortSignal?.aborted) {
+    const stoppedReply = /[\u3400-\u9fff]/.test(message)
+      ? '已停止本次生成，你可以继续描述下一步修改。'
+      : 'Generation stopped. You can continue with another change.';
+    await persistConversationTurn(stoppedReply, 'stopped');
+    await saveProjectState(context, conversationId, state);
+    if (modelResult.projectTouched) await persistProjectSnapshot(context, conversationId, state);
+    send({
+      type: 'result',
+      data: {
+        ok: false,
+        stopped: true,
+        reply: stoppedReply,
+        conversation_id: conversationId,
+        build: { status: 'skipped' as BuildStatus },
+        preview: state.previewUrl ? { url: state.previewUrl, sandboxDebugUrl: state.sandboxDebugUrl } : {},
+      },
+    });
+    return;
+  }
   const sanitizedModelOutput = modelResult.success && modelResult.output
     ? sanitizeAssistantText(modelResult.output)
     : '';
@@ -761,8 +878,7 @@ export async function runChatPipeline(
   });
 
   if (modelResult.fatal) {
-    await appendTurn(context, conversationId, 'user', message);
-    await appendTurn(context, conversationId, 'assistant', assistantReply);
+    await persistConversationTurn(assistantReply, 'failed');
     await saveProjectState(context, conversationId, state);
 
     send({
@@ -794,8 +910,7 @@ export async function runChatPipeline(
       });
     }
 
-    await appendTurn(context, conversationId, 'user', message);
-    await appendTurn(context, conversationId, 'assistant', assistantReply);
+    await persistConversationTurn(assistantReply, modelResult.success ? 'completed' : 'failed');
     await saveProjectState(context, conversationId, state);
 
     send({
@@ -816,8 +931,7 @@ export async function runChatPipeline(
   }
 
   if (!modelResult.projectTouched) {
-    await appendTurn(context, conversationId, 'user', message);
-    await appendTurn(context, conversationId, 'assistant', assistantReply);
+    await persistConversationTurn(assistantReply, modelResult.success ? 'completed' : 'failed');
 
     send({
       type: 'result',
@@ -845,8 +959,7 @@ export async function runChatPipeline(
 
   if (build.fatal) {
     const fatalReply = build.stderr || 'The task failed, and the remaining workflow was stopped.';
-    await appendTurn(context, conversationId, 'user', message);
-    await appendTurn(context, conversationId, 'assistant', fatalReply);
+    await persistConversationTurn(fatalReply, 'failed');
     await saveProjectState(context, conversationId, state);
     // Files were generated this turn; persist them even though verification failed,
     // so the work survives a sandbox recycle and download/resume still see it.
@@ -903,7 +1016,28 @@ export async function runChatPipeline(
       handleScaffoldLog,
       forwardProgress,
       pushEarlyFileTree,
+      abortSignal,
     );
+    if (autoFixResult.stopped || abortSignal?.aborted) {
+      const stoppedReply = /[\u3400-\u9fff]/.test(message)
+        ? '已停止本次生成，你可以继续描述下一步修改。'
+        : 'Generation stopped. You can continue with another change.';
+      await persistConversationTurn(stoppedReply, 'stopped');
+      await saveProjectState(context, conversationId, state);
+      await persistProjectSnapshot(context, conversationId, state);
+      send({
+        type: 'result',
+        data: {
+          ok: false,
+          stopped: true,
+          reply: stoppedReply,
+          conversation_id: conversationId,
+          build: { status: 'skipped' as BuildStatus },
+          preview: state.previewUrl ? { url: state.previewUrl, sandboxDebugUrl: state.sandboxDebugUrl } : {},
+        },
+      });
+      return;
+    }
     autoFixReply = stripReturnedPreviewLinks(sanitizeAssistantText(
       autoFixResult.success && autoFixResult.output
         ? autoFixResult.output
@@ -925,8 +1059,7 @@ export async function runChatPipeline(
     build = await runVerification(context, state);
     if (build.fatal) {
       const fatalReply = build.stderr || 'The task failed, and the remaining workflow was stopped.';
-      await appendTurn(context, conversationId, 'user', message);
-      await appendTurn(context, conversationId, 'assistant', fatalReply);
+      await persistConversationTurn(fatalReply, 'failed');
       await saveProjectState(context, conversationId, state);
       // Persist the generated files even on a fatal auto-fix outcome (see above).
       await persistProjectSnapshot(context, conversationId, state);
@@ -995,8 +1128,10 @@ export async function runChatPipeline(
   );
 
   // Append this turn first, which also creates the conversation, then write projectState to metadata.
-  await appendTurn(context, conversationId, 'user', message);
-  await appendTurn(context, conversationId, 'assistant', reply);
+  await persistConversationTurn(
+    reply,
+    modelResult.success && build.status !== 'failed' && Boolean(state.previewUrl) ? 'completed' : 'failed',
+  );
   await saveProjectState(context, conversationId, state);
 
   // Code persistence (防丢失): snapshot the project into the store so the code

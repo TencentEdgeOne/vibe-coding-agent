@@ -7,31 +7,13 @@ import {
   runSandboxCommand,
   startPreviewServer,
 } from '../_project';
-import type { ClaudeMcpTool, ProjectFileInput, ProjectState, ScaffoldLog } from '../_types';
+import type { ClaudeMcpTool, ProjectState, ScaffoldLog } from '../_types';
 import { getBlockedProjectWriteReason, normalizeRelPath } from '../utils/_paths';
 import { stringifyToolResult } from '../utils/_text';
 
-const projectFileSchema = z.object({
-  path: z.string().describe('Relative file path under appDir'),
-  content: z.string().describe('Complete UTF-8 file contents'),
-});
-
-const projectFilesInputSchema = z.union([
-  z.array(projectFileSchema).min(1),
-  projectFileSchema,
-  z.record(z.string(), z.string()),
-]).describe(
-  'Files to create or replace. Preferred shape: [{ "path": "src/App.tsx", "content": "..." }].',
-);
-
-const writeProjectFilesInputSchema = {
-  files: projectFilesInputSchema.optional().describe(
-    'Preferred: array of complete files, e.g. [{ "path": "src/App.tsx", "content": "..." }].',
-  ),
-  file: projectFileSchema.optional().describe('Single complete file. Use files for multiple files.'),
-  entries: projectFilesInputSchema.optional().describe('Alias for files.'),
-  path: z.string().optional().describe('Single file path, only valid together with content.'),
-  content: z.string().optional().describe('Single file content, only valid together with path.'),
+const writeProjectFileInputSchema = {
+  path: z.string().describe('Relative path of exactly one file under appDir.'),
+  content: z.string().describe('Complete UTF-8 contents for that one file.'),
 };
 
 export function buildProjectScaffoldTool(
@@ -69,46 +51,40 @@ export function buildProjectScaffoldTool(
   ) as ClaudeMcpTool;
 }
 
-export function buildWriteProjectFilesTool(
+export function buildWriteProjectFileTool(
   context: any,
   state: ProjectState,
-  onResult?: (result: { written: string[] }) => void | Promise<void>,
+  onResult?: (result: { written: string }) => void | Promise<void>,
 ) {
   return defineClaudeTool(
-    'write_project_files',
-    'Write multiple complete project files under appDir in one call. Paths must be relative to appDir.',
-    writeProjectFilesInputSchema,
+    'write_project_file',
+    'Create or replace exactly one complete UTF-8 project file under appDir. Call this tool separately for every file and wait for each result before calling it again. Paths must be relative to appDir.',
+    writeProjectFileInputSchema,
     async (input) => {
       try {
-        const normalizedFiles = normalizeWriteProjectFilesInput(input);
-        if (normalizedFiles.length === 0) {
-          throw new Error(
-            'Missing files. Call write_project_files with {"files":[{"path":"src/App.tsx","content":"..."}]}.',
-          );
+        const file = input as { path?: unknown; content?: unknown };
+        if (typeof file.path !== 'string' || typeof file.content !== 'string') {
+          throw new Error('Call write_project_file with {"path":"src/App.tsx","content":"complete file contents"}.');
         }
-        const written: string[] = [];
-        for (const file of normalizedFiles) {
-          const relPath = normalizeRelPath(file.path);
-          if (!relPath) {
-            throw new Error(`Invalid file path: ${file.path}`);
-          }
-          const blockedReason = getBlockedProjectWriteReason(relPath);
-          if (blockedReason) {
-            throw new Error(`Refusing to write ${relPath}: ${blockedReason}`);
-          }
+        const relPath = normalizeRelPath(file.path);
+        if (!relPath) {
+          throw new Error(`Invalid file path: ${file.path}`);
+        }
+        const blockedReason = getBlockedProjectWriteReason(relPath);
+        if (blockedReason) {
+          throw new Error(`Refusing to write ${relPath}: ${blockedReason}`);
+        }
 
-          const parent = relPath.split('/').slice(0, -1).join('/');
-          if (parent) {
-            await context.sandbox.files.makeDir(`${state.appDir}/${parent}`);
-          }
-          await context.sandbox.files.write(`${state.appDir}/${relPath}`, file.content);
-          written.push(relPath);
+        const parent = relPath.split('/').slice(0, -1).join('/');
+        if (parent) {
+          await context.sandbox.files.makeDir(`${state.appDir}/${parent}`);
         }
-        await onResult?.({ written });
+        await context.sandbox.files.write(`${state.appDir}/${relPath}`, file.content);
+        await onResult?.({ written: relPath });
         return {
           content: [{
             type: 'text' as const,
-            text: stringifyToolResult({ written }),
+            text: stringifyToolResult({ written: relPath }),
           }],
         };
       } catch (error) {
@@ -120,43 +96,6 @@ export function buildWriteProjectFilesTool(
       }
     },
   ) as ClaudeMcpTool;
-}
-
-function normalizeWriteProjectFilesInput(input: unknown): ProjectFileInput[] {
-  if (input && typeof input === 'object') {
-    const record = input as Record<string, unknown>;
-    if (record.files !== undefined) {
-      return normalizeProjectFilesInput(record.files);
-    }
-    if (record.file !== undefined) {
-      return normalizeProjectFilesInput(record.file);
-    }
-    if (record.entries !== undefined) {
-      return normalizeProjectFilesInput(record.entries);
-    }
-  }
-
-  return normalizeProjectFilesInput(input);
-}
-
-function normalizeProjectFilesInput(files: unknown): ProjectFileInput[] {
-  if (Array.isArray(files)) {
-    return files as ProjectFileInput[];
-  }
-
-  if (files && typeof files === 'object') {
-    const record = files as Record<string, unknown>;
-    if (typeof record.path === 'string' && typeof record.content === 'string') {
-      return [{ path: record.path, content: record.content }];
-    }
-
-    return Object.entries(record).map(([path, content]) => ({
-      path,
-      content: String(content),
-    }));
-  }
-
-  return [];
 }
 
 export function buildPreviewLinkTool(

@@ -101,7 +101,7 @@ The agent runs in session mode under `agents/`. Requests with the same `conversa
 1. **Request** — the frontend calls `/chat` with a message and the `Makers-Conversation-Id` header. A new request from the home view can also set `resetProject: true` to recreate the project workspace.
 2. **State restore** — the chat pipeline reads conversation history from `context.store` and loads metadata for the current temporary sandbox project.
 3. **LLM and tool loop** — the Claude Agent SDK runs with the `edgeone-sandbox` MCP server, `permissionMode: 'dontAsk'`, and sandbox-only tools. The agent must call `ensure_project_scaffold` before reading or writing project files.
-4. **Project editing** — generated source files are written through `write_project_files` or sandbox file tools. Commands and dependency installation run inside the sandbox.
+4. **Project editing** — generated source files are written incrementally through one `write_project_file` call per file, so progress reaches the UI continuously. Commands and dependency installation run inside the sandbox.
 5. **Preview publish** — `publish_preview` starts the app on internal port `3000`, waits for the preview entry to become ready, and returns a preview URL that is valid only for the current temporary sandbox lifetime.
 6. **Verification** — the runtime runs `npm run build` when a Node project has a build script, or `python -m compileall .` when Python files are present. If verification fails after a successful agent run, the pipeline attempts one auto-fix pass.
 7. **Response stream** — the frontend receives status events, logs, tool calls, tool results, file tree updates, the preview URL, build status, and the final assistant reply as newline-delimited JSON.

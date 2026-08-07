@@ -1,7 +1,13 @@
 import { HISTORY_FETCH_LIMIT } from './_constants';
 import { createProjectState } from './_project';
-import type { ConversationMessage, ProjectSnapshot, ProjectState } from './_types';
+import type {
+  ConversationMessage,
+  PersistedActivityTurn,
+  ProjectSnapshot,
+  ProjectState,
+} from './_types';
 import { sanitizeAssistantText } from './utils/_text';
+import { appendTrimmedActivityTurn, dedupeActivityTurns } from './utils/_activity';
 
 export async function getHistory(context: any, conversationId: string): Promise<ConversationMessage[]> {
   // context.store only exposes conversation-scoped message APIs, not a generic KV store.
@@ -194,6 +200,47 @@ export async function clearProjectSnapshot(context: any, conversationId: string)
     if (error?.code !== 'MemoryNotFoundError') {
       throw error;
     }
+  }
+}
+
+const ACTIVITY_TURN_LIMIT = 25;
+const ACTIVITY_ITEM_LIMIT = 50;
+
+export async function getActivityHistory(
+  context: any,
+  conversationId: string,
+): Promise<PersistedActivityTurn[]> {
+  try {
+    const conversation = await context.store.getConversation({ conversationId });
+    const stored = conversation?.metadata?.activityHistory;
+    return Array.isArray(stored)
+      ? dedupeActivityTurns(stored.slice(-ACTIVITY_TURN_LIMIT))
+      : [];
+  } catch (error: any) {
+    if (error?.code !== 'MemoryNotFoundError') throw error;
+    return [];
+  }
+}
+
+export async function saveActivityTurn(
+  context: any,
+  conversationId: string,
+  turn: PersistedActivityTurn,
+) {
+  const current = await getActivityHistory(context, conversationId);
+  const next = appendTrimmedActivityTurn(
+    current,
+    turn,
+    ACTIVITY_TURN_LIMIT,
+    ACTIVITY_ITEM_LIMIT,
+  );
+  try {
+    await context.store.updateConversation({
+      conversationId,
+      metadata: { activityHistory: next },
+    });
+  } catch (error: any) {
+    if (error?.code !== 'MemoryNotFoundError') throw error;
   }
 }
 
