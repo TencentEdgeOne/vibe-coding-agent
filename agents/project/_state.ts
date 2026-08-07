@@ -40,6 +40,7 @@ export async function resetProjectWorkspace(
   state.created = false;
   state.previewUrl = undefined;
   state.sandboxDebugUrl = undefined;
+  state.previewPublished = undefined;
   return appDirExists;
 }
 

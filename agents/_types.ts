@@ -8,6 +8,8 @@ export type ProjectState = {
   appDir: string;
   previewUrl?: string;
   sandboxDebugUrl?: string;
+  /** Latched once publish_preview succeeds; survives live URL invalidation so resume can restart preview. */
+  previewPublished?: boolean;
 };
 
 // A base64 archive of the whole project, persisted outside the volatile sandbox so

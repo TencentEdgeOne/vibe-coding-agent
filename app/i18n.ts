@@ -154,7 +154,7 @@ export const TRANSLATIONS = {
     },
     files: {
       empty: '暂无文件。',
-      refreshing: '更新中...',
+      refreshing: '加载中...',
       projectFiles: '项目文件',
       selectFile: '从左侧选择一个文件以预览内容。',
       loading: (path: string) => `正在加载 ${path}...`,
@@ -313,7 +313,7 @@ export const TRANSLATIONS = {
     },
     files: {
       empty: 'No files captured yet.',
-      refreshing: 'Refreshing...',
+      refreshing: 'Loading...',
       projectFiles: 'Project files',
       selectFile: 'Select a file from the left to preview its contents.',
       loading: (path: string) => `Loading ${path}...`,

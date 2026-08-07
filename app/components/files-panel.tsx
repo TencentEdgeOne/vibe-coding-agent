@@ -351,8 +351,15 @@ export function FilesPanel({
 
   if (!tree || tree.items.length === 0) {
     return (
-      <div className="flex min-h-0 flex-1 items-center justify-center bg-card px-6 text-center text-muted-foreground">
-        {refreshing ? copy.refreshing : copy.empty}
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 bg-card px-6 text-center text-muted-foreground">
+        {refreshing ? (
+          <>
+            <Spinner />
+            <p>{copy.refreshing}</p>
+          </>
+        ) : (
+          <p>{copy.empty}</p>
+        )}
       </div>
     );
   }

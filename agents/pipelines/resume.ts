@@ -14,9 +14,45 @@ import {
   runSandboxCommand,
   startPreviewServer,
 } from '../_project';
-import type { FileTreeItem, ProjectState } from '../_types';
+import type { FileTreeItem, PersistedActivity, PersistedActivityTurn, ProjectState } from '../_types';
 import { getRequestQueryParam, resolveConversationId } from '../utils/_request';
 import { withTimeout } from './_helpers';
+
+function toolNameImpliesProject(name: string) {
+  return name.includes('write_project_file')
+    || name.includes('ensure_project_scaffold')
+    || name.includes('publish_preview')
+    || name.includes('get_preview_link')
+    || name.includes('write_files')
+    || /__files_write$/.test(name);
+}
+
+function activityHistoryImpliesProject(activityHistory: PersistedActivityTurn[]) {
+  return activityHistory.some((turn) =>
+    (turn.activities || []).some((activity: PersistedActivity) =>
+      activity.kind === 'tool' && toolNameImpliesProject(activity.name || ''),
+    ),
+  );
+}
+
+function activityHistoryImpliesPreview(activityHistory: PersistedActivityTurn[]) {
+  return activityHistory.some((turn) =>
+    (turn.activities || []).some((activity: PersistedActivity) =>
+      activity.kind === 'tool'
+      && activity.status === 'completed'
+      && (
+        (activity.name || '').includes('publish_preview')
+        || (activity.name || '').includes('get_preview_link')
+      ),
+    ),
+  );
+}
+
+function projectStateImpliesPreview(state: ProjectState, activityHistory: PersistedActivityTurn[] = []) {
+  return Boolean(state.previewUrl)
+    || Boolean(state.previewPublished)
+    || activityHistoryImpliesPreview(activityHistory);
+}
 
 type ResumeStage = 'history' | 'workspace';
 
@@ -71,10 +107,13 @@ export async function runProjectResumeHistoryPipeline(context: any): Promise<Res
     getProjectState(context, conversationId),
   ]);
 
-  // Only a restorable snapshot counts as having a project. state.created alone
-  // can be true after a fatal/interrupted turn that never wrote projectSnapshot.
-  const hasProject = Boolean(snapshot?.base64);
-  const hasPreview = Boolean(state.previewUrl);
+  // Prefer a durable snapshot, but also open the workspace when the turn clearly
+  // touched the project (stop mid-write may race the snapshot flush; sandbox may
+  // still hold files that workspace resume can list).
+  const hasProject = Boolean(snapshot?.base64)
+    || Boolean(state.created)
+    || activityHistoryImpliesProject(activityHistory);
+  const hasPreview = projectStateImpliesPreview(state, activityHistory);
   const activeTask = chatTask
     && (chatTask.status === 'queued' || chatTask.status === 'running')
     ? {
@@ -163,11 +202,12 @@ async function republishPreviewOnResume(context: any, state: ProjectState) {
 }
 
 async function runWorkspaceRestoreBody(context: any, conversationId: string) {
-  const [state, chatTask] = await Promise.all([
+  const [state, chatTask, activityHistory] = await Promise.all([
     getProjectState(context, conversationId),
     getChatTask(context, conversationId),
+    getActivityHistory(context, conversationId),
   ]);
-  const hadPreview = Boolean(state.previewUrl);
+  const hadPreview = projectStateImpliesPreview(state, activityHistory);
   const generationActive = Boolean(
     chatTask && (chatTask.status === 'queued' || chatTask.status === 'running'),
   );
@@ -247,9 +287,11 @@ async function runWorkspaceRestoreBody(context: any, conversationId: string) {
         PREVIEW_RESTART_BUDGET_MS,
         'preview resume',
       );
+      state.previewPublished = true;
     } catch (error) {
       state.previewUrl = undefined;
       state.sandboxDebugUrl = undefined;
+      // Keep previewPublished so the next refresh retries instead of sticking to Files.
       // Keep the files panel usable; do not surface a hard preview error on resume.
       console.warn(
         '[resume:workspace] preview restart failed:',

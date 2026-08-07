@@ -360,6 +360,12 @@ export async function runChatPipeline(
     if (!preview.url) {
       return;
     }
+    state.previewUrl = preview.url;
+    state.sandboxDebugUrl = preview.sandboxDebugUrl;
+    state.previewPublished = true;
+    // Persist before the turn finishes so a refresh during verification still
+    // resumes into the preview pane and restarts the live server.
+    void saveProjectState(context, conversationId, state);
     send({
       type: 'preview_ready',
       data: {

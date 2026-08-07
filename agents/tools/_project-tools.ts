@@ -147,6 +147,8 @@ async function publishPreview(
     const links = await resolvePublicLinks(context);
     state.previewUrl = links.previewUrl;
     state.sandboxDebugUrl = links.sandboxDebugUrl;
+    // Durable signal for resume — do not clear this when a later live URL expires.
+    state.previewPublished = true;
     onResult?.({
       url: state.previewUrl,
       sandboxDebugUrl: state.sandboxDebugUrl,

@@ -128,7 +128,7 @@ export async function persistProjectSnapshot(
   context: any,
   conversationId: string,
   state: ProjectState,
-) {
+): Promise<boolean> {
   try {
     const archive = await createProjectArchive(context, state);
     if (archive.ok) {
@@ -139,18 +139,20 @@ export async function persistProjectSnapshot(
         size: archive.size,
         updatedAt: Date.now(),
       });
+      return true;
     }
   } catch (error) {
     debugLog(context, '[snapshot]', {
       message: error instanceof Error ? error.message : String(error),
     });
   }
+  return false;
 }
 
 // Debounce window for mid-turn checkpoints. Long enough to coalesce rapid
-// write_project_file calls; short enough that a refresh mid-generation still
+// write_project_file calls; short enough that stop/refresh mid-generation still
 // has a recent snapshot in the store before the sandbox can recycle.
-const CHECKPOINT_DEBOUNCE_MS = 8_000;
+const CHECKPOINT_DEBOUNCE_MS = 2_000;
 
 export type ProjectCheckpointController = {
   /** Mark the project dirty and (re)start the debounce timer. */

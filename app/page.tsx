@@ -309,17 +309,18 @@ export default function Home() {
           // Otherwise show source first (interrupted / never-published projects).
           setSandboxTab(data.hasPreview ? 'preview' : 'files');
           setWorkspaceRestoring(true);
+          setFilesRefreshing(true);
         }
       }
       return true;
     };
 
     const applyWorkspace = (data: NonNullable<Awaited<ReturnType<typeof fetchResumeWorkspace>>>) => {
+      const hasFiles = Boolean(data.files?.items.some((item) => item.type === 'file'));
       if (data.files) {
         setFileTree(data.files);
-        if (data.files.items.some((item) => item.type === 'file')) {
+        if (hasFiles) {
           setShowWorkspacePanel(true);
-          setSandboxTab('files');
         }
       }
       if (data.download?.url) {
@@ -337,14 +338,17 @@ export default function Home() {
         setActivePreviewRevision(revision);
         setActivePreviewLoaded(false);
       } else {
-        // Resume is files-only by default — do not surface a stale/failed preview
-        // error from an interrupted generation.
+        // No live preview on this resume — clear stale iframe state. Only then
+        // fall back to the Files tab (do not steal the tab when preview is ready).
         setPreview(null);
         activePreviewUrlRef.current = '';
         activePreviewRevisionRef.current = 0;
         setActivePreviewUrl('');
         setActivePreviewRevision(0);
         setActivePreviewLoaded(false);
+        if (hasFiles) {
+          setSandboxTab('files');
+        }
       }
     };
 
@@ -1662,7 +1666,7 @@ export default function Home() {
             ) : (
               <FilesPanel
                 tree={fileTree}
-                refreshing={filesRefreshing}
+                refreshing={filesRefreshing || workspaceRestoring}
                 conversationId={conversationId}
                 copy={t.files}
                 cache={fileCache}

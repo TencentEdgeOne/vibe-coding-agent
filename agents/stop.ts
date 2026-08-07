@@ -1,5 +1,6 @@
 import { abortLiveChatTask, markChatTaskStopped } from './_chat-tasks';
-import { saveActivityTurn } from './_memory';
+import { getProjectState, saveActivityTurn, saveProjectState } from './_memory';
+import { persistProjectSnapshot } from './pipelines/_helpers';
 import type { PersistedActivity } from './_types';
 
 export async function onRequest(context: any) {
@@ -17,6 +18,18 @@ export async function onRequest(context: any) {
     // Persist stopped before unwind finishes so refresh/resume does not see an
     // activeTask and duplicate the activityHistory user/assistant rows.
     await markChatTaskStopped(context, conversationId);
+    // Snapshot immediately on stop so a refresh right after cancel still sees
+    // hasProject + restorable files (the chat unwind flush can lose the race).
+    try {
+      const state = await getProjectState(context, conversationId);
+      const saved = await persistProjectSnapshot(context, conversationId, state);
+      if (saved && !state.created) {
+        state.created = true;
+        await saveProjectState(context, conversationId, state);
+      }
+    } catch (error) {
+      console.warn('[stop] project snapshot failed', error);
+    }
     const result = await context.utils?.abortActiveRun?.(conversationId);
     const rawTurn = context?.request?.body?.turn;
     if (rawTurn && typeof rawTurn === 'object') {
