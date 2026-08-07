@@ -1,7 +1,19 @@
 'use client';
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, CheckCircle2, Download, ExternalLink, Sparkles, X } from 'lucide-react';
+import {
+  AlertCircle,
+  Check,
+  CheckCircle2,
+  Code2,
+  Copy,
+  Download,
+  ExternalLink,
+  MonitorPlay,
+  RefreshCw,
+  Sparkles,
+  X,
+} from 'lucide-react';
 import { sanitizeAssistantText } from '../agents/utils/_text';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -102,6 +114,7 @@ export default function Home() {
   const [activePreviewUrl, setActivePreviewUrl] = useState('');
   const [activePreviewRevision, setActivePreviewRevision] = useState(0);
   const [activePreviewLoaded, setActivePreviewLoaded] = useState(false);
+  const [previewCopied, setPreviewCopied] = useState(false);
   const [pendingPreviewUrl, setPendingPreviewUrl] = useState('');
   const [pendingPreviewRevision, setPendingPreviewRevision] = useState(0);
   const conversationScrollRef = useRef<HTMLDivElement | null>(null);
@@ -1253,6 +1266,36 @@ export default function Home() {
     window.open(deployUrl, '_blank', 'noreferrer');
   }
 
+  function handleRefreshPreview() {
+    if (!activePreviewUrl) {
+      return;
+    }
+    const revision = previewRevisionRef.current + 1;
+    previewRevisionRef.current = revision;
+    activePreviewRevisionRef.current = revision;
+    setActivePreviewRevision(revision);
+    setActivePreviewLoaded(false);
+  }
+
+  function handleOpenPreview() {
+    if (activePreviewUrl) {
+      window.open(activePreviewUrl, '_blank', 'noopener,noreferrer');
+    }
+  }
+
+  async function handleCopyPreviewUrl() {
+    if (!activePreviewUrl || !navigator.clipboard) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(activePreviewUrl);
+      setPreviewCopied(true);
+      window.setTimeout(() => setPreviewCopied(false), 1600);
+    } catch {
+      setPreviewCopied(false);
+    }
+  }
+
   // Start a fresh project. Needed because resume-on-load means a refresh no longer
   // clears the workspace, so this is the explicit way back to an empty home screen
   // with a brand-new conversation.
@@ -1281,6 +1324,7 @@ export default function Home() {
     setActivePreviewLoaded(false);
     setPendingPreviewUrl('');
     setPendingPreviewRevision(0);
+    setPreviewCopied(false);
     setInput('');
   }
 
@@ -1413,100 +1457,137 @@ export default function Home() {
         />
 
         {/* ===== RIGHT: preview / files ===== */}
-        {showWorkspacePanel && <div className="workspace-result-panel flex min-h-0 min-w-0 w-full flex-col overflow-hidden bg-[#fbfbfc]">
-          <div className="flex items-center gap-1 px-3.5 py-2.5">
+        {showWorkspacePanel && <div className="workspace-result-panel">
+          <div className="workspace-panel-header">
+            <div className="workspace-panel-heading">
+              <span className="workspace-panel-mark" aria-hidden="true">
+                {sandboxTab === 'preview' ? <MonitorPlay className="size-4" /> : <Code2 className="size-4" />}
+              </span>
+              <div className="min-w-0">
+                <span className="workspace-panel-eyebrow">{t.workspace.sandboxEyebrow}</span>
+                <h2>{sandboxTab === 'preview' ? t.workspace.livePreview : t.workspace.code}</h2>
+              </div>
+              {sandboxTab === 'preview' && preview?.url && (
+                <span className={`workspace-panel-status ${activePreviewLoaded ? 'is-ready' : ''}`}>
+                  <span className="workspace-panel-status-dot" aria-hidden="true" />
+                  {activePreviewLoaded ? t.workspace.previewReady : t.workspace.previewLoading}
+                </span>
+              )}
+            </div>
+            <div className="workspace-panel-actions">
+              {sandboxTab === 'preview' && activePreviewUrl && (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleRefreshPreview}
+                    className="workspace-icon-button"
+                    aria-label={t.workspace.refreshPreview}
+                    data-tooltip={t.workspace.refreshPreview}
+                  >
+                    <RefreshCw className="size-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCopyPreviewUrl}
+                    className="workspace-icon-button"
+                    aria-label={previewCopied ? t.workspace.previewUrlCopied : t.workspace.copyPreviewUrl}
+                    data-tooltip={previewCopied ? t.workspace.previewUrlCopied : t.workspace.copyPreviewUrl}
+                  >
+                    {previewCopied ? <Check className="size-4 text-[var(--ok)]" /> : <Copy className="size-4" />}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleOpenPreview}
+                    className="workspace-icon-button"
+                    aria-label={t.workspace.openPreview}
+                    data-tooltip={t.workspace.openPreview}
+                  >
+                    <ExternalLink className="size-4" />
+                  </button>
+                </>
+              )}
+              {download?.url && (
+                <button
+                  type="button"
+                  onClick={handleDownload}
+                  disabled={downloadBusy}
+                  aria-label={downloadBusy ? t.workspace.downloading : t.workspace.downloadSource}
+                  data-tooltip={downloadBusy ? t.workspace.downloading : t.workspace.downloadSource}
+                  className="workspace-icon-button"
+                >
+                  {downloadBusy ? <span className="size-4 animate-spin rounded-full border-2 border-transparent border-t-current" /> : <Download className="size-4" />}
+                </button>
+              )}
+              {githubEnabled && download?.url && (
+                <button
+                  type="button"
+                  onClick={handleExportGithub}
+                  disabled={githubBusy}
+                  aria-label={githubBusy ? t.workspace.githubExporting : t.workspace.exportGithub}
+                  data-tooltip={githubBusy ? t.workspace.githubExporting : t.workspace.exportGithub}
+                  className="workspace-icon-button"
+                >
+                  {githubBusy ? <span className="size-4 animate-spin rounded-full border-2 border-transparent border-t-current" /> : <GitHubIcon />}
+                </button>
+              )}
+              {CLAIM_DEPLOY_ENABLED && (
+                <button
+                  type="button"
+                  onClick={handleClaimDeploy}
+                  aria-label={t.workspace.claimDeploy}
+                  data-tooltip={t.workspace.claimDeploy}
+                  className="workspace-icon-button"
+                >
+                  <img src="/edgeone.png" alt="EdgeOne" className="size-[22px] rounded-full" />
+                </button>
+              )}
+              <LanguageSwitch
+                language={language}
+                onChange={setLanguage}
+                ariaLabel={t.languageToggleAria}
+                className="workspace-language"
+              />
+            </div>
+          </div>
+
+          <div className="workspace-panel-nav">
             <Tabs
               value={sandboxTab}
               onValueChange={(value) => setSandboxTab(value as 'preview' | 'files')}
+              className="workspace-panel-tabs"
             >
-              <TabsList className="h-auto gap-1 bg-transparent p-0">
-                <TabsTrigger
-                  value="preview"
-                  className="h-auto rounded-[8px] px-3 py-1.5 text-[13px] font-semibold text-muted-foreground transition hover:text-secondary-foreground data-[state=active]:bg-accent data-[state=active]:text-accent-foreground data-[state=active]:shadow-none"
-                >
-                  {t.workspace.application}
+              <TabsList className="workspace-tabs">
+                <TabsTrigger value="preview" className="workspace-tab">
+                  <MonitorPlay className="size-3.5" />
+                  {t.workspace.livePreview}
                 </TabsTrigger>
-                <TabsTrigger
-                  value="files"
-                  className="h-auto rounded-[8px] px-3 py-1.5 text-[13px] font-semibold text-muted-foreground transition hover:text-secondary-foreground data-[state=active]:bg-accent data-[state=active]:text-accent-foreground data-[state=active]:shadow-none"
-                >
+                <TabsTrigger value="files" className="workspace-tab">
+                  <Code2 className="size-3.5" />
                   {t.workspace.code}
-                  {fileCount ? ` ${fileCount}` : ''}
-                  {filesRefreshing && (
-                    <span className="ml-1 text-[10px] opacity-70">{t.files.refreshing}</span>
-                  )}
+                  {fileCount ? <span className="workspace-tab-count">{fileCount}</span> : null}
+                  {filesRefreshing && <span className="workspace-tab-refreshing">{t.files.refreshing}</span>}
                 </TabsTrigger>
               </TabsList>
             </Tabs>
-            <span className="flex-1" />
-            {download?.url && (
-              <button
-                type="button"
-                onClick={handleDownload}
-                disabled={downloadBusy}
-                title={t.workspace.downloadSource}
-                className="action-chip bg-muted text-secondary-foreground hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <span className="action-chip-icon">
-                  {downloadBusy ? (
-                    <span className="size-4 animate-spin rounded-full border-2 border-transparent border-t-current" />
-                  ) : (
-                    <Download className="size-4" />
-                  )}
-                </span>
-                <span className="action-chip-label">
-                  {downloadBusy ? t.workspace.downloading : t.workspace.downloadSource}
-                </span>
-              </button>
-            )}
-            {githubEnabled && download?.url && (
-              <button
-                type="button"
-                onClick={handleExportGithub}
-                disabled={githubBusy}
-                title={t.workspace.exportGithub}
-                className="action-chip bg-muted text-secondary-foreground hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <span className="action-chip-icon">
-                  {githubBusy ? (
-                    <span className="size-4 animate-spin rounded-full border-2 border-transparent border-t-current" />
-                  ) : (
-                    <GitHubIcon />
-                  )}
-                </span>
-                <span className="action-chip-label">
-                  {githubBusy ? t.workspace.githubExporting : t.workspace.exportGithub}
-                </span>
-              </button>
-            )}
-            {CLAIM_DEPLOY_ENABLED && (
-              <button
-                type="button"
-                onClick={handleClaimDeploy}
-                title={t.workspace.claimDeployHint}
-                className="action-chip bg-muted text-accent-foreground hover:bg-accent"
-              >
-                <span className="action-chip-icon">
-                  <img src="/edgeone.png" alt="EdgeOne" className="size-[22px] rounded-full" />
-                </span>
-                <span className="action-chip-label">{t.workspace.claimDeploy}</span>
-              </button>
-            )}
-            <LanguageSwitch
-              language={language}
-              onChange={setLanguage}
-              ariaLabel={t.languageToggleAria}
-              className="ml-4"
-            />
+            <span className="workspace-panel-nav-hint">
+              {sandboxTab === 'preview' ? t.workspace.previewHint : t.workspace.codeHint}
+            </span>
           </div>
 
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div className="workspace-panel-content">
             {sandboxTab === 'preview' ? (
               preview?.url ? (
-                <div className="m-3.5 flex min-h-0 flex-1 overflow-hidden rounded-[12px] bg-white shadow-[0_10px_30px_-22px_rgba(20,30,60,0.35)]">
-                  <div className="relative min-h-0 flex-1 bg-white">
+                <div className="workspace-preview-shell">
+                  <div className="workspace-preview-toolbar">
+                    <div className="workspace-preview-location" title={preview.url}>
+                      <span className="workspace-preview-location-dot" aria-hidden="true" />
+                      <span>{preview.url.replace(/^https?:\/\//, '')}</span>
+                    </div>
+                    <span className="workspace-preview-toolbar-label">{t.workspace.livePreview}</span>
+                  </div>
+                  <div className="workspace-preview-frame">
                     {!activePreviewLoaded && (
-                      <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-white/85 px-6 text-center text-muted-foreground">
+                      <div className="workspace-preview-loading">
                         {t.workspace.loadingPreview}
                       </div>
                     )}
@@ -1531,7 +1612,7 @@ export default function Home() {
                   </div>
                 </div>
               ) : (
-                <div className="m-3.5 flex min-h-0 flex-1 flex-col items-center justify-center gap-3 rounded-[12px] bg-white px-6 text-center text-secondary-foreground">
+                <div className="workspace-empty-state">
                   {workspaceRestoring ? (
                     <>
                       <span
@@ -1566,7 +1647,7 @@ export default function Home() {
           </div>
 
           {(build?.status === 'failed' || download?.error || preview?.error) && (
-            <div className="space-y-2 border-t border-border bg-card p-4 text-xs text-secondary-foreground">
+            <div className="workspace-error-bar">
               {build?.status === 'failed' && (
                 <p className="text-destructive">
                   {build.autoFixApplied && build.autoFixAttempts
