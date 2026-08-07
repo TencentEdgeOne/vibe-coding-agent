@@ -1,5 +1,6 @@
 import {
   getActivityHistory,
+  getChatTask,
   getHistory,
   getProjectSnapshot,
   getProjectState,
@@ -51,14 +52,27 @@ export async function runProjectResumeHistoryPipeline(context: any): Promise<Res
     return jsonResponse({ ok: false, error: 'missing conversation_id' }, 400);
   }
 
-  const [state, messages, activityHistory, snapshot] = await Promise.all([
+  const [state, messages, activityHistory, snapshot, chatTask] = await Promise.all([
     getProjectState(context, conversationId),
     getHistory(context, conversationId),
     getActivityHistory(context, conversationId),
     getProjectSnapshot(context, conversationId),
+    getChatTask(context, conversationId),
   ]);
 
   const hasProject = Boolean(snapshot?.base64) || state.created === true;
+  const activeTask = chatTask
+    && (chatTask.status === 'queued' || chatTask.status === 'running')
+    ? {
+        id: chatTask.id,
+        message: chatTask.message,
+        status: chatTask.status,
+        resetProject: chatTask.resetProject === true,
+        createdAt: chatTask.createdAt,
+        startedAt: chatTask.startedAt,
+        streamUrl: `/chat/stream?runId=${encodeURIComponent(chatTask.id)}`,
+      }
+    : null;
 
   return jsonResponse({
     ok: true,
@@ -66,6 +80,7 @@ export async function runProjectResumeHistoryPipeline(context: any): Promise<Res
     conversation_id: conversationId,
     messages,
     activityHistory,
+    activeTask,
     hasProject,
     // Client should call stage=workspace when true.
     needsWorkspace: hasProject,

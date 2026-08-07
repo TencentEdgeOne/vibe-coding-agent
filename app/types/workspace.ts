@@ -84,6 +84,16 @@ export type ResumeData = {
     status: 'completed' | 'failed' | 'stopped';
     activities: AssistantActivity[];
   }>;
+  /** In-flight chat task the client should reconnect to after a refresh. */
+  activeTask?: {
+    id: string;
+    message: string;
+    status: 'queued' | 'running';
+    resetProject?: boolean;
+    createdAt?: number;
+    startedAt?: number;
+    streamUrl?: string;
+  } | null;
   error?: string;
 };
 

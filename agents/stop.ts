@@ -1,3 +1,4 @@
+import { abortLiveChatTask } from './_chat-tasks';
 import { saveActivityTurn } from './_memory';
 import type { PersistedActivity } from './_types';
 
@@ -11,6 +12,8 @@ export async function onRequest(context: any) {
   }
 
   try {
+    // Stop the detached in-process run first (SSE disconnect no longer aborts it).
+    abortLiveChatTask(conversationId);
     const result = await context.utils?.abortActiveRun?.(conversationId);
     const rawTurn = context?.request?.body?.turn;
     if (rawTurn && typeof rawTurn === 'object') {

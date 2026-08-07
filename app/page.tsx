@@ -113,6 +113,14 @@ export default function Home() {
   const chatAbortControllerRef = useRef<AbortController | null>(null);
   const activeTurnIdRef = useRef('');
   const stoppingRef = useRef(false);
+  // Resume-on-load reconnects to an in-flight run after history paints. The
+  // effect closes over this ref so it always calls the latest stream attacher.
+  const attachChatStreamRef = useRef<(options: {
+    requestConversationId: string;
+    assistantMessageId: string;
+    isStartingFromHome: boolean;
+    streamUrl: string;
+  }) => Promise<void>>(async () => {});
 
   const t = TRANSLATIONS[language];
   const canSend = input.trim().length > 0 && !loading;
@@ -175,14 +183,15 @@ export default function Home() {
 
     const applyHistory = (data: NonNullable<Awaited<ReturnType<typeof fetchResumeHistory>>>) => {
       const history = Array.isArray(data.messages) ? data.messages : [];
-      if (!data.hasProject && history.length === 0) {
+      const activeTask = data.activeTask;
+      if (!data.hasProject && history.length === 0 && !activeTask) {
         return false;
       }
       if (data.conversation_id) {
         setConversationId(data.conversation_id);
       }
       const activityHistory = Array.isArray(data.activityHistory) ? data.activityHistory : [];
-      setMessages(activityHistory.length > 0
+      let nextMessages: ChatMessage[] = activityHistory.length > 0
         ? activityHistory.flatMap((turn) => [
             {
               id: `${turn.id}-user`,
@@ -203,12 +212,69 @@ export default function Home() {
             role: item.role,
             content: item.content,
             status: 'done' as AssistantStatus,
-          })));
-      if (data.hasProject || data.needsWorkspace) {
-        setShowWorkspacePanel(true);
-        setSandboxTab('preview');
-        setWorkspaceRestoring(true);
+          }));
+
+      // In-flight turn is not in activityHistory yet. Merge it so refresh keeps
+      // the user prompt visible and a running assistant slot ready for SSE replay.
+      if (activeTask?.id && activeTask.message) {
+        const assistantId = activeTask.id;
+        const userId = `${activeTask.id}-user`;
+        const last = nextMessages.at(-1);
+        const hasRunningAssistant = nextMessages.some(
+          (item) => item.role === 'assistant' && item.id === assistantId && item.status === 'running',
+        );
+        if (!hasRunningAssistant) {
+          if (last?.role === 'user' && last.content === activeTask.message) {
+            nextMessages = [
+              ...nextMessages.slice(0, -1),
+              { ...last, id: userId },
+              {
+                id: assistantId,
+                role: 'assistant',
+                content: '',
+                thinkingContent: '',
+                processEvents: [],
+                activities: [],
+                status: 'running',
+                steps: [],
+              },
+            ];
+          } else if (!(last?.role === 'assistant' && last.id === assistantId)) {
+            nextMessages = [
+              ...nextMessages,
+              {
+                id: userId,
+                role: 'user',
+                content: activeTask.message,
+                status: 'done',
+              },
+              {
+                id: assistantId,
+                role: 'assistant',
+                content: '',
+                thinkingContent: '',
+                processEvents: [],
+                activities: [],
+                status: 'running',
+                steps: [],
+              },
+            ];
+          }
+        }
+        setOpenSteps((current) => ({ ...current, [assistantId]: true }));
+        activeTurnIdRef.current = assistantId;
+        setLoading(true);
         setFilesRefreshing(true);
+      }
+
+      setMessages(nextMessages);
+      if (data.hasProject || data.needsWorkspace || activeTask) {
+        setShowWorkspacePanel(Boolean(data.hasProject || data.needsWorkspace));
+        if (data.hasProject || data.needsWorkspace) {
+          setSandboxTab('preview');
+          setWorkspaceRestoring(true);
+          setFilesRefreshing(true);
+        }
       }
       return true;
     };
@@ -239,6 +305,7 @@ export default function Home() {
     };
 
     (async () => {
+      let shouldClearFilesRefreshing = true;
       try {
         const historyData = await fetchResumeHistory(existing);
         if (cancelled) return;
@@ -249,13 +316,29 @@ export default function Home() {
         // Unblock the UI as soon as chat history is available.
         setResumeChecked(true);
 
+        const activeTask = historyData.activeTask;
+        const conversationForRun = historyData.conversation_id || existing;
+
+        // Reattach to the live SSE run before (or while) the slow workspace
+        // restore runs. Generation keeps going after a refresh; this only
+        // resubscribes the UI to buffered + live events.
+        if (activeTask?.id && !cancelled) {
+          shouldClearFilesRefreshing = false;
+          const streamUrl = activeTask.streamUrl
+            || `/chat/stream?runId=${encodeURIComponent(activeTask.id)}`;
+          void attachChatStreamRef.current({
+            requestConversationId: conversationForRun,
+            assistantMessageId: activeTask.id,
+            isStartingFromHome: false,
+            streamUrl,
+          });
+        }
+
         if (!historyData.needsWorkspace && !historyData.hasProject) {
           return;
         }
 
-        const workspaceData = await fetchResumeWorkspace(
-          historyData.conversation_id || existing,
-        );
+        const workspaceData = await fetchResumeWorkspace(conversationForRun);
         if (cancelled) return;
         if (workspaceData?.ok) {
           applyWorkspace(workspaceData);
@@ -266,7 +349,10 @@ export default function Home() {
         if (!cancelled) {
           setResumeChecked(true);
           setWorkspaceRestoring(false);
-          setFilesRefreshing(false);
+          // Keep the files spinner if we handed off to an active stream session.
+          if (shouldClearFilesRefreshing) {
+            setFilesRefreshing(false);
+          }
         }
       }
     })();
@@ -403,63 +489,18 @@ export default function Home() {
     return () => window.clearTimeout(timer);
   }, [pendingPreviewUrl, pendingPreviewRevision]);
 
-  async function sendMessage(message: string) {
-    const trimmed = message.trim();
-    if (!trimmed || loading) {
-      return;
-    }
-
-    const isStartingFromHome = !hasWorkspace;
-    const requestConversationId = isStartingFromHome
-      ? createConversationId()
-      : conversationId || getOrCreateCachedConversationId();
-    if (isStartingFromHome) {
-      cacheConversationId(requestConversationId);
-      setConversationId(requestConversationId);
-      setPreview(null);
-      setDownload(null);
-      setBuild(null);
-      setFileTree(null);
-      setFilesRefreshing(false);
-      setFilesFocusPath(null);
-      setWorkspaceRestoring(false);
-      setSandboxTab('preview');
-      setShowWorkspacePanel(false);
-      activePreviewUrlRef.current = '';
-      activePreviewRevisionRef.current = 0;
-      previewRevisionRef.current = 0;
-      setActivePreviewUrl('');
-      setActivePreviewRevision(0);
-      setActivePreviewLoaded(false);
-      setPendingPreviewUrl('');
-      setPendingPreviewRevision(0);
-    } else if (!conversationId) {
-      setConversationId(requestConversationId);
-    }
-
-    const userMessageId = createMessageId('user');
-    const assistantMessageId = createMessageId('assistant');
-    activeTurnIdRef.current = assistantMessageId;
-
-    setMessages((current) => [
-      ...current,
-      { id: userMessageId, role: 'user', content: trimmed },
-      {
-        id: assistantMessageId,
-        role: 'assistant',
-        content: '',
-        thinkingContent: '',
-        processEvents: [],
-        activities: [],
-        status: 'running',
-        steps: [],
-      },
-    ]);
-    // Expand the running message by default while preserving older turn states.
-    setOpenSteps((current) => ({ ...current, [assistantMessageId]: true }));
-    setFilesRefreshing(true);
-    setInput('');
-    setLoading(true);
+  async function attachChatStream(options: {
+    requestConversationId: string;
+    assistantMessageId: string;
+    isStartingFromHome: boolean;
+    streamUrl: string;
+  }) {
+    const {
+      requestConversationId,
+      assistantMessageId,
+      isStartingFromHome,
+      streamUrl,
+    } = options;
     const activatedPreviewRevisions = new Map<string, number>();
     let sawProjectActivity = false;
     let insertedModifyMarker = false;
@@ -817,38 +858,7 @@ export default function Home() {
       const requestAbortController = new AbortController();
       chatAbortControllerRef.current = requestAbortController;
       stoppingRef.current = false;
-      const submitResponse = await fetch('/chat', {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          conversationId: requestConversationId,
-          'makers-conversation-id': requestConversationId,
-        },
-        body: JSON.stringify({
-          message: trimmed,
-          turnId: assistantMessageId,
-          ...(isStartingFromHome ? { resetProject: true } : {}),
-        }),
-        signal: requestAbortController.signal,
-      });
 
-      const submission = await submitResponse.json().catch(() => null) as ChatTaskSubmission | null;
-      if (!submitResponse.ok || !submission?.ok || !submission.runId) {
-        applyResponse({
-          ok: false,
-          conversation_id: submission?.conversation_id,
-          error: submission?.error || `${submitResponse.status}`,
-        });
-        return;
-      }
-
-      if (submission.conversation_id) {
-        cacheConversationId(submission.conversation_id);
-        setConversationId(submission.conversation_id);
-      }
-
-      const streamUrl = submission.streamUrl
-        || `/chat/stream?runId=${encodeURIComponent(submission.runId)}`;
       const response = await fetch(streamUrl, {
         method: 'GET',
         headers: {
@@ -919,24 +929,172 @@ export default function Home() {
       finalizeAssistant(msg, 'error');
     } finally {
       clearProcessStepRevealTimer();
-      // Fallback: ensure a running message cannot get stuck after an unexpected stream break.
-      setMessages((current) =>
-        current.map((item) =>
-          item.id === assistantMessageId && item.status === 'running'
-            ? {
-                ...item,
-                status: 'done',
-                content: item.content || t.response.agentFlowEnded,
-                thinkingContent: '',
-                processEvents: appendPendingProcessSteps(item.processEvents ?? [], item.steps ?? [], t.timeline),
-              }
-            : item,
-        ),
-      );
+      // Fallback only when the stream died unexpectedly. Stop/abort already set a
+      // terminal status; overwriting it would hide an in-flight reconnect.
+      if (!stoppingRef.current) {
+        setMessages((current) =>
+          current.map((item) =>
+            item.id === assistantMessageId && item.status === 'running'
+              ? {
+                  ...item,
+                  status: 'done',
+                  content: item.content || t.response.agentFlowEnded,
+                  thinkingContent: '',
+                  processEvents: appendPendingProcessSteps(item.processEvents ?? [], item.steps ?? [], t.timeline),
+                }
+              : item,
+          ),
+        );
+      }
       setOpenSteps((current) => {
         if (current[assistantMessageId] === false) return current;
         return { ...current, [assistantMessageId]: false };
       });
+      setLoading(false);
+      setFilesRefreshing(false);
+      chatAbortControllerRef.current = null;
+      if (!stoppingRef.current) {
+        activeTurnIdRef.current = '';
+      }
+      stoppingRef.current = false;
+    }
+  }
+
+
+  attachChatStreamRef.current = attachChatStream;
+
+  async function sendMessage(message: string) {
+    const trimmed = message.trim();
+    if (!trimmed || loading) {
+      return;
+    }
+
+    const isStartingFromHome = !hasWorkspace;
+    const requestConversationId = isStartingFromHome
+      ? createConversationId()
+      : conversationId || getOrCreateCachedConversationId();
+    if (isStartingFromHome) {
+      cacheConversationId(requestConversationId);
+      setConversationId(requestConversationId);
+      setPreview(null);
+      setDownload(null);
+      setBuild(null);
+      setFileTree(null);
+      setFilesRefreshing(false);
+      setFilesFocusPath(null);
+      setWorkspaceRestoring(false);
+      setSandboxTab('preview');
+      setShowWorkspacePanel(false);
+      activePreviewUrlRef.current = '';
+      activePreviewRevisionRef.current = 0;
+      previewRevisionRef.current = 0;
+      setActivePreviewUrl('');
+      setActivePreviewRevision(0);
+      setActivePreviewLoaded(false);
+      setPendingPreviewUrl('');
+      setPendingPreviewRevision(0);
+    } else if (!conversationId) {
+      setConversationId(requestConversationId);
+    }
+
+    const userMessageId = createMessageId('user');
+    const assistantMessageId = createMessageId('assistant');
+    activeTurnIdRef.current = assistantMessageId;
+
+    setMessages((current) => [
+      ...current,
+      { id: userMessageId, role: 'user', content: trimmed },
+      {
+        id: assistantMessageId,
+        role: 'assistant',
+        content: '',
+        thinkingContent: '',
+        processEvents: [],
+        activities: [],
+        status: 'running',
+        steps: [],
+      },
+    ]);
+    // Expand the running message by default while preserving older turn states.
+    setOpenSteps((current) => ({ ...current, [assistantMessageId]: true }));
+    setFilesRefreshing(true);
+    setInput('');
+    setLoading(true);
+
+    try {
+      const requestAbortController = new AbortController();
+      chatAbortControllerRef.current = requestAbortController;
+      stoppingRef.current = false;
+      const submitResponse = await fetch('/chat', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          conversationId: requestConversationId,
+          'makers-conversation-id': requestConversationId,
+        },
+        body: JSON.stringify({
+          message: trimmed,
+          turnId: assistantMessageId,
+          ...(isStartingFromHome ? { resetProject: true } : {}),
+        }),
+        signal: requestAbortController.signal,
+      });
+
+      const submission = await submitResponse.json().catch(() => null) as ChatTaskSubmission | null;
+      if (!submitResponse.ok || !submission?.ok || !submission.runId) {
+        const errorText = submission?.error || `${submitResponse.status}`;
+        setMessages((current) =>
+          current.map((item) =>
+            item.id === assistantMessageId
+              ? {
+                  ...item,
+                  content: errorText,
+                  status: 'error' as AssistantStatus,
+                }
+              : item,
+          ),
+        );
+        setLoading(false);
+        setFilesRefreshing(false);
+        chatAbortControllerRef.current = null;
+        activeTurnIdRef.current = '';
+        return;
+      }
+
+      if (submission.conversation_id) {
+        cacheConversationId(submission.conversation_id);
+        setConversationId(submission.conversation_id);
+      }
+
+      const streamUrl = submission.streamUrl
+        || `/chat/stream?runId=${encodeURIComponent(submission.runId)}`;
+      await attachChatStream({
+        requestConversationId: submission.conversation_id || requestConversationId,
+        assistantMessageId,
+        isStartingFromHome,
+        streamUrl,
+      });
+    } catch (error) {
+      if ((error instanceof Error && error.name === 'AbortError') || stoppingRef.current) {
+        setLoading(false);
+        setFilesRefreshing(false);
+        chatAbortControllerRef.current = null;
+        activeTurnIdRef.current = '';
+        stoppingRef.current = false;
+        return;
+      }
+      const msg = `${t.response.requestFailedPrefix}${error instanceof Error ? error.message : t.response.unknownError}`;
+      setMessages((current) =>
+        current.map((item) =>
+          item.id === assistantMessageId
+            ? {
+                ...item,
+                content: msg,
+                status: 'error' as AssistantStatus,
+              }
+            : item,
+        ),
+      );
       setLoading(false);
       setFilesRefreshing(false);
       chatAbortControllerRef.current = null;

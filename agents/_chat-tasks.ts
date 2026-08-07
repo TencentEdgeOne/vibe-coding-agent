@@ -23,10 +23,24 @@ type LiveChatTask = {
   events: SequencedEvent[];
   nextSequence: number;
   listeners: Set<TaskListener>;
+  // Detached from the SSE HTTP request: a browser refresh/disconnect must not
+  // stop generation. Only /stop (via abortLiveChatTask) should abort this.
+  abortController: AbortController;
   runPromise?: Promise<void>;
 };
 
 const liveTasks = new Map<string, LiveChatTask>();
+
+/** Abort in-process chat generation for a conversation (used by /stop). */
+export function abortLiveChatTask(conversationId: string) {
+  const trimmed = conversationId.trim();
+  if (!trimmed) return;
+  for (const liveTask of liveTasks.values()) {
+    if (liveTask.conversationId === trimmed && !liveTask.abortController.signal.aborted) {
+      liveTask.abortController.abort();
+    }
+  }
+}
 
 function taskKey(conversationId: string, taskId: string) {
   return `${conversationId}:${taskId}`;
@@ -70,6 +84,7 @@ function getOrCreateLiveTask(conversationId: string, task: ChatTask): LiveChatTa
       : [],
     nextSequence: task.finalEvent ? 1 : 0,
     listeners: new Set(),
+    abortController: new AbortController(),
   };
   liveTasks.set(key, liveTask);
   return liveTask;
@@ -161,6 +176,15 @@ export async function createChatTask(
   return { ok: true as const, conversationId, task };
 }
 
+function withTaskAbortSignal(context: any, signal: AbortSignal) {
+  // Keep the same runtime context (sandbox / store / tools) but replace the HTTP
+  // request signal so SSE client disconnect does not cancel the agent run.
+  const request = context?.request && typeof context.request === 'object'
+    ? { ...context.request, signal }
+    : { signal };
+  return { ...context, request };
+}
+
 async function executeLiveTask(context: any, liveTask: LiveChatTask) {
   const runningTask: ChatTask = {
     ...liveTask.task,
@@ -178,11 +202,12 @@ async function executeLiveTask(context: any, liveTask: LiveChatTask) {
       finalEvent = event;
     }
   };
+  const taskContext = withTaskAbortSignal(context, liveTask.abortController.signal);
 
   try {
-    await saveChatTask(context, liveTask.conversationId, runningTask);
+    await saveChatTask(taskContext, liveTask.conversationId, runningTask);
     publish(liveTask, { type: 'status', message: 'Starting the chat task' });
-    await runChatPipeline(context, liveTask.task.message, send, {
+    await runChatPipeline(taskContext, liveTask.task.message, send, {
       resetProject: liveTask.task.resetProject,
       turnId: liveTask.task.id,
       userMessagePersisted: true,
@@ -210,7 +235,7 @@ async function executeLiveTask(context: any, liveTask: LiveChatTask) {
   };
   liveTask.task = nextTask;
   try {
-    await saveChatTask(context, liveTask.conversationId, nextTask);
+    await saveChatTask(taskContext, liveTask.conversationId, nextTask);
   } catch (persistError) {
     console.error('[chat-task] failed to persist final task state', persistError);
   }
