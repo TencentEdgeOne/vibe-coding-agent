@@ -104,63 +104,6 @@ function isGenericCompletionReply(text: string) {
     || /^theagentdidnotreturnanythingdisplayable$/i.test(normalized);
 }
 
-export function createStreamResponse(
-  run: (send: StreamSend) => Promise<void>,
-  signal?: AbortSignal,
-) {
-  const encoder = new TextEncoder();
-  let closed = false;
-
-  const stream = new ReadableStream({
-    start(controller) {
-      const send: StreamSend = (event) => {
-        if (closed) {
-          return;
-        }
-        try {
-          controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
-        } catch {
-          closed = true;
-        }
-      };
-
-      const heartbeat = setInterval(() => send({ type: 'ping', ts: Date.now() }), 5_000);
-
-      run(send)
-        .catch((error) => {
-          if (!signal?.aborted) {
-            send({
-              type: 'error',
-              error: error instanceof Error ? error.message : 'Request processing failed.',
-            });
-          }
-        })
-        .finally(() => {
-          clearInterval(heartbeat);
-          closed = true;
-          try {
-            controller.close();
-          } catch {
-            // The client may already have disconnected.
-          }
-        });
-    },
-    cancel() {
-      closed = true;
-    },
-  });
-
-  return new Response(stream, {
-    headers: {
-      'content-type': 'application/x-ndjson; charset=utf-8',
-      'cache-control': 'no-cache, no-transform',
-      connection: 'keep-alive',
-      'x-accel-buffering': 'no',
-      'x-content-type-stream': 'true',
-    },
-  });
-}
-
 function getRequestHeader(context: any, name: string): string {
   const headers = context?.request?.headers;
   if (!headers) return '';
@@ -590,7 +533,7 @@ export async function runChatPipeline(
   context: any,
   message: string,
   send: StreamSend,
-  options: { resetProject?: boolean; turnId?: string } = {},
+  options: { resetProject?: boolean; turnId?: string; userMessagePersisted?: boolean } = {},
 ) {
   const contextConversationId = String(context.conversation_id || '');
   const pagesHeaderConversationId = getRequestHeader(context, 'makers-conversation-id');
@@ -676,7 +619,11 @@ export async function runChatPipeline(
       });
     }
   }
-  const history = shouldResetProject ? [] : await getHistory(context, conversationId);
+  const history = shouldResetProject
+    ? []
+    : await getHistory(context, conversationId, {
+      excludeLatestUserMessage: options.userMessagePersisted ? message : undefined,
+    });
   const isInitialProjectTurn = !state.created;
   const hiddenScaffoldToolUseIds = new Set<string>();
   const activityTurnId = options.turnId
@@ -737,7 +684,9 @@ export async function runChatPipeline(
         }
       }
     }
-    await appendTurn(context, conversationId, 'user', message);
+    if (!options.userMessagePersisted) {
+      await appendTurn(context, conversationId, 'user', message);
+    }
     await appendTurn(context, conversationId, 'assistant', assistant);
     await saveActivityTurn(context, conversationId, {
       id: activityTurnId,

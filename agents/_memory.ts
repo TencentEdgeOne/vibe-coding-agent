@@ -1,6 +1,7 @@
 import { HISTORY_FETCH_LIMIT } from './_constants';
 import { createProjectState } from './_project';
 import type {
+  ChatTask,
   ConversationMessage,
   PersistedActivityTurn,
   ProjectSnapshot,
@@ -9,7 +10,11 @@ import type {
 import { sanitizeAssistantText } from './utils/_text';
 import { appendTrimmedActivityTurn, dedupeActivityTurns } from './utils/_activity';
 
-export async function getHistory(context: any, conversationId: string): Promise<ConversationMessage[]> {
+export async function getHistory(
+  context: any,
+  conversationId: string,
+  options: { excludeLatestUserMessage?: string } = {},
+): Promise<ConversationMessage[]> {
   // context.store only exposes conversation-scoped message APIs, not a generic KV store.
   // Read this conversation's messages and filter them into user/assistant text pairs.
   try {
@@ -19,7 +24,7 @@ export async function getHistory(context: any, conversationId: string): Promise<
       order: 'asc',
     });
     const items = Array.isArray(messages) ? messages : (messages?.items || []);
-    return items
+    const history = items
       .filter((item: any) => item.role === 'user' || item.role === 'assistant')
       .map((item: any) => ({
         role: item.role as 'user' | 'assistant',
@@ -27,12 +32,43 @@ export async function getHistory(context: any, conversationId: string): Promise<
           ? item.content
           : JSON.stringify(item.content ?? ''),
       }));
+
+    // /chat persists the submitted user message before /chat/stream starts the
+    // agent. Remove that one record from the prompt history; the pipeline passes
+    // it separately as the current user turn.
+    const currentMessage = options.excludeLatestUserMessage;
+    if (currentMessage && history.at(-1)?.role === 'user' && history.at(-1)?.content === currentMessage) {
+      history.pop();
+    }
+    return history;
   } catch (error: any) {
     if (error?.code === 'MemoryNotFoundError') {
       return [];
     }
     throw error;
   }
+}
+
+export async function getChatTask(context: any, conversationId: string): Promise<ChatTask | null> {
+  try {
+    const conversation = await context.store.getConversation({ conversationId });
+    const task = conversation?.metadata?.chatTask;
+    return task && typeof task === 'object' && typeof task.id === 'string'
+      ? task as ChatTask
+      : null;
+  } catch (error: any) {
+    if (error?.code === 'MemoryNotFoundError') {
+      return null;
+    }
+    throw error;
+  }
+}
+
+export async function saveChatTask(context: any, conversationId: string, task: ChatTask) {
+  await context.store.updateConversation({
+    conversationId,
+    metadata: { chatTask: task },
+  });
 }
 
 export async function appendTurn(

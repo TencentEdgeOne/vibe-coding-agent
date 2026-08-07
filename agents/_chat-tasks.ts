@@ -1,0 +1,315 @@
+import { runChatPipeline } from './_pipelines';
+import {
+  appendTurn,
+  getChatTask,
+  saveChatTask,
+} from './_memory';
+import type { ChatTask, ChatTaskStatus, StreamSend } from './_types';
+import { createSSEResponse, sseEvent } from './_shared';
+
+type TaskEvent = Record<string, unknown>;
+
+type SequencedEvent = {
+  sequence: number;
+  event: TaskEvent;
+};
+
+type TaskListener = (event: SequencedEvent) => void;
+
+type LiveChatTask = {
+  conversationId: string;
+  task: ChatTask;
+  events: SequencedEvent[];
+  nextSequence: number;
+  listeners: Set<TaskListener>;
+  runPromise?: Promise<void>;
+};
+
+const liveTasks = new Map<string, LiveChatTask>();
+
+function taskKey(conversationId: string, taskId: string) {
+  return `${conversationId}:${taskId}`;
+}
+
+function createTaskId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function getRequestHeader(context: any, name: string): string {
+  const headers = context?.request?.headers;
+  if (!headers) return '';
+  const lowerName = name.toLowerCase();
+  const directValue = headers[name] ?? headers[lowerName];
+  const value = directValue ?? Object.entries(headers).find(([key]) => key.toLowerCase() === lowerName)?.[1];
+  return typeof value === 'string' ? value : String(value || '');
+}
+
+export function getConversationId(context: any): string {
+  return String(context?.conversation_id || getRequestHeader(context, 'makers-conversation-id') || getRequestHeader(context, 'conversationId') || '').trim();
+}
+
+function isTerminalEvent(event: TaskEvent) {
+  return event.type === 'result' || event.type === 'error';
+}
+
+function statusFromResult(event: TaskEvent): ChatTaskStatus {
+  const data = event.data && typeof event.data === 'object'
+    ? event.data as Record<string, unknown>
+    : {};
+  if (data.stopped === true) return 'stopped';
+  return data.ok === false ? 'failed' : 'completed';
+}
+
+function getOrCreateLiveTask(conversationId: string, task: ChatTask): LiveChatTask {
+  const key = taskKey(conversationId, task.id);
+  const existing = liveTasks.get(key);
+  if (existing) {
+    return existing;
+  }
+
+  const liveTask: LiveChatTask = {
+    conversationId,
+    task,
+    events: task.finalEvent
+      ? [{ sequence: 1, event: task.finalEvent }]
+      : [],
+    nextSequence: task.finalEvent ? 1 : 0,
+    listeners: new Set(),
+  };
+  liveTasks.set(key, liveTask);
+  return liveTask;
+}
+
+function publish(liveTask: LiveChatTask, event: TaskEvent) {
+  const record = {
+    sequence: ++liveTask.nextSequence,
+    event,
+  };
+  liveTask.events.push(record);
+  // The event log is only a short-lived in-process replay buffer. Durable task
+  // state and the final result live in context.store, so a cold start does not
+  // turn this Map into the source of truth.
+  if (liveTask.events.length > 2_000) {
+    liveTask.events.splice(0, liveTask.events.length - 2_000);
+  }
+  for (const listener of liveTask.listeners) {
+    listener(record);
+  }
+}
+
+function isTaskActive(task: ChatTask | null) {
+  return task?.status === 'queued' || task?.status === 'running';
+}
+
+export async function createChatTask(
+  context: any,
+  message: string,
+  options: { resetProject?: boolean; turnId?: string } = {},
+) {
+  const conversationId = getConversationId(context);
+  if (!conversationId) {
+    return {
+      ok: false as const,
+      status: 400,
+      error: 'Missing conversationId. The project workspace cannot be prepared.',
+    };
+  }
+
+  const taskId = options.turnId || createTaskId();
+  const existing = await getChatTask(context, conversationId);
+  if (existing && existing.id === taskId && existing.message === message) {
+    return { ok: true as const, conversationId, task: existing };
+  }
+  if (existing && isTaskActive(existing)) {
+    return {
+      ok: false as const,
+      status: 409,
+      error: 'Another generation is already running for this conversation.',
+    };
+  }
+
+  // Appending the user message creates a brand-new conversation, which makes
+  // updateConversation available for the durable task record below. The stream
+  // pipeline knows this message is already persisted and will not append it a
+  // second time.
+  await appendTurn(context, conversationId, 'user', message);
+
+  const task: ChatTask = {
+    id: taskId,
+    message,
+    resetProject: options.resetProject === true,
+    status: 'queued',
+    createdAt: Date.now(),
+  };
+  await saveChatTask(context, conversationId, task);
+  return { ok: true as const, conversationId, task };
+}
+
+async function executeLiveTask(context: any, liveTask: LiveChatTask) {
+  const runningTask: ChatTask = {
+    ...liveTask.task,
+    status: 'running',
+    startedAt: liveTask.task.startedAt || Date.now(),
+    error: undefined,
+    finalEvent: undefined,
+  };
+  liveTask.task = runningTask;
+  let finalEvent: TaskEvent | undefined;
+  let error: string | undefined;
+  const send: StreamSend = (event) => {
+    publish(liveTask, event);
+    if (isTerminalEvent(event)) {
+      finalEvent = event;
+    }
+  };
+
+  try {
+    await saveChatTask(context, liveTask.conversationId, runningTask);
+    publish(liveTask, { type: 'status', message: 'Starting the chat task' });
+    await runChatPipeline(context, liveTask.task.message, send, {
+      resetProject: liveTask.task.resetProject,
+      turnId: liveTask.task.id,
+      userMessagePersisted: true,
+    });
+  } catch (runError) {
+    error = runError instanceof Error ? runError.message : 'Request processing failed.';
+    if (!finalEvent) {
+      publish(liveTask, { type: 'error', error });
+      finalEvent = { type: 'error', error };
+    }
+  }
+
+  const current = liveTask.task;
+  const nextStatus = finalEvent?.type === 'result'
+    ? statusFromResult(finalEvent)
+    : error
+      ? 'failed'
+      : current.status === 'running' ? 'completed' : current.status;
+  const nextTask: ChatTask = {
+    ...current,
+    status: nextStatus,
+    finishedAt: Date.now(),
+    ...(finalEvent ? { finalEvent } : {}),
+    ...(error ? { error } : {}),
+  };
+  liveTask.task = nextTask;
+  try {
+    await saveChatTask(context, liveTask.conversationId, nextTask);
+  } catch (persistError) {
+    console.error('[chat-task] failed to persist final task state', persistError);
+  }
+
+  const key = taskKey(liveTask.conversationId, liveTask.task.id);
+  setTimeout(() => {
+    if (liveTask.listeners.size === 0 && !isTaskActive(liveTask.task) && liveTasks.get(key) === liveTask) {
+      liveTasks.delete(key);
+    }
+  }, 5 * 60 * 1_000);
+}
+
+export function ensureChatTaskStarted(context: any, conversationId: string, task: ChatTask) {
+  const liveTask = getOrCreateLiveTask(conversationId, task);
+  if (!liveTask.runPromise && isTaskActive(liveTask.task)) {
+    liveTask.runPromise = executeLiveTask(context, liveTask).catch((error) => {
+      console.error('[chat-task] execution failed', error);
+    });
+  }
+  return liveTask;
+}
+
+class AsyncEventQueue<T> {
+  private values: T[] = [];
+  private waiters: Array<(value: T) => void> = [];
+
+  push(value: T) {
+    const waiter = this.waiters.shift();
+    if (waiter) waiter(value);
+    else this.values.push(value);
+  }
+
+  next() {
+    const value = this.values.shift();
+    if (value !== undefined) return Promise.resolve(value);
+    return new Promise<T>((resolve) => this.waiters.push(resolve));
+  }
+}
+
+function parseTaskId(context: any) {
+  const query = context?.request?.query;
+  const fromQuery = query?.runId ?? query?.turnId ?? query?.taskId;
+  if (typeof fromQuery === 'string' && fromQuery.trim()) return fromQuery.trim();
+
+  const rawUrl = typeof context?.request?.url === 'string' ? context.request.url : '';
+  try {
+    const url = new URL(rawUrl, 'http://localhost');
+    return url.searchParams.get('runId') || url.searchParams.get('turnId') || url.searchParams.get('taskId') || '';
+  } catch {
+    return '';
+  }
+}
+
+export async function createChatTaskStreamResponse(context: any) {
+  const conversationId = getConversationId(context);
+  const runId = parseTaskId(context);
+  if (!conversationId || !runId) {
+    return new Response(JSON.stringify({ ok: false, error: 'conversationId and runId are required.' }), {
+      status: 400,
+      headers: { 'content-type': 'application/json; charset=utf-8' },
+    });
+  }
+
+  const task = await getChatTask(context, conversationId);
+  if (!task || task.id !== runId) {
+    return new Response(JSON.stringify({ ok: false, error: 'Chat task not found.' }), {
+      status: 404,
+      headers: { 'content-type': 'application/json; charset=utf-8' },
+    });
+  }
+
+  ensureChatTaskStarted(context, conversationId, task);
+  const liveTask = getOrCreateLiveTask(conversationId, task);
+
+  return createSSEResponse(async function* (signal) {
+    const queue = new AsyncEventQueue<SequencedEvent>();
+    const afterSequence = liveTask.nextSequence;
+    const listener: TaskListener = (record) => {
+      if (record.sequence > afterSequence) queue.push(record);
+    };
+    liveTask.listeners.add(listener);
+
+    try {
+      for (const record of liveTask.events) {
+        if (record.sequence <= afterSequence) {
+          yield sseEvent(record.event);
+        }
+      }
+
+      if (!isTaskActive(liveTask.task)) {
+        return;
+      }
+
+      const abortPromise = signal
+        ? new Promise<typeof ABORTED>((resolve) => {
+          if (signal.aborted) resolve(ABORTED);
+          else signal.addEventListener('abort', () => resolve(ABORTED), { once: true });
+        })
+        : null;
+
+      while (!signal?.aborted) {
+        const record = await (abortPromise
+          ? Promise.race([queue.next(), abortPromise])
+          : queue.next());
+        if (record === ABORTED) return;
+        yield sseEvent(record.event);
+        if (isTerminalEvent(record.event)) return;
+      }
+    } finally {
+      liveTask.listeners.delete(listener);
+    }
+  }, context?.request?.signal);
+}
+
+const ABORTED = Symbol('aborted');

@@ -26,6 +26,20 @@ export type ConversationMessage = {
   content: string;
 };
 
+export type ChatTaskStatus = 'queued' | 'running' | 'completed' | 'failed' | 'stopped';
+
+export type ChatTask = {
+  id: string;
+  message: string;
+  resetProject: boolean;
+  status: ChatTaskStatus;
+  createdAt: number;
+  startedAt?: number;
+  finishedAt?: number;
+  finalEvent?: Record<string, unknown>;
+  error?: string;
+};
+
 export type ActivityStatus = 'running' | 'completed' | 'failed' | 'stopped';
 
 export type PersistedActivity =

@@ -126,6 +126,15 @@ type ChatResponse = {
   stopped?: boolean;
 };
 
+type ChatTaskSubmission = {
+  ok?: boolean;
+  conversation_id?: string;
+  runId?: string;
+  streamUrl?: string;
+  status?: 'queued' | 'running' | 'completed' | 'failed' | 'stopped';
+  error?: string;
+};
+
 type ChatStreamEvent =
   | {
       type: 'status';
@@ -1426,7 +1435,7 @@ export default function Home() {
       const requestAbortController = new AbortController();
       chatAbortControllerRef.current = requestAbortController;
       stoppingRef.current = false;
-      const response = await fetch('/chat', {
+      const submitResponse = await fetch('/chat', {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -1441,37 +1450,83 @@ export default function Home() {
         signal: requestAbortController.signal,
       });
 
+      const submission = await submitResponse.json().catch(() => null) as ChatTaskSubmission | null;
+      if (!submitResponse.ok || !submission?.ok || !submission.runId) {
+        applyResponse({
+          ok: false,
+          conversation_id: submission?.conversation_id,
+          error: submission?.error || `${submitResponse.status}`,
+        });
+        return;
+      }
+
+      if (submission.conversation_id) {
+        cacheConversationId(submission.conversation_id);
+        setConversationId(submission.conversation_id);
+      }
+
+      const streamUrl = submission.streamUrl
+        || `/chat/stream?runId=${encodeURIComponent(submission.runId)}`;
+      const response = await fetch(streamUrl, {
+        method: 'GET',
+        headers: {
+          conversationId: requestConversationId,
+          'makers-conversation-id': requestConversationId,
+        },
+        signal: requestAbortController.signal,
+      });
+
       const contentType = response.headers.get('content-type') || '';
-      if (!response.body || !contentType.includes('application/x-ndjson')) {
-        applyResponse((await response.json()) as ChatResponse);
+      if (!response.body || !contentType.includes('text/event-stream')) {
+        applyResponse((await response.json().catch(() => ({
+          ok: false,
+          error: `${response.status}`,
+        }))) as ChatResponse);
         return;
       }
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+      let streamDone = false;
 
-      while (true) {
+      while (!streamDone) {
         const { done, value } = await reader.read();
         if (done) {
           break;
         }
 
         buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
+        const frames = buffer.split('\n\n');
+        buffer = frames.pop() || '';
 
-        for (const line of lines) {
-          if (!line.trim()) {
+        for (const frame of frames) {
+          const data = frame
+            .split('\n')
+            .filter((line) => line.startsWith('data:'))
+            .map((line) => line.slice(5).trimStart())
+            .join('\n');
+          if (!data) {
             continue;
           }
-          handleStreamEvent(JSON.parse(line) as ChatStreamEvent);
+          if (data === '[DONE]') {
+            streamDone = true;
+            break;
+          }
+          handleStreamEvent(JSON.parse(data) as ChatStreamEvent);
         }
       }
 
       buffer += decoder.decode();
       if (buffer.trim()) {
-        handleStreamEvent(JSON.parse(buffer) as ChatStreamEvent);
+        const data = buffer
+          .split('\n')
+          .filter((line) => line.startsWith('data:'))
+          .map((line) => line.slice(5).trimStart())
+          .join('\n');
+        if (data && data !== '[DONE]') {
+          handleStreamEvent(JSON.parse(data) as ChatStreamEvent);
+        }
       }
     } catch (error) {
       if ((error instanceof Error && error.name === 'AbortError') || stoppingRef.current) {
