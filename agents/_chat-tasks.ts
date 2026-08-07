@@ -38,7 +38,34 @@ export function abortLiveChatTask(conversationId: string) {
   for (const liveTask of liveTasks.values()) {
     if (liveTask.conversationId === trimmed && !liveTask.abortController.signal.aborted) {
       liveTask.abortController.abort();
+      // Mark stopped immediately so a refresh mid-unwind does not treat this as
+      // an in-flight task (resume only reconnects queued/running).
+      if (liveTask.task.status === 'queued' || liveTask.task.status === 'running') {
+        liveTask.task = {
+          ...liveTask.task,
+          status: 'stopped',
+          finishedAt: Date.now(),
+        };
+      }
     }
+  }
+}
+
+/** Persist chatTask as stopped so resume history does not reattach activeTask. */
+export async function markChatTaskStopped(context: any, conversationId: string) {
+  const trimmed = conversationId.trim();
+  if (!trimmed) return;
+  try {
+    const existing = await getChatTask(context, trimmed);
+    if (!existing) return;
+    if (existing.status !== 'queued' && existing.status !== 'running') return;
+    await saveChatTask(context, trimmed, {
+      ...existing,
+      status: 'stopped',
+      finishedAt: Date.now(),
+    });
+  } catch (error) {
+    console.warn('[chat-task] failed to mark task stopped', error);
   }
 }
 

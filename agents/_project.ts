@@ -1,6 +1,10 @@
 export { runSandboxCommand } from './project/_commands';
 export { createProjectState, resetProjectWorkspace } from './project/_state';
-export { ensureProjectScaffold, runVerification } from './project/_scaffold';
+export {
+  ensureProjectScaffold,
+  repairNestedAppDirLayout,
+  runVerification,
+} from './project/_scaffold';
 export {
   getFileTree,
   readFileFromSandbox,

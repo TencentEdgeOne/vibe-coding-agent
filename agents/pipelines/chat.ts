@@ -25,16 +25,16 @@ import type {
   StreamSend,
 } from '../_types';
 import { buildAutoFixPrompt } from '../utils/_build-errors';
-import { normalizeRelPath } from '../utils/_paths';
+import { toAppRelPath } from '../utils/_paths';
 import { sanitizeAssistantText } from '../utils/_text';
 import { resolveConversationId } from '../utils/_request';
 import {
   FILE_PUSH_MAX_BYTES,
   FILE_PUSH_TURN_BUDGET_BYTES,
   buildRequirementConclusionFallback,
+  createProjectCheckpointController,
   extendExistingSandboxTimeout,
   isGenericCompletionReply,
-  persistProjectSnapshot,
   stripReturnedPreviewLinks,
   utf8ByteLength,
 } from './_helpers';
@@ -95,12 +95,21 @@ export async function runChatPipeline(
     await clearProjectSnapshot(context, conversationId);
   } else {
     // Code persistence (防丢失): the sandbox /tmp is volatile, so the generated
-    // project may be gone between requests. When the appDir is missing but a
-    // snapshot exists, restore it before the agent runs so ensure_project_scaffold
-    // sees existing files (created=false) and the agent edits the real project.
+    // project may be gone between requests. Restore from snapshot when the appDir
+    // is missing OR empty, then always ensure the session directories exist so an
+    // early agent files_list cannot hit "lstat /projects: no such file".
     try {
-      const appDirExists = await context.sandbox.files.exists(state.appDir);
-      if (!appDirExists) {
+      let hasProjectFiles = false;
+      try {
+        if (await context.sandbox.files.exists(state.appDir)) {
+          const tree = await getFileTree(context, state);
+          hasProjectFiles = tree.some((item) => item.type === 'file');
+        }
+      } catch {
+        hasProjectFiles = false;
+      }
+
+      if (!hasProjectFiles) {
         const snapshot = await getProjectSnapshot(context, conversationId);
         if (snapshot) {
           send({ type: 'status', message: 'Restoring project from snapshot' });
@@ -112,8 +121,16 @@ export async function runChatPipeline(
               stream: 'stderr',
               message: restored.error || 'Failed to restore the project from snapshot.',
             });
+          } else {
+            hasProjectFiles = true;
           }
         }
+      }
+
+      await context.sandbox.files.makeDir(state.sessionDir);
+      await context.sandbox.files.makeDir(state.appDir);
+      if (hasProjectFiles) {
+        state.created = true;
       }
     } catch (error) {
       // Restore is best-effort: if it fails, fall through and let the agent
@@ -124,6 +141,12 @@ export async function runChatPipeline(
         stream: 'stderr',
         message: error instanceof Error ? error.message : 'Snapshot restore check failed.',
       });
+      try {
+        await context.sandbox.files.makeDir(state.sessionDir);
+        await context.sandbox.files.makeDir(state.appDir);
+      } catch {
+        // Scaffold tool will surface a clearer error if dirs still cannot be created.
+      }
     }
   }
   const history = shouldResetProject
@@ -137,13 +160,26 @@ export async function runChatPipeline(
     || String(context?.run_id || `${Date.now()}-${Math.random().toString(36).slice(2)}`);
   const activities: PersistedActivity[] = [];
 
+  // Mid-turn debounced snapshots + exit-path flush so a recycled sandbox still
+  // has a restorable projectSnapshot in the store.
+  const checkpoint = createProjectCheckpointController(context, conversationId, state);
+
   const recordProgress = (event: AgentProgressEvent) => {
     if (event.type === 'text_segment') {
       const text = event.data.text;
       if (!text) return;
       const last = activities.at(-1);
-      if (last?.kind === 'text') last.content += text;
-      else activities.push({ kind: 'text', content: text });
+      if (last?.kind === 'text') {
+        if (last.content.endsWith(text) || last.content.endsWith(text.trim())) {
+          return;
+        }
+        activities[activities.length - 1] = {
+          ...last,
+          content: `${last.content}${text}`,
+        };
+      } else {
+        activities.push({ kind: 'text', content: text });
+      }
       return;
     }
 
@@ -203,6 +239,24 @@ export async function runChatPipeline(
       createdAt: Date.now(),
       activities,
     });
+  };
+
+  // Exit-path order: code snapshot first, then projectState, then conversation.
+  // Survives a crash between steps better than conversation-without-code.
+  const finalizeTurn = async (
+    assistant: string,
+    status: 'completed' | 'failed' | 'stopped',
+    finalizeOptions?: { withSnapshot?: boolean; withState?: boolean },
+  ) => {
+    const withSnapshot = finalizeOptions?.withSnapshot === true;
+    const withState = finalizeOptions?.withState !== false;
+    if (withSnapshot) {
+      await checkpoint.flush();
+    }
+    if (withState) {
+      await saveProjectState(context, conversationId, state);
+    }
+    await persistConversationTurn(assistant, status);
   };
 
   const handleScaffoldLog = (log: ScaffoldLog) => {
@@ -284,7 +338,7 @@ export async function runChatPipeline(
         send({
           type: 'file_content',
           data: {
-            path: normalizeRelPath(file.path) || file.path,
+            path: toAppRelPath(file.path, state.appDir) || file.path,
             content: file.content,
             size: bytes,
           },
@@ -295,6 +349,27 @@ export async function runChatPipeline(
     // sent, and so the Files panel does not wait for the whole turn. Failures are
     // non-fatal because the final state is pushed again at turn completion.
     await pushFileTree('Failed to read the file list after scaffold.');
+    // Debounced store backup while the agent is still writing — covers the long
+    // window where files live only in the volatile sandbox.
+    checkpoint.schedule();
+  };
+
+  // Switch the iframe the moment publish_preview returns — do not wait for
+  // verification / finalizeTurn, which can take several more seconds.
+  const handlePreviewReady = (preview: { url?: string; sandboxDebugUrl?: string }) => {
+    if (!preview.url) {
+      return;
+    }
+    send({
+      type: 'preview_ready',
+      data: {
+        preview: {
+          url: preview.url,
+          sandboxDebugUrl: preview.sandboxDebugUrl,
+        },
+        download: { url: '/download', filename: 'source.zip' },
+      },
+    });
   };
 
   // The model handles creative code work; build and service steps remain deterministic.
@@ -308,6 +383,7 @@ export async function runChatPipeline(
     handleScaffoldLog,
     forwardProgress,
     handleProjectFilesChanged,
+    handlePreviewReady,
     abortSignal,
   );
 
@@ -315,9 +391,9 @@ export async function runChatPipeline(
     const stoppedReply = /[\u3400-\u9fff]/.test(message)
       ? '已停止本次生成，你可以继续描述下一步修改。'
       : 'Generation stopped. You can continue with another change.';
-    await persistConversationTurn(stoppedReply, 'stopped');
-    await saveProjectState(context, conversationId, state);
-    if (modelResult.projectTouched) await persistProjectSnapshot(context, conversationId, state);
+    await finalizeTurn(stoppedReply, 'stopped', {
+      withSnapshot: modelResult.projectTouched,
+    });
     send({
       type: 'result',
       data: {
@@ -354,8 +430,9 @@ export async function runChatPipeline(
   });
 
   if (modelResult.fatal) {
-    await persistConversationTurn(assistantReply, 'failed');
-    await saveProjectState(context, conversationId, state);
+    await finalizeTurn(assistantReply, 'failed', {
+      withSnapshot: modelResult.projectTouched,
+    });
 
     send({
       type: 'result',
@@ -386,8 +463,7 @@ export async function runChatPipeline(
       });
     }
 
-    await persistConversationTurn(assistantReply, modelResult.success ? 'completed' : 'failed');
-    await saveProjectState(context, conversationId, state);
+    await finalizeTurn(assistantReply, modelResult.success ? 'completed' : 'failed');
 
     send({
       type: 'result',
@@ -407,7 +483,9 @@ export async function runChatPipeline(
   }
 
   if (!modelResult.projectTouched) {
-    await persistConversationTurn(assistantReply, modelResult.success ? 'completed' : 'failed');
+    await finalizeTurn(assistantReply, modelResult.success ? 'completed' : 'failed', {
+      withState: false,
+    });
 
     send({
       type: 'result',
@@ -422,6 +500,10 @@ export async function runChatPipeline(
     return;
   }
 
+  // Files are on disk now — flush before verification/auto-fix so that long
+  // build window cannot recycle the sandbox with only an in-memory project.
+  await checkpoint.flush();
+
   let fileTree = await pushFileTree('Failed to read the file list.');
   let build = await runVerification(context, state);
   let autoFixAttempts = 0;
@@ -435,11 +517,7 @@ export async function runChatPipeline(
 
   if (build.fatal) {
     const fatalReply = build.stderr || 'The task failed, and the remaining workflow was stopped.';
-    await persistConversationTurn(fatalReply, 'failed');
-    await saveProjectState(context, conversationId, state);
-    // Files were generated this turn; persist them even though verification failed,
-    // so the work survives a sandbox recycle and download/resume still see it.
-    await persistProjectSnapshot(context, conversationId, state);
+    await finalizeTurn(fatalReply, 'failed', { withSnapshot: true });
 
     send({
       type: 'result',
@@ -492,15 +570,14 @@ export async function runChatPipeline(
       handleScaffoldLog,
       forwardProgress,
       handleProjectFilesChanged,
+      handlePreviewReady,
       abortSignal,
     );
     if (autoFixResult.stopped || abortSignal?.aborted) {
       const stoppedReply = /[\u3400-\u9fff]/.test(message)
         ? '已停止本次生成，你可以继续描述下一步修改。'
         : 'Generation stopped. You can continue with another change.';
-      await persistConversationTurn(stoppedReply, 'stopped');
-      await saveProjectState(context, conversationId, state);
-      await persistProjectSnapshot(context, conversationId, state);
+      await finalizeTurn(stoppedReply, 'stopped', { withSnapshot: true });
       send({
         type: 'result',
         data: {
@@ -535,10 +612,7 @@ export async function runChatPipeline(
     build = await runVerification(context, state);
     if (build.fatal) {
       const fatalReply = build.stderr || 'The task failed, and the remaining workflow was stopped.';
-      await persistConversationTurn(fatalReply, 'failed');
-      await saveProjectState(context, conversationId, state);
-      // Persist the generated files even on a fatal auto-fix outcome (see above).
-      await persistProjectSnapshot(context, conversationId, state);
+      await finalizeTurn(fatalReply, 'failed', { withSnapshot: true });
 
       send({
         type: 'result',
@@ -603,17 +677,13 @@ export async function runChatPipeline(
     state.previewUrl,
   );
 
-  // Append this turn first, which also creates the conversation, then write projectState to metadata.
-  await persistConversationTurn(
+  // Code first, then state, then conversation — so a crash mid-finalize still
+  // leaves a restorable projectSnapshot for resume after sandbox recycle.
+  await finalizeTurn(
     reply,
     modelResult.success && build.status !== 'failed' && Boolean(state.previewUrl) ? 'completed' : 'failed',
+    { withSnapshot: true },
   );
-  await saveProjectState(context, conversationId, state);
-
-  // Code persistence (防丢失): snapshot the project into the store so the code
-  // survives sandbox recycling. Reached only after a project was generated/modified
-  // this turn (the no-touch / preview-only cases return earlier).
-  await persistProjectSnapshot(context, conversationId, state);
 
   send({
     type: 'result',

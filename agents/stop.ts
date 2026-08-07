@@ -1,4 +1,4 @@
-import { abortLiveChatTask } from './_chat-tasks';
+import { abortLiveChatTask, markChatTaskStopped } from './_chat-tasks';
 import { saveActivityTurn } from './_memory';
 import type { PersistedActivity } from './_types';
 
@@ -14,6 +14,9 @@ export async function onRequest(context: any) {
   try {
     // Stop the detached in-process run first (SSE disconnect no longer aborts it).
     abortLiveChatTask(conversationId);
+    // Persist stopped before unwind finishes so refresh/resume does not see an
+    // activeTask and duplicate the activityHistory user/assistant rows.
+    await markChatTaskStopped(context, conversationId);
     const result = await context.utils?.abortActiveRun?.(conversationId);
     const rawTurn = context?.request?.body?.turn;
     if (rawTurn && typeof rawTurn === 'object') {

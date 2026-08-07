@@ -4,6 +4,8 @@ import {
   BLOCKED_PROJECT_WRITE_SEGMENTS,
 } from '../_constants';
 
+export { normalizeRelPath, toAppRelPath } from './_relpath';
+
 // Normalize conversation IDs before using them in sandbox paths so paths remain
 // stable across runtime environments.
 export function safeSegment(value: string) {
@@ -16,19 +18,6 @@ export function readFileExtension(path: string): string {
   const dot = tail.lastIndexOf('.');
   if (dot <= 0) return '';
   return tail.slice(dot).toLowerCase();
-}
-
-export function normalizeRelPath(rawPath: string): string | null {
-  // Reject absolute paths, empty paths, and paths containing .. so callers
-  // cannot escape appDir.
-  const trimmed = rawPath.trim();
-  if (!trimmed) return null;
-  if (trimmed.startsWith('/')) return null;
-  const segments = trimmed.split('/');
-  for (const seg of segments) {
-    if (seg === '..' || seg === '.') return null;
-  }
-  return segments.filter(Boolean).join('/');
 }
 
 export function getBlockedProjectWriteReason(path: string): string | null {

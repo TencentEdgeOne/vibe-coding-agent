@@ -97,7 +97,7 @@ function ToolActivityRow({ activity, copy }: {
             </div>
           )}
           {!activity.inputSummary && !activity.outputSummary && (
-            <p>{label}</p>
+            <p className="tool-activity-empty">{label}</p>
           )}
         </div>
       )}
@@ -141,7 +141,11 @@ function AssistantTurn({ message, copy }: {
         ) : (
           <ToolActivityRow key={activity.toolUseId || `tool-${index}`} activity={activity} copy={copy} />
         ))}
-        {message.content && <Markdown content={message.content} />}
+        {/* While running, streamed text activities are the source of truth. Showing
+            message.content at the same time repeats the trailing sentence. */}
+        {message.content && message.status !== 'running' && (
+          <Markdown content={message.content} />
+        )}
         {message.status === 'running' && activities.length === 0 && (
           <div className="agent-waiting" aria-label={copy.running}>
             <span />

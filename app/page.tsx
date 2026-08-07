@@ -229,64 +229,86 @@ export default function Home() {
 
       // In-flight turn is not in activityHistory yet. Merge it so refresh keeps
       // the user prompt visible and a running assistant slot ready for SSE replay.
+      // Exception: /stop may already have persisted the turn while the chat task is
+      // still marked running during unwind — merging again duplicates `${turnId}-user`.
       if (activeTask?.id && activeTask.message) {
-        const assistantId = activeTask.id;
-        const userId = `${activeTask.id}-user`;
-        const last = nextMessages.at(-1);
-        const hasRunningAssistant = nextMessages.some(
-          (item) => item.role === 'assistant' && item.id === assistantId && item.status === 'running',
-        );
-        if (!hasRunningAssistant) {
-          if (last?.role === 'user' && last.content === activeTask.message) {
-            nextMessages = [
-              ...nextMessages.slice(0, -1),
-              { ...last, id: userId },
-              {
-                id: assistantId,
-                role: 'assistant',
-                content: '',
-                thinkingContent: '',
-                processEvents: [],
-                activities: [],
-                status: 'running',
-                steps: [],
-              },
-            ];
-          } else if (!(last?.role === 'assistant' && last.id === assistantId)) {
-            nextMessages = [
-              ...nextMessages,
-              {
-                id: userId,
-                role: 'user',
-                content: activeTask.message,
-                status: 'done',
-              },
-              {
-                id: assistantId,
-                role: 'assistant',
-                content: '',
-                thinkingContent: '',
-                processEvents: [],
-                activities: [],
-                status: 'running',
-                steps: [],
-              },
-            ];
+        const persistedTurn = activityHistory.find((turn) => turn.id === activeTask.id);
+        const turnAlreadyFinished = persistedTurn
+          && (persistedTurn.status === 'stopped'
+            || persistedTurn.status === 'completed'
+            || persistedTurn.status === 'failed');
+
+        if (!turnAlreadyFinished) {
+          const assistantId = activeTask.id;
+          const userId = `${activeTask.id}-user`;
+          const last = nextMessages.at(-1);
+          const hasRunningAssistant = nextMessages.some(
+            (item) => item.role === 'assistant' && item.id === assistantId && item.status === 'running',
+          );
+          const hasUserForTurn = nextMessages.some((item) => item.id === userId);
+
+          if (!hasRunningAssistant) {
+            if (last?.role === 'user' && last.content === activeTask.message) {
+              nextMessages = [
+                ...nextMessages.slice(0, -1),
+                { ...last, id: userId },
+                {
+                  id: assistantId,
+                  role: 'assistant',
+                  content: '',
+                  thinkingContent: '',
+                  processEvents: [],
+                  activities: [],
+                  status: 'running',
+                  steps: [],
+                },
+              ];
+            } else if (!hasUserForTurn && !(last?.role === 'assistant' && last.id === assistantId)) {
+              nextMessages = [
+                ...nextMessages,
+                {
+                  id: userId,
+                  role: 'user',
+                  content: activeTask.message,
+                  status: 'done',
+                },
+                {
+                  id: assistantId,
+                  role: 'assistant',
+                  content: '',
+                  thinkingContent: '',
+                  processEvents: [],
+                  activities: [],
+                  status: 'running',
+                  steps: [],
+                },
+              ];
+            }
           }
+          setOpenSteps((current) => ({ ...current, [assistantId]: true }));
+          activeTurnIdRef.current = assistantId;
+          setLoading(true);
+          setFilesRefreshing(true);
         }
-        setOpenSteps((current) => ({ ...current, [assistantId]: true }));
-        activeTurnIdRef.current = assistantId;
-        setLoading(true);
-        setFilesRefreshing(true);
       }
+
+      // Last line of defense against duplicate React keys after stop/resume races.
+      const seenIds = new Set<string>();
+      nextMessages = nextMessages.filter((item) => {
+        if (seenIds.has(item.id)) return false;
+        seenIds.add(item.id);
+        return true;
+      });
 
       setMessages(nextMessages);
       if (data.hasProject || data.needsWorkspace || activeTask) {
         setShowWorkspacePanel(Boolean(data.hasProject || data.needsWorkspace));
         if (data.hasProject || data.needsWorkspace) {
-          setSandboxTab('preview');
+          // If a preview was published before, stay on the preview pane and show
+          // the restoring spinner while workspace resume restarts the server.
+          // Otherwise show source first (interrupted / never-published projects).
+          setSandboxTab(data.hasPreview ? 'preview' : 'files');
           setWorkspaceRestoring(true);
-          setFilesRefreshing(true);
         }
       }
       return true;
@@ -297,28 +319,37 @@ export default function Home() {
         setFileTree(data.files);
         if (data.files.items.some((item) => item.type === 'file')) {
           setShowWorkspacePanel(true);
+          setSandboxTab('files');
         }
       }
       if (data.download?.url) {
         setDownload(data.download);
       }
-      if (data.preview) {
+      if (data.preview?.url) {
         setPreview(data.preview);
-        if (data.preview.url) {
-          setShowWorkspacePanel(true);
-          const revision = previewRevisionRef.current + 1;
-          previewRevisionRef.current = revision;
-          activePreviewUrlRef.current = data.preview.url;
-          activePreviewRevisionRef.current = revision;
-          setActivePreviewUrl(data.preview.url);
-          setActivePreviewRevision(revision);
-          setActivePreviewLoaded(false);
-        }
+        setShowWorkspacePanel(true);
+        setSandboxTab('preview');
+        const revision = previewRevisionRef.current + 1;
+        previewRevisionRef.current = revision;
+        activePreviewUrlRef.current = data.preview.url;
+        activePreviewRevisionRef.current = revision;
+        setActivePreviewUrl(data.preview.url);
+        setActivePreviewRevision(revision);
+        setActivePreviewLoaded(false);
+      } else {
+        // Resume is files-only by default — do not surface a stale/failed preview
+        // error from an interrupted generation.
+        setPreview(null);
+        activePreviewUrlRef.current = '';
+        activePreviewRevisionRef.current = 0;
+        setActivePreviewUrl('');
+        setActivePreviewRevision(0);
+        setActivePreviewLoaded(false);
       }
     };
 
     (async () => {
-      let shouldClearFilesRefreshing = true;
+      let handedOffToActiveStream = false;
       try {
         const historyData = await fetchResumeHistory(existing);
         if (cancelled) return;
@@ -336,14 +367,14 @@ export default function Home() {
         // restore runs. Generation keeps going after a refresh; this only
         // resubscribes the UI to buffered + live events.
         if (activeTask?.id && !cancelled) {
-          shouldClearFilesRefreshing = false;
-          const streamUrl = activeTask.streamUrl
-            || `/chat/stream?runId=${encodeURIComponent(activeTask.id)}`;
+          handedOffToActiveStream = true;
+          setFilesRefreshing(true);
           void attachChatStreamRef.current({
             requestConversationId: conversationForRun,
             assistantMessageId: activeTask.id,
             isStartingFromHome: false,
-            streamUrl,
+            streamUrl: activeTask.streamUrl
+              || `/chat/stream?runId=${encodeURIComponent(activeTask.id)}`,
           });
         }
 
@@ -362,8 +393,8 @@ export default function Home() {
         if (!cancelled) {
           setResumeChecked(true);
           setWorkspaceRestoring(false);
-          // Keep the files spinner if we handed off to an active stream session.
-          if (shouldClearFilesRefreshing) {
+          // Active stream owns the files spinner after handoff; otherwise clear it.
+          if (!handedOffToActiveStream) {
             setFilesRefreshing(false);
           }
         }
@@ -615,15 +646,24 @@ export default function Home() {
           }
           const activities = [...(item.activities ?? [])];
           const last = activities.at(-1);
-          if (
-            last?.kind === 'text'
-            && nextText.trim().length > 24
-            && last.content.includes(nextText.trim())
-          ) {
-            return item;
+          if (last?.kind === 'text') {
+            const trimmed = nextText.trim();
+            // Immutable append + skip replayed/overlapping chunks so concurrent
+            // setState updaters cannot double-paste the same suffix.
+            if (
+              last.content.endsWith(nextText)
+              || (trimmed.length > 0 && last.content.endsWith(trimmed))
+              || (trimmed.length > 24 && last.content.includes(trimmed))
+            ) {
+              return item;
+            }
+            activities[activities.length - 1] = {
+              ...last,
+              content: `${last.content}${nextText}`,
+            };
+          } else {
+            activities.push({ kind: 'text', content: nextText });
           }
-          if (last?.kind === 'text') last.content += nextText;
-          else activities.push({ kind: 'text', content: nextText });
           return {
             ...item,
             activities,
@@ -1424,7 +1464,7 @@ export default function Home() {
         className={`min-h-0 min-w-0 w-full flex-1 ${
           hasWorkspace
             ? showWorkspacePanel
-              ? 'grid grid-rows-[minmax(0,0.46fr)_minmax(0,0.54fr)] lg:grid-cols-[minmax(420px,42%)_minmax(0,1fr)] lg:grid-rows-1'
+              ? 'workspace-shell'
               : 'block'
             : 'hidden'
         }`}
@@ -1458,103 +1498,11 @@ export default function Home() {
 
         {/* ===== RIGHT: preview / files ===== */}
         {showWorkspacePanel && <div className="workspace-result-panel">
-          <div className="workspace-panel-header">
-            <div className="workspace-panel-heading">
-              <span className="workspace-panel-mark" aria-hidden="true">
-                {sandboxTab === 'preview' ? <MonitorPlay className="size-4" /> : <Code2 className="size-4" />}
-              </span>
-              <div className="min-w-0">
-                <span className="workspace-panel-eyebrow">{t.workspace.sandboxEyebrow}</span>
-                <h2>{sandboxTab === 'preview' ? t.workspace.livePreview : t.workspace.code}</h2>
-              </div>
-              {sandboxTab === 'preview' && preview?.url && (
-                <span className={`workspace-panel-status ${activePreviewLoaded ? 'is-ready' : ''}`}>
-                  <span className="workspace-panel-status-dot" aria-hidden="true" />
-                  {activePreviewLoaded ? t.workspace.previewReady : t.workspace.previewLoading}
-                </span>
-              )}
-            </div>
-            <div className="workspace-panel-actions">
-              {sandboxTab === 'preview' && activePreviewUrl && (
-                <>
-                  <button
-                    type="button"
-                    onClick={handleRefreshPreview}
-                    className="workspace-icon-button"
-                    aria-label={t.workspace.refreshPreview}
-                    data-tooltip={t.workspace.refreshPreview}
-                  >
-                    <RefreshCw className="size-4" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleCopyPreviewUrl}
-                    className="workspace-icon-button"
-                    aria-label={previewCopied ? t.workspace.previewUrlCopied : t.workspace.copyPreviewUrl}
-                    data-tooltip={previewCopied ? t.workspace.previewUrlCopied : t.workspace.copyPreviewUrl}
-                  >
-                    {previewCopied ? <Check className="size-4 text-[var(--ok)]" /> : <Copy className="size-4" />}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleOpenPreview}
-                    className="workspace-icon-button"
-                    aria-label={t.workspace.openPreview}
-                    data-tooltip={t.workspace.openPreview}
-                  >
-                    <ExternalLink className="size-4" />
-                  </button>
-                </>
-              )}
-              {download?.url && (
-                <button
-                  type="button"
-                  onClick={handleDownload}
-                  disabled={downloadBusy}
-                  aria-label={downloadBusy ? t.workspace.downloading : t.workspace.downloadSource}
-                  data-tooltip={downloadBusy ? t.workspace.downloading : t.workspace.downloadSource}
-                  className="workspace-icon-button"
-                >
-                  {downloadBusy ? <span className="size-4 animate-spin rounded-full border-2 border-transparent border-t-current" /> : <Download className="size-4" />}
-                </button>
-              )}
-              {githubEnabled && download?.url && (
-                <button
-                  type="button"
-                  onClick={handleExportGithub}
-                  disabled={githubBusy}
-                  aria-label={githubBusy ? t.workspace.githubExporting : t.workspace.exportGithub}
-                  data-tooltip={githubBusy ? t.workspace.githubExporting : t.workspace.exportGithub}
-                  className="workspace-icon-button"
-                >
-                  {githubBusy ? <span className="size-4 animate-spin rounded-full border-2 border-transparent border-t-current" /> : <GitHubIcon />}
-                </button>
-              )}
-              {CLAIM_DEPLOY_ENABLED && (
-                <button
-                  type="button"
-                  onClick={handleClaimDeploy}
-                  aria-label={t.workspace.claimDeploy}
-                  data-tooltip={t.workspace.claimDeploy}
-                  className="workspace-icon-button"
-                >
-                  <img src="/edgeone.png" alt="EdgeOne" className="size-[22px] rounded-full" />
-                </button>
-              )}
-              <LanguageSwitch
-                language={language}
-                onChange={setLanguage}
-                ariaLabel={t.languageToggleAria}
-                className="workspace-language"
-              />
-            </div>
-          </div>
-
-          <div className="workspace-panel-nav">
+          <div className="workspace-topbar">
             <Tabs
               value={sandboxTab}
               onValueChange={(value) => setSandboxTab(value as 'preview' | 'files')}
-              className="workspace-panel-tabs"
+              className="workspace-topbar-tabs"
             >
               <TabsList className="workspace-tabs">
                 <TabsTrigger value="preview" className="workspace-tab">
@@ -1569,9 +1517,87 @@ export default function Home() {
                 </TabsTrigger>
               </TabsList>
             </Tabs>
-            <span className="workspace-panel-nav-hint">
-              {sandboxTab === 'preview' ? t.workspace.previewHint : t.workspace.codeHint}
-            </span>
+
+            <div className="workspace-topbar-actions">
+              {sandboxTab === 'preview' && preview?.url && (
+                <span className={`workspace-panel-status ${activePreviewLoaded ? 'is-ready' : ''}`}>
+                  <span className="workspace-panel-status-dot" aria-hidden="true" />
+                  {activePreviewLoaded ? t.workspace.previewReady : t.workspace.previewLoading}
+                </span>
+              )}
+              {sandboxTab === 'preview' && activePreviewUrl && (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleRefreshPreview}
+                    className="workspace-icon-button"
+                    aria-label={t.workspace.refreshPreview}
+                    data-tooltip={t.workspace.refreshPreview}
+                  >
+                    <RefreshCw className="size-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCopyPreviewUrl}
+                    className="workspace-icon-button"
+                    aria-label={previewCopied ? t.workspace.previewUrlCopied : t.workspace.copyPreviewUrl}
+                    data-tooltip={previewCopied ? t.workspace.previewUrlCopied : t.workspace.copyPreviewUrl}
+                  >
+                    {previewCopied ? <Check className="size-3.5 text-[var(--ok)]" /> : <Copy className="size-3.5" />}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleOpenPreview}
+                    className="workspace-icon-button"
+                    aria-label={t.workspace.openPreview}
+                    data-tooltip={t.workspace.openPreview}
+                  >
+                    <ExternalLink className="size-3.5" />
+                  </button>
+                </>
+              )}
+              {download?.url && (
+                <button
+                  type="button"
+                  onClick={handleDownload}
+                  disabled={downloadBusy}
+                  aria-label={downloadBusy ? t.workspace.downloading : t.workspace.downloadSource}
+                  data-tooltip={downloadBusy ? t.workspace.downloading : t.workspace.downloadSource}
+                  className="workspace-icon-button"
+                >
+                  {downloadBusy ? <span className="size-3.5 animate-spin rounded-full border-2 border-transparent border-t-current" /> : <Download className="size-3.5" />}
+                </button>
+              )}
+              {githubEnabled && download?.url && (
+                <button
+                  type="button"
+                  onClick={handleExportGithub}
+                  disabled={githubBusy}
+                  aria-label={githubBusy ? t.workspace.githubExporting : t.workspace.exportGithub}
+                  data-tooltip={githubBusy ? t.workspace.githubExporting : t.workspace.exportGithub}
+                  className="workspace-icon-button"
+                >
+                  {githubBusy ? <span className="size-3.5 animate-spin rounded-full border-2 border-transparent border-t-current" /> : <GitHubIcon />}
+                </button>
+              )}
+              {CLAIM_DEPLOY_ENABLED && (
+                <button
+                  type="button"
+                  onClick={handleClaimDeploy}
+                  aria-label={t.workspace.claimDeploy}
+                  data-tooltip={t.workspace.claimDeploy}
+                  className="workspace-icon-button"
+                >
+                  <img src="/edgeone.png" alt="EdgeOne" className="size-[18px] rounded-full" />
+                </button>
+              )}
+              <LanguageSwitch
+                language={language}
+                onChange={setLanguage}
+                ariaLabel={t.languageToggleAria}
+                className="workspace-language"
+              />
+            </div>
           </div>
 
           <div className="workspace-panel-content">
@@ -1583,7 +1609,6 @@ export default function Home() {
                       <span className="workspace-preview-location-dot" aria-hidden="true" />
                       <span>{preview.url.replace(/^https?:\/\//, '')}</span>
                     </div>
-                    <span className="workspace-preview-toolbar-label">{t.workspace.livePreview}</span>
                   </div>
                   <div className="workspace-preview-frame">
                     {!activePreviewLoaded && (

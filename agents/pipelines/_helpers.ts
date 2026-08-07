@@ -17,6 +17,23 @@ export function utf8ByteLength(value: string) {
   return utf8Encoder.encode(value).length;
 }
 
+/** Reject if `promise` does not settle within `ms`. Clears the timer on settle. */
+export async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`));
+        }, ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 type SandboxWithTimeoutExtension = {
   extendTimeout?: (seconds: number) => unknown;
 };
@@ -128,4 +145,64 @@ export async function persistProjectSnapshot(
       message: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+// Debounce window for mid-turn checkpoints. Long enough to coalesce rapid
+// write_project_file calls; short enough that a refresh mid-generation still
+// has a recent snapshot in the store before the sandbox can recycle.
+const CHECKPOINT_DEBOUNCE_MS = 8_000;
+
+export type ProjectCheckpointController = {
+  /** Mark the project dirty and (re)start the debounce timer. */
+  schedule: () => void;
+  /** Cancel the timer and persist immediately (await until the store write finishes). */
+  flush: () => Promise<void>;
+};
+
+// Mid-turn + exit-path snapshot controller. schedule() is cheap and coalesces;
+// flush() forces a final zip→store write so stop/fatal/success never leave the
+// conversation without a restorable projectSnapshot.
+export function createProjectCheckpointController(
+  context: any,
+  conversationId: string,
+  state: ProjectState,
+): ProjectCheckpointController {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let dirty = false;
+  let chain: Promise<void> = Promise.resolve();
+
+  const kick = () => {
+    chain = chain
+      .then(async () => {
+        while (dirty) {
+          dirty = false;
+          await persistProjectSnapshot(context, conversationId, state);
+        }
+      })
+      .catch((error) => {
+        debugLog(context, '[checkpoint]', {
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
+    return chain;
+  };
+
+  return {
+    schedule() {
+      dirty = true;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = undefined;
+        void kick();
+      }, CHECKPOINT_DEBOUNCE_MS);
+    },
+    async flush() {
+      if (timer) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+      dirty = true;
+      await kick();
+    },
+  };
 }

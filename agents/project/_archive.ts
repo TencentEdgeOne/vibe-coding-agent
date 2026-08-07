@@ -184,6 +184,7 @@ export async function restoreProjectArchive(
   context: any,
   state: ProjectState,
   snapshot: ProjectSnapshot,
+  options: { installDependencies?: boolean } = {},
 ): Promise<{ ok: boolean; error?: string }> {
   if (!snapshot?.base64) {
     return { ok: false, error: 'Snapshot is empty; nothing to restore.' };
@@ -227,18 +228,21 @@ export async function restoreProjectArchive(
     return { ok: false, error: restored.stderr || restored.stdout || 'Failed to restore the project from snapshot.' };
   }
 
-  // Reinstall dependencies (the snapshot excludes node_modules). Non-fatal: even if
-  // install fails, the source files are back; the later verification/preview step
-  // will surface any dependency problem.
-  const hasPackageJson = await sandbox.files.exists(`${state.appDir}/package.json`);
-  if (hasPackageJson) {
-    try {
-      await runSandboxCommand(context, 'npm install --no-audit --no-fund', {
-        cwd: state.appDir,
-        timeout: 300,
-      });
-    } catch {
-      // Non-fatal — see comment above.
+  // Reinstall dependencies (the snapshot excludes node_modules). Skipped on
+  // resume-after-stop (files-only); chat turns keep the default install so the
+  // agent can build/preview immediately.
+  const shouldInstall = options.installDependencies !== false;
+  if (shouldInstall) {
+    const hasPackageJson = await sandbox.files.exists(`${state.appDir}/package.json`);
+    if (hasPackageJson) {
+      try {
+        await runSandboxCommand(context, 'npm install --no-audit --no-fund', {
+          cwd: state.appDir,
+          timeout: 300,
+        });
+      } catch {
+        // Non-fatal — see comment above.
+      }
     }
   }
 

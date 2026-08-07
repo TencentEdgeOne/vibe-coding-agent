@@ -8,11 +8,13 @@ import {
   startPreviewServer,
 } from '../_project';
 import type { ClaudeMcpTool, ProjectState, ScaffoldLog } from '../_types';
-import { getBlockedProjectWriteReason, normalizeRelPath } from '../utils/_paths';
+import { getBlockedProjectWriteReason, toAppRelPath } from '../utils/_paths';
 import { stringifyToolResult } from '../utils/_text';
 
 const writeProjectFileInputSchema = {
-  path: z.string().describe('Relative path of exactly one file under appDir.'),
+  path: z.string().describe(
+    'Path relative to the project appDir only (e.g. package.json, src/App.tsx). Do not include the appDir prefix.',
+  ),
   content: z.string().describe('Complete UTF-8 contents for that one file.'),
 };
 
@@ -37,6 +39,7 @@ export function buildProjectScaffoldTool(
             text: stringifyToolResult({
               created,
               appDir: state.appDir,
+              writePathHint: 'write_project_file path is relative to appDir (e.g. package.json, src/App.tsx), never prefix with appDir',
             }),
           }],
         };
@@ -60,7 +63,7 @@ export function buildWriteProjectFileTool(
 ) {
   return defineClaudeTool(
     'write_project_file',
-    'Create or replace exactly one complete UTF-8 project file under appDir. Call this tool separately for every file and wait for each result before calling it again. Paths must be relative to appDir.',
+    'Create or replace exactly one complete UTF-8 project file under appDir. Call separately for every file and wait for each result. Keep files modular and reasonably small — prefer multiple focused files over one giant HTML/JS blob so each write finishes faster for the user. Path must be relative to appDir itself (package.json, src/App.tsx) — never prefix with the appDir path.',
     writeProjectFileInputSchema,
     async (input) => {
       try {
@@ -68,9 +71,11 @@ export function buildWriteProjectFileTool(
         if (typeof file.path !== 'string' || typeof file.content !== 'string') {
           throw new Error('Call write_project_file with {"path":"src/App.tsx","content":"complete file contents"}.');
         }
-        const relPath = normalizeRelPath(file.path);
+        const relPath = toAppRelPath(file.path, state.appDir);
         if (!relPath) {
-          throw new Error(`Invalid file path: ${file.path}`);
+          throw new Error(
+            `Invalid file path: ${file.path}. Use a path relative to ${state.appDir} (example: src/App.tsx), not ${state.appDir}/src/App.tsx.`,
+          );
         }
         const blockedReason = getBlockedProjectWriteReason(relPath);
         if (blockedReason) {

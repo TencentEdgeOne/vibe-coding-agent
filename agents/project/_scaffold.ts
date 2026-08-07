@@ -3,6 +3,72 @@ import { debugLog } from '../utils/_debug';
 import { detectFatalToolError } from '../utils/_text';
 import { runSandboxCommand } from './_commands';
 
+function shellQuote(value: string) {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+// Models used to pass `${appDir}/file` into write_project_file, which joined
+// appDir again and created appDir/appDir/... . Lift that nested tree back to
+// the real project root when we detect the classic nesting marker.
+export async function repairNestedAppDirLayout(
+  context: any,
+  state: ProjectState,
+  onLog?: (log: ScaffoldLog) => void,
+): Promise<boolean> {
+  const nestedRel = state.appDir;
+  const nestedAbs = `${state.appDir}/${nestedRel}`;
+  try {
+    if (!(await context.sandbox.files.exists(nestedAbs))) {
+      return false;
+    }
+  } catch {
+    return false;
+  }
+
+  const result = await runSandboxCommand(
+    context,
+    [
+      'set -e',
+      `NESTED=${shellQuote(nestedRel)}`,
+      'if [ ! -d "$NESTED" ]; then exit 0; fi',
+      // Classic bug shape: real project under appDir/appDir, root missing package.json.
+      'if [ ! -f "$NESTED/package.json" ] && [ ! -f "$NESTED/index.html" ]; then exit 0; fi',
+      'if [ -f ./package.json ]; then exit 0; fi',
+      'for item in "$NESTED"/*; do',
+      '  [ -e "$item" ] || continue',
+      '  name=$(basename "$item")',
+      '  [ "$name" = "projects" ] && continue',
+      '  rm -rf "./$name"',
+      '  mv "$item" "./$name"',
+      'done',
+      'rm -rf ./projects',
+      'echo REPAIRED',
+    ].join('\n'),
+    {
+      cwd: state.appDir,
+      timeout: 60,
+    },
+  );
+
+  if (result.exitCode !== 0) {
+    debugLog(context, '[nested-appdir-repair]', {
+      ok: false,
+      stderr: result.stderr,
+      stdout: result.stdout,
+    });
+    return false;
+  }
+
+  const repaired = result.stdout.includes('REPAIRED');
+  if (repaired) {
+    onLog?.({
+      stream: 'status',
+      content: 'Fixed nested project paths and restored files to the workspace root.',
+    });
+  }
+  return repaired;
+}
+
 export async function ensureProjectScaffold(
   context: any,
   state: ProjectState,
@@ -13,6 +79,8 @@ export async function ensureProjectScaffold(
   
   await sandbox.files.makeDir(state.sessionDir);
   await sandbox.files.makeDir(state.appDir);
+
+  await repairNestedAppDirLayout(context, state, onLog);
 
   const existing = await runSandboxCommand(
     context,

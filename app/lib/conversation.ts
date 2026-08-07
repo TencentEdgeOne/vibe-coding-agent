@@ -19,13 +19,22 @@ export function fetchResumeHistory(conversationId: string) {
   }).then((response) => response.json().catch(() => null) as Promise<ResumeData | null>);
 }
 
-// Slow resume: restore snapshot, npm install, restart preview, return files.
+// Slow resume: restore snapshot into the sandbox, return the file tree, and
+// restart live preview when the project was previously publishable.
+const RESUME_WORKSPACE_CLIENT_TIMEOUT_MS = 130_000;
+
 export function fetchResumeWorkspace(conversationId: string) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), RESUME_WORKSPACE_CLIENT_TIMEOUT_MS);
   return fetch('/resume?stage=workspace', {
     method: 'POST',
     headers: resumeHeaders(conversationId),
     body: JSON.stringify({ stage: 'workspace' }),
-  }).then((response) => response.json().catch(() => null) as Promise<ResumeData | null>);
+    signal: controller.signal,
+  })
+    .then((response) => response.json().catch(() => null) as Promise<ResumeData | null>)
+    .catch(() => null)
+    .finally(() => clearTimeout(timer));
 }
 
 /** @deprecated Prefer fetchResumeHistory + fetchResumeWorkspace. */

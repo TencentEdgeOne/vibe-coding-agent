@@ -35,6 +35,11 @@ import {
 } from './utils/_text';
 import { debugLog, isDebugEnabled } from './utils/_debug';
 import { summarizeToolInput, summarizeToolOutput } from './utils/_activity';
+import {
+  resolveNarrationEmit,
+  sanitizeNarrationText,
+  type NarrationEmitState,
+} from './utils/_narration';
 import { isInstallCommand, isPreviewCommand, shortenToolName } from './utils/_tool-phase';
 
 function pickEnvValue(context: any, key: string) {
@@ -93,18 +98,6 @@ function extractVisibleNarrationDelta(event: SDKMessage) {
     return sanitizeNarrationText(delta.text);
   }
   return '';
-}
-
-function sanitizeNarrationText(input: string) {
-  if (!input) return '';
-  return input
-    .replace(/\x1b\[[0-9;?]*[~A-Za-z]/g, '')
-    .replace(/\[20[01]~/g, '')
-    .replace(/\x1b\][^\x07]*\x07/g, '')
-    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '')
-    .replace(/<think\b[^>]*>/gi, '')
-    .replace(/<\/think>/gi, '')
-    .replace(/\n{4,}/g, '\n\n\n');
 }
 
 type StreamingToolUseBlock = {
@@ -232,24 +225,26 @@ export function buildPrompt(
 
   return [
     'You are a Web Dev Agent that creates and modifies runnable web projects in a remote sandbox.',
-    'You may create Next.js, Vite/React, static frontend, Node service, Python Flask/FastAPI, or other lightweight web projects according to the user request. Do not force every project to be Next.js.',
-    `The only project directory you may modify is ${state.appDir}.`,
+    'You may create Next.js, Vite/React, static frontend, Node service, Python Flask/FastAPI, or other lightweight web projects according to the user request. Do not force every project to be Next.js. For ordinary UI pages, prefer a modular Vite/React (or split HTML/CSS/JS) project instead of one self-contained HTML file.',
+    `The only project directory you may modify is ${state.appDir} (relative path, no leading slash).`,
     `All file, command, browser, and code-execution operations must be performed through the ${mcpServerName} MCP tools in the remote sandbox.`,
     'If the user asks who you are, what you are, or what kind of agent you are, answer directly that you are the Vibe Coding Agent示例 on EdgeOne Makers, an out-of-the-box Agent template. In Chinese, reply: 我是 EdgeOne Makers 上的 Vibe Coding Agent示例，一个开箱即用的 Agent 模板，可以帮助你创建和修改可运行的 Web 项目。 Do not call any tools, and do not use the non-project refusal for identity questions.',
     'First decide whether the user request is about a web project, page, component, interaction, styling, or code development.',
     'If the user request is not related to project development, reply exactly: I can only help create or modify web projects. Please describe the page or feature you want to build. Do not call any tools.',
-    'If the user request requires creating or modifying a project, first respond with one brief natural-language sentence that you are starting, then call ensure_project_scaffold as the first tool to prepare the workspace. Do not call any other tool before ensure_project_scaffold.',
+    'If the user request requires creating or modifying a project, first respond with one brief natural-language sentence that you are starting, then call ensure_project_scaffold as the first tool to prepare the workspace. Do not call any other tool before ensure_project_scaffold — including files_list, files_make_dir, files_write, commands, or write_project_file.',
     'That first sentence must be concise, user-visible progress narration, not a plan. Use the user language when obvious. Example: 我先准备项目环境，然后开始实现。 / I will prepare the workspace first, then start building.',
     `Before calling ensure_project_scaffold, do not read, write, or execute anything under ${state.appDir}.`,
+    `Never pass absolute paths (starting with /). For write_project_file, path must be relative to ${state.appDir} itself — correct: package.json, src/App.tsx, index.html. Wrong: ${state.appDir}/package.json or /${state.appDir}/src/App.tsx. Prefer write_project_file, not raw files_write/files_list.`,
     'Do not use the cloud function local filesystem as the project workspace, and do not modify business files outside the project directory.',
     'If ensure_project_scaffold returns created=false, inspect the existing code first, then make the smallest complete change needed for the user request.',
     [
       'If ensure_project_scaffold returns created=true, complete these steps in order:',
-      '1. Choose the tech stack and file list based on the user request.',
-      '2. Write the project incrementally with write_project_file. Each call must contain exactly one complete file: {"path":"relative/path","content":"complete file contents"}. Call it once per file, in dependency order, and wait for each tool result before issuing the next write_project_file call. Never send multiple write_project_file calls in the same assistant message.',
-      '3. Install dependencies for the generated project. Use npm install by default for Node/frontend projects, use pnpm/yarn only when explicitly requested, and use python -m pip install -r requirements.txt for Python projects.',
+      '1. Choose a modular tech stack and a small multi-file layout. Prefer Vite + React/TS (or plain HTML split into index.html + css/ + js/modules) over a single giant HTML file. Do not put styles, scripts, and markup into one large index.html unless the user explicitly asks for a single-file page.',
+      `2. Write the project incrementally with write_project_file. Each call must contain exactly one complete file: {"path":"src/App.tsx","content":"complete file contents"} — path relative to ${state.appDir}, never "${state.appDir}/src/App.tsx". Keep each file focused and reasonably small so the user sees steady progress. Typical order: package.json/config → styles → small components/modules → entry/App → thin index.html if needed. Call it once per file, in dependency order, and wait for each tool result before the next call. Never send multiple write_project_file calls in the same assistant message.`,
+      `3. Install dependencies inside ${state.appDir} (cd ${state.appDir} && npm install by default for Node/frontend projects; pnpm/yarn only when explicitly requested; python -m pip install -r requirements.txt for Python). Do not invent nested ${state.appDir}/${state.appDir} paths.`,
       `4. Call the publish_preview tool. It starts the internal service on port ${PREVIEW_SERVER_PORT}, verifies that ${PREVIEW_PATH_PREFIX} is HTTP-ready, and generates the public preview with sandbox.getHost(${PREVIEW_PUBLIC_PORT}) + ${PREVIEW_PATH_PREFIX} + envdAccessToken. Do not hand-write background npm run dev commands.`,
     ].join('\n'),
+    'Structure code for progressive delivery: split UI, styles, and logic across multiple files/modules instead of one monolithic HTML/JS blob. Avoid thousand-line files when they can be split into components, hooks, utils, and stylesheets. Prefer several medium files over one oversized HTML/JS file so each write_project_file finishes quickly and improves streaming UX.',
     'Do not write only placeholder pages. Generated files must be complete, internally consistent, and directly installable and runnable.',
     'Always use write_project_file for UTF-8 project source and configuration files, including one-file edits to existing projects. Do not use files_write, write_files, or shell commands to create or replace text source files.',
     'write_project_file accepts exactly one file per call. Never pass an array, files map, entries object, or more than one path. Finish one tool call before starting the next so the user can see steady file-by-file progress.',
@@ -295,6 +290,9 @@ export async function runCodingAgent(
   // write_project_file (with the file just written, so the pipeline can stream
   // its content to the frontend instead of making it fetch the file back).
   onProjectFilesChanged?: (file?: { path: string; content: string }) => void | Promise<void>,
+  // Fires as soon as publish_preview / get_preview_link resolves a public URL so
+  // the UI can switch to the iframe without waiting for verification / finalize.
+  onPreviewReady?: (preview: { url?: string; sandboxDebugUrl?: string }) => void,
   abortSignal?: AbortSignal,
 ): Promise<CodingAgentResult> {
   // Prefer AI Gateway for model access, with backward-compatible Anthropic / DeepSeek config.
@@ -385,19 +383,21 @@ export async function runCodingAgent(
         wasCreated = created;
       },
     );
+    const handlePreviewPublished = (preview: { url?: string; sandboxDebugUrl?: string }) => {
+      previewTouched = true;
+      if (preview.url) {
+        onPreviewReady?.(preview);
+      }
+    };
     const previewLinkTool = buildPreviewLinkTool(
       context,
       state,
-      () => {
-        previewTouched = true;
-      },
+      handlePreviewPublished,
     );
     const publishPreviewTool = buildPublishPreviewTool(
       context,
       state,
-      () => {
-        previewTouched = true;
-      },
+      handlePreviewPublished,
     );
     const writeProjectFileTool = buildWriteProjectFileTool(
       context,
@@ -478,33 +478,25 @@ export async function runCodingAgent(
     const toolStartedAtById = new Map<string, number>();
     const pendingToolUseBlocks = new Map<number, StreamingToolUseBlock>();
     const emittedToolUseProgress = new Map<string, string>();
-    let emittedNarration = '';
+    let narrationState: NarrationEmitState = {
+      currentTextBlock: '',
+      emittedNarration: '',
+    };
     const SCAFFOLD_TOOL_NAME = `mcp__${mcpServerName}__ensure_project_scaffold`;
     // Push file_tree immediately at most once per turn after scaffold, avoiding duplicate find calls.
     let scaffoldHandled = false;
 
     const emitNarration = (rawText: string, uuid: string, complete = false) => {
-      const text = sanitizeNarrationText(rawText);
-      if (!text) {
+      const resolved = resolveNarrationEmit(narrationState, rawText, complete);
+      narrationState = resolved.state;
+      if (!resolved.text) {
         return;
       }
-
-      const trimmedText = text.trim();
-      if (complete && trimmedText && emittedNarration.includes(trimmedText)) {
-        return;
-      }
-
-      const cleanNextText = sanitizeNarrationText(text);
-      if (!cleanNextText) {
-        return;
-      }
-
-      emittedNarration = sanitizeNarrationText(`${emittedNarration}${cleanNextText}`);
       onProgress?.({
         type: 'text_segment',
         data: {
           uuid,
-          text: cleanNextText,
+          text: resolved.text,
         },
       });
     };
@@ -536,6 +528,12 @@ export async function runCodingAgent(
         }
         emittedToolUseProgress.set(toolUseId, progressSignature);
       }
+      // Tool calls end the current narration block. Clear the per-block window so
+      // the next assistant text is not compared against the previous sentence.
+      narrationState = {
+        ...narrationState,
+        currentTextBlock: '',
+      };
 
       if (toolUseId && typeof toolUse.name === 'string') {
         toolContextById.set(toolUseId, {
@@ -577,6 +575,14 @@ export async function runCodingAgent(
         const streamEvent = (event as any).event;
         if (streamEvent?.type === 'content_block_start') {
           const contentBlock = streamEvent.content_block;
+          // Each new text block starts a fresh dedupe window so earlier narration
+          // cannot suppress later phrases that share a common suffix/substring.
+          if (contentBlock?.type === 'text') {
+            narrationState = {
+              ...narrationState,
+              currentTextBlock: '',
+            };
+          }
           if (isToolUseContentBlock(contentBlock) && typeof streamEvent.index === 'number') {
             pendingToolUseBlocks.set(streamEvent.index, {
               id: typeof contentBlock.id === 'string' ? contentBlock.id : '',

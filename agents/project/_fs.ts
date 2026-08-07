@@ -13,8 +13,13 @@ import {
 } from '../utils/_file-preview';
 import { readFileExtension } from '../utils/_paths';
 import { runSandboxCommand } from './_commands';
+import { repairNestedAppDirLayout } from './_scaffold';
 
 export async function getFileTree(context: any, state: ProjectState): Promise<FileTreeItem[]> {
+  // Heal sessions that still have the mistaken appDir/appDir/... layout before
+  // listing, so the Files panel shows package.json at the root.
+  await repairNestedAppDirLayout(context, state);
+
   const ignoredDirectoryPruneExpression = FILE_TREE_IGNORED_DIRECTORIES
     .map((dir) => `-path './${dir}'`)
     .join(' -o ');

@@ -2,7 +2,7 @@ import { PREVIEW_BATCH_MAX_FILES } from '../_constants';
 import { getProjectState } from '../_memory';
 import { readFileFromSandbox, readFilesFromSandbox } from '../_project';
 import { debugLog } from '../utils/_debug';
-import { normalizeRelPath } from '../utils/_paths';
+import { toAppRelPath } from '../utils/_paths';
 import {
   getRequestDebugSnapshot,
   getRequestHeader,
@@ -61,7 +61,8 @@ export async function runFileReadPipeline(context: any): Promise<Response> {
     }, 400);
   }
 
-  const normalizedPaths = requestedPaths.map((path) => normalizeRelPath(path));
+  const state = await getProjectState(context, conversationId);
+  const normalizedPaths = requestedPaths.map((path) => toAppRelPath(path, state.appDir));
   if (normalizedPaths.some((path) => !path)) {
     debugLog(context, '[file-read]', {
       ...diagnosticBase,
@@ -75,7 +76,6 @@ export async function runFileReadPipeline(context: any): Promise<Response> {
   }
   const paths = [...new Set(normalizedPaths as string[])];
 
-  const state = await getProjectState(context, conversationId);
   debugLog(context, '[file-read]', {
     ...diagnosticBase,
     rawPath: isBatch ? batchPaths : relPath,

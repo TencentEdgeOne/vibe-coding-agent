@@ -351,14 +351,14 @@ export function FilesPanel({
 
   if (!tree || tree.items.length === 0) {
     return (
-      <div className="m-3.5 flex min-h-0 flex-1 items-center justify-center rounded-[12px] bg-card px-6 text-center text-muted-foreground">
+      <div className="flex min-h-0 flex-1 items-center justify-center bg-card px-6 text-center text-muted-foreground">
         {refreshing ? copy.refreshing : copy.empty}
       </div>
     );
   }
 
   return (
-    <div className="m-3.5 grid min-h-0 flex-1 grid-cols-[190px_minmax(0,1fr)] overflow-hidden rounded-[12px] bg-card text-secondary-foreground shadow-[0_10px_30px_-22px_rgba(20,30,60,0.35)]">
+    <div className="grid min-h-0 flex-1 grid-cols-[190px_minmax(0,1fr)] overflow-hidden bg-card text-secondary-foreground">
       <aside className="flex min-h-0 flex-col border-r border-[#eef0f3] bg-[#fafbfd]">
         <div className="min-h-0 flex-1 overflow-auto p-2">
           <div className="px-2 pt-1.5 pb-1 text-[10px] font-medium uppercase tracking-[0.06em] text-muted-foreground">

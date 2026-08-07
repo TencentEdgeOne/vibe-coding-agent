@@ -365,6 +365,8 @@ async function detectPreviewStartCommand(
 
   return {
     framework: 'static-http',
+    // Symlink so python http.server can serve the app under /preview/. Hidden
+    // from the Files panel / source archive (see FILE_TREE_IGNORED_* / ARCHIVE_*).
     command: `ln -sfn . preview; nohup python3 -m http.server ${port} --bind 0.0.0.0 > /tmp/dev.log 2>&1 &`,
     readyPath: PREVIEW_PATH_PREFIX,
   };

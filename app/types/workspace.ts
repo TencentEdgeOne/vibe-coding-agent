@@ -73,6 +73,8 @@ export type ResumeData = {
   conversation_id?: string;
   messages?: { role: 'user' | 'assistant'; content: string }[];
   hasProject?: boolean;
+  /** Project previously published a live preview; workspace resume should restart it. */
+  hasPreview?: boolean;
   needsWorkspace?: boolean;
   preview?: LinkInfo;
   files?: FileTree;

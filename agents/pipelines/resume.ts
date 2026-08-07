@@ -7,16 +7,27 @@ import {
   saveProjectState,
 } from '../_memory';
 import {
+  assertPreviewServerReady,
   getFileTree,
   resolvePublicLinks,
   restoreProjectArchive,
   runSandboxCommand,
   startPreviewServer,
 } from '../_project';
-import type { FileTreeItem } from '../_types';
+import type { FileTreeItem, ProjectState } from '../_types';
 import { getRequestQueryParam, resolveConversationId } from '../utils/_request';
+import { withTimeout } from './_helpers';
 
 type ResumeStage = 'history' | 'workspace';
+
+// Hard ceiling for the whole workspace stage so a stuck sandbox call cannot
+// leave the browser spinner pending indefinitely after stop/refresh.
+// Preview restart may need npm install + dev-server boot; keep this under the
+// client abort in app/lib/conversation.ts (130s).
+const WORKSPACE_RESUME_BUDGET_MS = 120_000;
+const SANDBOX_PROBE_MS = 15_000;
+const RESTORE_BUDGET_MS = 45_000;
+const PREVIEW_RESTART_BUDGET_MS = 75_000;
 
 function jsonResponse(obj: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(obj), {
@@ -52,15 +63,18 @@ export async function runProjectResumeHistoryPipeline(context: any): Promise<Res
     return jsonResponse({ ok: false, error: 'missing conversation_id' }, 400);
   }
 
-  const [state, messages, activityHistory, snapshot, chatTask] = await Promise.all([
-    getProjectState(context, conversationId),
+  const [messages, activityHistory, snapshot, chatTask, state] = await Promise.all([
     getHistory(context, conversationId),
     getActivityHistory(context, conversationId),
     getProjectSnapshot(context, conversationId),
     getChatTask(context, conversationId),
+    getProjectState(context, conversationId),
   ]);
 
-  const hasProject = Boolean(snapshot?.base64) || state.created === true;
+  // Only a restorable snapshot counts as having a project. state.created alone
+  // can be true after a fatal/interrupted turn that never wrote projectSnapshot.
+  const hasProject = Boolean(snapshot?.base64);
+  const hasPreview = Boolean(state.previewUrl);
   const activeTask = chatTask
     && (chatTask.status === 'queued' || chatTask.status === 'running')
     ? {
@@ -82,105 +96,219 @@ export async function runProjectResumeHistoryPipeline(context: any): Promise<Res
     activityHistory,
     activeTask,
     hasProject,
+    hasPreview,
     // Client should call stage=workspace when true.
     needsWorkspace: hasProject,
   });
 }
 
-// Slow path: restore snapshot into the sandbox (when needed), reinstall deps,
-// restart the preview, and return files + preview links.
+async function probeSandboxHasFiles(context: any, state: ProjectState) {
+  if (!(await context.sandbox.files.exists(state.appDir))) {
+    return false;
+  }
+  const tree = await getFileTree(context, state);
+  return tree.some((item) => item.type === 'file');
+}
+
+async function ensureProjectDependencies(context: any, state: ProjectState) {
+  const hasPackageJson = await context.sandbox.files.exists(`${state.appDir}/package.json`);
+  if (!hasPackageJson) {
+    return false;
+  }
+  const hasNodeModules = await context.sandbox.files.exists(`${state.appDir}/node_modules`);
+  if (hasNodeModules) {
+    return true;
+  }
+  const installed = await runSandboxCommand(context, 'npm install --no-audit --no-fund', {
+    cwd: state.appDir,
+    timeout: 300,
+  });
+  return installed.exitCode === 0;
+}
+
+// Warm sandboxes may still be serving /preview/; otherwise install + restart.
+async function republishPreviewOnResume(context: any, state: ProjectState) {
+  try {
+    await assertPreviewServerReady(context);
+    const warmLinks = await resolvePublicLinks(context);
+    if (warmLinks.previewUrl) {
+      state.previewUrl = warmLinks.previewUrl;
+      state.sandboxDebugUrl = warmLinks.sandboxDebugUrl;
+      return {
+        url: warmLinks.previewUrl,
+        sandboxDebugUrl: warmLinks.sandboxDebugUrl,
+      };
+    }
+  } catch {
+    // Server is not ready — fall through to a full restart.
+  }
+
+  const depsReady = await ensureProjectDependencies(context, state);
+  if (!depsReady) {
+    throw new Error('Project dependencies are not available for preview resume.');
+  }
+
+  const server = await startPreviewServer(context, state);
+  await assertPreviewServerReady(context, server.readyPath);
+  const links = await resolvePublicLinks(context);
+  if (!links.previewUrl) {
+    throw new Error('Preview server started but no public preview URL was available.');
+  }
+  state.previewUrl = links.previewUrl;
+  state.sandboxDebugUrl = links.sandboxDebugUrl;
+  return {
+    url: links.previewUrl,
+    sandboxDebugUrl: links.sandboxDebugUrl,
+  };
+}
+
+async function runWorkspaceRestoreBody(context: any, conversationId: string) {
+  const [state, chatTask] = await Promise.all([
+    getProjectState(context, conversationId),
+    getChatTask(context, conversationId),
+  ]);
+  const hadPreview = Boolean(state.previewUrl);
+  const generationActive = Boolean(
+    chatTask && (chatTask.status === 'queued' || chatTask.status === 'running'),
+  );
+
+  let hasFiles = false;
+  let restoreError: string | undefined;
+  try {
+    hasFiles = await withTimeout(
+      probeSandboxHasFiles(context, state),
+      SANDBOX_PROBE_MS,
+      'sandbox file probe',
+    );
+  } catch (error) {
+    hasFiles = false;
+    restoreError = error instanceof Error ? error.message : 'Sandbox probe failed.';
+  }
+
+  if (!hasFiles) {
+    const snapshot = await getProjectSnapshot(context, conversationId);
+    if (snapshot) {
+      try {
+        // Files-only restore first (snapshot excludes node_modules). Dependency
+        // install happens in republishPreviewOnResume under its own budget.
+        const restored = await withTimeout(
+          restoreProjectArchive(context, state, snapshot, {
+            installDependencies: false,
+          }),
+          RESTORE_BUDGET_MS,
+          'snapshot restore',
+        );
+        hasFiles = restored.ok;
+        if (!restored.ok) {
+          restoreError = restored.error || 'Failed to restore the project from snapshot.';
+        }
+      } catch (error) {
+        hasFiles = false;
+        restoreError = error instanceof Error ? error.message : 'Snapshot restore failed.';
+      }
+    }
+  }
+
+  if (!hasFiles) {
+    return {
+      ok: true as const,
+      stage: 'workspace' as const,
+      conversation_id: conversationId,
+      hasProject: false,
+      preview: restoreError ? { error: restoreError } : {},
+      files: { root: state.appDir, items: [] as FileTreeItem[] },
+    };
+  }
+
+  state.created = true;
+
+  let items: FileTreeItem[] = [];
+  try {
+    items = await withTimeout(
+      getFileTree(context, state),
+      SANDBOX_PROBE_MS,
+      'file tree',
+    );
+  } catch {
+    items = [];
+  }
+
+  const hasFileItems = items.some((item) => item.type === 'file');
+  // Only restart preview when publish_preview previously succeeded for this
+  // conversation. Do NOT key off package.json — a stopped mid-generation
+  // project often has a scaffold but is not previewable yet.
+  const shouldRestartPreview = !generationActive && hasFileItems && hadPreview;
+
+  let preview: { url?: string; sandboxDebugUrl?: string; error?: string } = {};
+  if (shouldRestartPreview) {
+    try {
+      preview = await withTimeout(
+        republishPreviewOnResume(context, state),
+        PREVIEW_RESTART_BUDGET_MS,
+        'preview resume',
+      );
+    } catch (error) {
+      state.previewUrl = undefined;
+      state.sandboxDebugUrl = undefined;
+      // Keep the files panel usable; do not surface a hard preview error on resume.
+      console.warn(
+        '[resume:workspace] preview restart failed:',
+        error instanceof Error ? error.message : error,
+      );
+      preview = {};
+    }
+  } else if (!generationActive && !hadPreview) {
+    // Never-published / interrupted projects stay files-only.
+    state.previewUrl = undefined;
+    state.sandboxDebugUrl = undefined;
+  }
+
+  try {
+    await saveProjectState(context, conversationId, state);
+  } catch {
+    // Non-fatal — the files payload below is still useful.
+  }
+
+  return {
+    ok: true as const,
+    stage: 'workspace' as const,
+    conversation_id: conversationId,
+    hasProject: hasFileItems || Boolean(state.created),
+    preview,
+    files: { root: state.appDir, items },
+    ...(hasFileItems
+      ? { download: { url: '/download', filename: 'source.zip' } }
+      : {}),
+  };
+}
+
+// Slow path: restore snapshot into the sandbox (when needed), then restart the
+// live preview when the project was previously publishable.
 export async function runProjectResumeWorkspacePipeline(context: any): Promise<Response> {
   const { conversationId } = resolveConversationId(context, { allowQuery: true });
   if (!conversationId) {
     return jsonResponse({ ok: false, error: 'missing conversation_id' }, 400);
   }
 
-  const state = await getProjectState(context, conversationId);
-
-  let hasFiles = false;
   try {
-    if (await context.sandbox.files.exists(state.appDir)) {
-      const tree = await getFileTree(context, state);
-      hasFiles = tree.some((item) => item.type === 'file');
-    }
-  } catch {
-    hasFiles = false;
-  }
-
-  if (!hasFiles) {
-    const snapshot = await getProjectSnapshot(context, conversationId);
-    if (snapshot) {
-      const restored = await restoreProjectArchive(context, state, snapshot);
-      hasFiles = restored.ok;
-    }
-  }
-
-  if (!hasFiles) {
+    const payload = await withTimeout(
+      runWorkspaceRestoreBody(context, conversationId),
+      WORKSPACE_RESUME_BUDGET_MS,
+      'workspace resume',
+    );
+    return jsonResponse(payload);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Workspace resume failed.';
+    console.warn('[resume:workspace]', message);
     return jsonResponse({
       ok: true,
       stage: 'workspace',
       conversation_id: conversationId,
       hasProject: false,
-      preview: {},
-      files: { root: state.appDir, items: [] },
+      preview: { error: message },
+      files: { root: '', items: [] },
     });
   }
-
-  state.created = true;
-
-  // Restore already runs npm install; this covers a sandbox that kept source but
-  // lost node_modules. Non-fatal.
-  try {
-    const hasPkg = await context.sandbox.files.exists(`${state.appDir}/package.json`);
-    const hasNodeModules = await context.sandbox.files.exists(`${state.appDir}/node_modules`);
-    if (hasPkg && !hasNodeModules) {
-      await runSandboxCommand(context, 'npm install --no-audit --no-fund', {
-        cwd: state.appDir,
-        timeout: 300,
-      });
-    }
-  } catch {
-    // Non-fatal — preview startup below will surface a real failure.
-  }
-
-  let preview: Record<string, unknown> = {};
-  try {
-    // startPreviewServer already waits until the server answers; no second assert.
-    const server = await startPreviewServer(context, state);
-    const links = await resolvePublicLinks(context);
-    state.previewUrl = links.previewUrl;
-    state.sandboxDebugUrl = links.sandboxDebugUrl;
-    preview = {
-      url: links.previewUrl,
-      sandboxDebugUrl: links.sandboxDebugUrl,
-      framework: server.framework,
-    };
-  } catch (error) {
-    state.previewUrl = undefined;
-    state.sandboxDebugUrl = undefined;
-    preview = {
-      error: error instanceof Error ? error.message : 'Failed to restart the preview.',
-    };
-  }
-
-  let items: FileTreeItem[] = [];
-  try {
-    items = await getFileTree(context, state);
-  } catch {
-    items = [];
-  }
-
-  await saveProjectState(context, conversationId, state);
-
-  return jsonResponse({
-    ok: true,
-    stage: 'workspace',
-    conversation_id: conversationId,
-    hasProject: true,
-    preview,
-    files: { root: state.appDir, items },
-    download: { url: '/download', filename: 'source.zip' },
-  });
 }
 
 // Router kept for the thin agents/resume.ts entry. Body `{ stage: "workspace" }`

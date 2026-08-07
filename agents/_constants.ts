@@ -36,6 +36,8 @@ export const ARCHIVE_EXCLUDED_DIRECTORIES = [
   '__pycache__',
   '.venv',
   'venv',
+  // Created by static-http preview (ln -sfn . preview) so /preview/ is served.
+  'preview',
 ];
 
 
@@ -66,11 +68,16 @@ export const FILE_TREE_IGNORED_DIRECTORIES = [
   '__pycache__',
   '.venv',
   'venv',
+  // Runtime symlink for static preview hosting — not project source.
+  'preview',
 ];
 
 export const FILE_TREE_IGNORED_FILENAMES = new Set([
   'tsconfig.tsbuildinfo',
   '.DS_Store',
+  // Symlink `preview -> .` from static-http publish_preview shows up as a file
+  // entry; hide it so the Files panel does not try to open a directory.
+  'preview',
 ]);
 
 export const BLOCKED_PROJECT_WRITE_SEGMENTS = new Set([
