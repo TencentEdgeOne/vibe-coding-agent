@@ -26,7 +26,8 @@ import {
   createMessageId,
   createWorkspaceTitle,
   extractProjectName,
-  fetchResume,
+  fetchResumeHistory,
+  fetchResumeWorkspace,
   getAssistantScrollSignature,
   getDeployUrl,
   getOrCreateCachedConversationId,
@@ -45,7 +46,6 @@ import {
   normalizeTimelineSteps,
   relocalizeProcessEvents,
   shouldDelayProcessStepReveal,
-  shortenToolName,
 } from './lib/process-timeline';
 import { LANGUAGE_STORAGE_KEY, TRANSLATIONS, type Locale } from './i18n';
 import type {
@@ -94,6 +94,10 @@ export default function Home() {
   const [showWorkspacePanel, setShowWorkspacePanel] = useState(false);
   const [fileTree, setFileTree] = useState<FileTree | null>(null);
   const [filesRefreshing, setFilesRefreshing] = useState(false);
+  // Path the Files panel should open (first generated file). Cleared on new project.
+  const [filesFocusPath, setFilesFocusPath] = useState<string | null>(null);
+  // Slow resume stage: snapshot restore + npm install + preview restart.
+  const [workspaceRestoring, setWorkspaceRestoring] = useState(false);
   const fileCache = useFileContentCache();
   const [activePreviewUrl, setActivePreviewUrl] = useState('');
   const [activePreviewRevision, setActivePreviewRevision] = useState(0);
@@ -112,7 +116,7 @@ export default function Home() {
 
   const t = TRANSLATIONS[language];
   const canSend = input.trim().length > 0 && !loading;
-  const hasWorkspace = messages.length > 0 || Boolean(preview) || Boolean(build);
+  const hasWorkspace = messages.length > 0 || Boolean(preview) || Boolean(build) || workspaceRestoring;
   const fileCount = fileTree?.items.filter((item) => item.type === 'file').length ?? 0;
   // Cycling typewriter placeholder for the landing prompt (see plan/design-mockup.html).
   // Reuses the localized example prompts; pauses while the field has text.
@@ -157,89 +161,112 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    // On load, reuse the cached conversationId and ask the backend to restore the
-    // last project (it unzips the persisted snapshot into a fresh sandbox, restarts
-    // the preview, and returns history + files + preview). This is what makes a
-    // refresh keep the generated code instead of dropping back to an empty home.
+    // Progressive resume: paint chat history as soon as store data returns, then
+    // bootstrap the sandbox (restore + npm install + preview) in the background.
     let cancelled = false;
-    // A first-time visitor has no cached conversationId, so there is nothing to
-    // restore. Mint an in-memory id only (do NOT persist it) and go straight to
-    // the home screen — skip the /resume round-trip and its "restoring…" screen.
-    // Persisting here would make a refresh look like a returning user; the build
-    // flow caches its own fresh id once the user actually starts a project.
     const existing = getStoredConversationId();
     if (!existing) {
-      // resumeChecked already defaults to true → stay on the home screen.
       setConversationId(createConversationId());
       return;
     }
 
-    // Returning visitor: switch to the "restoring…" screen now (client-only, after
-    // hydration — so it never affects SSR match) and keep it until /resume settles.
     setResumeChecked(false);
     setConversationId(existing);
 
+    const applyHistory = (data: NonNullable<Awaited<ReturnType<typeof fetchResumeHistory>>>) => {
+      const history = Array.isArray(data.messages) ? data.messages : [];
+      if (!data.hasProject && history.length === 0) {
+        return false;
+      }
+      if (data.conversation_id) {
+        setConversationId(data.conversation_id);
+      }
+      const activityHistory = Array.isArray(data.activityHistory) ? data.activityHistory : [];
+      setMessages(activityHistory.length > 0
+        ? activityHistory.flatMap((turn) => [
+            {
+              id: `${turn.id}-user`,
+              role: 'user' as const,
+              content: turn.user,
+              status: 'done' as AssistantStatus,
+            },
+            {
+              id: `${turn.id}-assistant`,
+              role: 'assistant' as const,
+              content: turn.assistant,
+              activities: turn.activities,
+              status: turn.status === 'completed' ? 'done' as const : turn.status === 'failed' ? 'error' as const : 'stopped' as const,
+            },
+          ])
+        : history.map((item) => ({
+            id: createMessageId(item.role),
+            role: item.role,
+            content: item.content,
+            status: 'done' as AssistantStatus,
+          })));
+      if (data.hasProject || data.needsWorkspace) {
+        setShowWorkspacePanel(true);
+        setSandboxTab('preview');
+        setWorkspaceRestoring(true);
+        setFilesRefreshing(true);
+      }
+      return true;
+    };
+
+    const applyWorkspace = (data: NonNullable<Awaited<ReturnType<typeof fetchResumeWorkspace>>>) => {
+      if (data.files) {
+        setFileTree(data.files);
+        if (data.files.items.some((item) => item.type === 'file')) {
+          setShowWorkspacePanel(true);
+        }
+      }
+      if (data.download?.url) {
+        setDownload(data.download);
+      }
+      if (data.preview) {
+        setPreview(data.preview);
+        if (data.preview.url) {
+          setShowWorkspacePanel(true);
+          const revision = previewRevisionRef.current + 1;
+          previewRevisionRef.current = revision;
+          activePreviewUrlRef.current = data.preview.url;
+          activePreviewRevisionRef.current = revision;
+          setActivePreviewUrl(data.preview.url);
+          setActivePreviewRevision(revision);
+          setActivePreviewLoaded(false);
+        }
+      }
+    };
+
     (async () => {
       try {
-        const data = await fetchResume(existing);
-        if (cancelled || !data?.ok) {
+        const historyData = await fetchResumeHistory(existing);
+        if (cancelled) return;
+        if (!historyData?.ok) {
           return;
         }
-        const history = Array.isArray(data.messages) ? data.messages : [];
-        if (!data.hasProject && history.length === 0) {
-          return; // Nothing to resume — stay on the home screen.
+        applyHistory(historyData);
+        // Unblock the UI as soon as chat history is available.
+        setResumeChecked(true);
+
+        if (!historyData.needsWorkspace && !historyData.hasProject) {
+          return;
         }
-        if (data.conversation_id) {
-          setConversationId(data.conversation_id);
-        }
-        const activityHistory = Array.isArray(data.activityHistory) ? data.activityHistory : [];
-        setMessages(activityHistory.length > 0
-          ? activityHistory.flatMap((turn) => [
-              {
-                id: `${turn.id}-user`,
-                role: 'user' as const,
-                content: turn.user,
-                status: 'done' as AssistantStatus,
-              },
-              {
-                id: `${turn.id}-assistant`,
-                role: 'assistant' as const,
-                content: turn.assistant,
-                activities: turn.activities,
-                status: turn.status === 'completed' ? 'done' as const : turn.status === 'failed' ? 'error' as const : 'stopped' as const,
-              },
-            ])
-          : history.map((item) => ({
-              id: createMessageId(item.role),
-              role: item.role,
-              content: item.content,
-              status: 'done' as AssistantStatus,
-            })));
-        if (data.files) {
-          setFileTree(data.files);
-          if (data.files.items.some((item) => item.type === 'file')) setShowWorkspacePanel(true);
-        }
-        if (data.download?.url) {
-          setDownload(data.download);
-        }
-        if (data.preview) {
-          setPreview(data.preview);
-          if (data.preview.url) {
-            setShowWorkspacePanel(true);
-            const revision = previewRevisionRef.current + 1;
-            previewRevisionRef.current = revision;
-            activePreviewUrlRef.current = data.preview.url;
-            activePreviewRevisionRef.current = revision;
-            setActivePreviewUrl(data.preview.url);
-            setActivePreviewRevision(revision);
-            setActivePreviewLoaded(false);
-          }
+
+        const workspaceData = await fetchResumeWorkspace(
+          historyData.conversation_id || existing,
+        );
+        if (cancelled) return;
+        if (workspaceData?.ok) {
+          applyWorkspace(workspaceData);
         }
       } catch {
         // Resume is best-effort; on failure the user just sees the home screen.
       } finally {
         if (!cancelled) {
           setResumeChecked(true);
+          setWorkspaceRestoring(false);
+          setFilesRefreshing(false);
         }
       }
     })();
@@ -394,6 +421,8 @@ export default function Home() {
       setBuild(null);
       setFileTree(null);
       setFilesRefreshing(false);
+      setFilesFocusPath(null);
+      setWorkspaceRestoring(false);
       setSandboxTab('preview');
       setShowWorkspacePanel(false);
       activePreviewUrlRef.current = '';
@@ -434,6 +463,20 @@ export default function Home() {
     const activatedPreviewRevisions = new Map<string, number>();
     let sawProjectActivity = false;
     let insertedModifyMarker = false;
+    // Expand the right panel and open a file only after the first real file arrives.
+    // file_content seeds the path; the following file_tree mounts the panel so the
+    // Files list is not empty. Do not open on tool_use — that fires before any bytes.
+    let openedFirstFile = false;
+    let pendingFirstFilePath: string | null = null;
+
+    const revealFirstFile = (path: string) => {
+      if (openedFirstFile || !path) return;
+      openedFirstFile = true;
+      pendingFirstFilePath = null;
+      setFilesFocusPath(path);
+      setShowWorkspacePanel(true);
+      setSandboxTab('files');
+    };
 
     const patchAssistant = (patch: Partial<ChatMessage>) => {
       setMessages((current) =>
@@ -714,14 +757,6 @@ export default function Home() {
           inputSummary: event.data.inputSummary || event.data.command,
           startedAt: event.data.startedAt,
         });
-        const shortName = shortenToolName(toolUseStep.name);
-        if (
-          event.data.fileCount
-          || ['write_project_file', 'write_project_files', 'files_write', 'write_files', 'files_make_dir'].includes(shortName)
-        ) {
-          setShowWorkspacePanel(true);
-          setSandboxTab('files');
-        }
         return;
       }
       if (event.type === 'tool_result' && event.data) {
@@ -736,22 +771,25 @@ export default function Home() {
       }
       if (event.type === 'file_content' && event.data?.path) {
         // The agent just wrote this file and handed us the text, so seed the cache
-        // now; the file_tree event that follows stamps it with the sandbox mtime.
+        // now; the file_tree event that follows stamps it with the sandbox mtime
+        // and is what actually expands the right panel.
         const content = event.data.content || '';
         fileCache.write(event.data.path, {
           content,
           size: typeof event.data.size === 'number' ? event.data.size : content.length,
           truncated: false,
         });
+        if (!openedFirstFile) {
+          pendingFirstFilePath = event.data.path;
+        }
         return;
       }
       if (event.type === 'file_tree' && event.data) {
         sawProjectActivity = true;
         setFileTree(event.data);
         setFilesRefreshing(false);
-        if (event.data.items.some((item) => item.type === 'file')) {
-          setShowWorkspacePanel(true);
-          setSandboxTab((current) => preview?.url ? current : 'files');
+        if (pendingFirstFilePath) {
+          revealFirstFile(pendingFirstFilePath);
         }
         return;
       }
@@ -1073,6 +1111,8 @@ export default function Home() {
     setBuild(null);
     setFileTree(null);
     setFilesRefreshing(false);
+    setFilesFocusPath(null);
+    setWorkspaceRestoring(false);
     setSandboxTab('preview');
     setShowWorkspacePanel(false);
     activePreviewUrlRef.current = '';
@@ -1333,11 +1373,26 @@ export default function Home() {
                   </div>
                 </div>
               ) : (
-                <div className="m-3.5 flex min-h-0 flex-1 flex-col items-center justify-center rounded-[12px] bg-white px-6 text-center text-secondary-foreground">
-                  <p>{t.workspace.previewEmpty}</p>
-                  <p className="mt-3 max-w-xl text-xs leading-5 text-muted-foreground">
-                    {t.workspace.constructionDisclaimer}
-                  </p>
+                <div className="m-3.5 flex min-h-0 flex-1 flex-col items-center justify-center gap-3 rounded-[12px] bg-white px-6 text-center text-secondary-foreground">
+                  {workspaceRestoring ? (
+                    <>
+                      <span
+                        className="size-8 animate-spin rounded-full border-2 border-primary/30 border-t-primary"
+                        aria-hidden="true"
+                      />
+                      <p>{t.workspace.restoringWorkspace}</p>
+                      <p className="max-w-xl text-xs leading-5 text-muted-foreground">
+                        {t.workspace.previewStarting}
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <p>{t.workspace.previewEmpty}</p>
+                      <p className="mt-3 max-w-xl text-xs leading-5 text-muted-foreground">
+                        {t.workspace.constructionDisclaimer}
+                      </p>
+                    </>
+                  )}
                 </div>
               )
             ) : (
@@ -1347,6 +1402,7 @@ export default function Home() {
                 conversationId={conversationId}
                 copy={t.files}
                 cache={fileCache}
+                focusPath={filesFocusPath}
               />
             )}
           </div>

@@ -69,9 +69,11 @@ export type FileTree = {
 
 export type ResumeData = {
   ok?: boolean;
+  stage?: 'history' | 'workspace';
   conversation_id?: string;
   messages?: { role: 'user' | 'assistant'; content: string }[];
   hasProject?: boolean;
+  needsWorkspace?: boolean;
   preview?: LinkInfo;
   files?: FileTree;
   download?: LinkInfo;
@@ -82,6 +84,7 @@ export type ResumeData = {
     status: 'completed' | 'failed' | 'stopped';
     activities: AssistantActivity[];
   }>;
+  error?: string;
 };
 
 export type ChatResponse = {

@@ -88,12 +88,15 @@ export function FilesPanel({
   conversationId,
   copy,
   cache,
+  focusPath = null,
 }: {
   tree: FileTree | null;
   refreshing: boolean;
   conversationId: string | null;
   copy: FileCopy;
   cache: FileContentCache;
+  // When set, open this file once it is present in the tree (or immediately from cache).
+  focusPath?: string | null;
 }) {
   const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(() => new Set());
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
@@ -101,6 +104,7 @@ export function FilesPanel({
   // Track the latest requested path so slower responses cannot overwrite newer selections.
   const latestRequestRef = useRef<string | null>(null);
   const prefetchByPathRef = useRef<Map<string, Promise<void>>>(new Map());
+  const focusedPathRef = useRef<string | null>(null);
   const treeRef = useRef(tree);
   treeRef.current = tree;
   const cacheVersion = cache.version;
@@ -113,6 +117,7 @@ export function FilesPanel({
     setSelectedPath(null);
     setPreview({ status: 'idle' });
     latestRequestRef.current = null;
+    focusedPathRef.current = null;
     prefetchByPathRef.current.clear();
   }, [tree?.root]);
 
@@ -264,7 +269,7 @@ export function FilesPanel({
     }
   }, [conversationId, copy, readCachedFile, writeCachedFile]);
 
-  const loadFile = (path: string) => {
+  const loadFile = useCallback((path: string) => {
     setSelectedPath(path);
     const cached = readCachedFile(path);
     if (cached) {
@@ -279,7 +284,41 @@ export function FilesPanel({
       return;
     }
     void fetchFile(path);
-  };
+  }, [fetchFile, readCachedFile]);
+
+  // Open the path the parent asked for (first generated file). Prefer waiting until
+  // the tree lists it so parent dirs can expand; fall back to cache-only so a
+  // file_content that arrives before file_tree still shows immediately.
+  useEffect(() => {
+    if (!focusPath || focusedPathRef.current === focusPath) {
+      return;
+    }
+    const inTree = tree?.items.some((item) => item.type === 'file' && item.path === focusPath);
+    const cached = readCachedFile(focusPath);
+    if (!inTree && !cached) {
+      return;
+    }
+    focusedPathRef.current = focusPath;
+    // Ensure ancestor directories are expanded so the selection is visible in the list.
+    if (tree) {
+      const parts = focusPath.split('/');
+      if (parts.length > 1) {
+        setCollapsedDirs((current) => {
+          let changed = false;
+          const next = new Set(current);
+          for (let i = 1; i < parts.length; i += 1) {
+            const dir = parts.slice(0, i).join('/');
+            if (next.has(dir)) {
+              next.delete(dir);
+              changed = true;
+            }
+          }
+          return changed ? next : current;
+        });
+      }
+    }
+    loadFile(focusPath);
+  }, [focusPath, loadFile, readCachedFile, tree]);
 
   // Keep the open file current. When the agent rewrites it the new text arrives in
   // the cache and swaps in silently; when the cache entry is dropped because the

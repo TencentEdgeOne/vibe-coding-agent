@@ -11,33 +11,77 @@ import {
   restoreProjectArchive,
   runSandboxCommand,
   startPreviewServer,
-  assertPreviewServerReady,
 } from '../_project';
 import type { FileTreeItem } from '../_types';
-import { resolveConversationId } from '../utils/_request';
+import { getRequestQueryParam, resolveConversationId } from '../utils/_request';
 
-// Rehydrate a conversation after a page refresh. The sandbox /tmp is volatile, so
-// the project may be gone even though history + snapshot survive in the store. This
-// endpoint restores the code from the snapshot (when needed), restarts the preview,
-// and returns everything the frontend needs to rebuild the workspace — without
-// running the agent. Single JSON response (restore + npm install can take a while).
-export async function runProjectResumePipeline(context: any): Promise<Response> {
+type ResumeStage = 'history' | 'workspace';
+
+function jsonResponse(obj: Record<string, unknown>, status = 200) {
+  return new Response(JSON.stringify(obj), {
+    status,
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store',
+    },
+  });
+}
+
+async function readResumeStage(context: any): Promise<ResumeStage> {
+  const fromQuery = getRequestQueryParam(context, 'stage').value;
+  if (fromQuery === 'workspace' || fromQuery === 'history') {
+    return fromQuery;
+  }
+  try {
+    const body = await context?.request?.json?.();
+    if (body && typeof body === 'object' && (body.stage === 'workspace' || body.stage === 'history')) {
+      return body.stage;
+    }
+  } catch {
+    // Body may be empty — default to the fast history stage.
+  }
+  return 'history';
+}
+
+// Fast path: store reads only. No sandbox restore / npm install / preview.
+// Lets the UI paint chat history immediately after a refresh.
+export async function runProjectResumeHistoryPipeline(context: any): Promise<Response> {
   const { conversationId } = resolveConversationId(context, { allowQuery: true });
-
-  const json = (obj: Record<string, unknown>, status = 200) => new Response(
-    JSON.stringify(obj),
-    { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } },
-  );
-
   if (!conversationId) {
-    return json({ ok: false, error: 'missing conversation_id' }, 400);
+    return jsonResponse({ ok: false, error: 'missing conversation_id' }, 400);
+  }
+
+  const [state, messages, activityHistory, snapshot] = await Promise.all([
+    getProjectState(context, conversationId),
+    getHistory(context, conversationId),
+    getActivityHistory(context, conversationId),
+    getProjectSnapshot(context, conversationId),
+  ]);
+
+  const hasProject = Boolean(snapshot?.base64) || state.created === true;
+
+  return jsonResponse({
+    ok: true,
+    stage: 'history',
+    conversation_id: conversationId,
+    messages,
+    activityHistory,
+    hasProject,
+    // Client should call stage=workspace when true.
+    needsWorkspace: hasProject,
+  });
+}
+
+// Slow path: restore snapshot into the sandbox (when needed), reinstall deps,
+// restart the preview, and return files + preview links.
+export async function runProjectResumeWorkspacePipeline(context: any): Promise<Response> {
+  const { conversationId } = resolveConversationId(context, { allowQuery: true });
+  if (!conversationId) {
+    return jsonResponse({ ok: false, error: 'missing conversation_id' }, 400);
   }
 
   const state = await getProjectState(context, conversationId);
-  const messages = await getHistory(context, conversationId);
-  const activityHistory = await getActivityHistory(context, conversationId);
 
-  // Does the sandbox still hold the project files?
   let hasFiles = false;
   try {
     if (await context.sandbox.files.exists(state.appDir)) {
@@ -48,7 +92,6 @@ export async function runProjectResumePipeline(context: any): Promise<Response> 
     hasFiles = false;
   }
 
-  // Sandbox lost the code but a snapshot survives → restore it (unzip + install).
   if (!hasFiles) {
     const snapshot = await getProjectSnapshot(context, conversationId);
     if (snapshot) {
@@ -58,21 +101,28 @@ export async function runProjectResumePipeline(context: any): Promise<Response> 
   }
 
   if (!hasFiles) {
-    // Nothing to resume (brand-new visitor, or never generated). The frontend
-    // stays on the home screen. Still return any chat history for completeness.
-    return json({ ok: true, conversation_id: conversationId, messages, activityHistory, hasProject: false });
+    return jsonResponse({
+      ok: true,
+      stage: 'workspace',
+      conversation_id: conversationId,
+      hasProject: false,
+      preview: {},
+      files: { root: state.appDir, items: [] },
+    });
   }
 
   state.created = true;
 
-  // Make sure dependencies are present before starting the preview. The restore
-  // path already installs them; this covers a sandbox that kept source but lost
-  // node_modules. Non-fatal.
+  // Restore already runs npm install; this covers a sandbox that kept source but
+  // lost node_modules. Non-fatal.
   try {
     const hasPkg = await context.sandbox.files.exists(`${state.appDir}/package.json`);
     const hasNodeModules = await context.sandbox.files.exists(`${state.appDir}/node_modules`);
     if (hasPkg && !hasNodeModules) {
-      await runSandboxCommand(context, 'npm install --no-audit --no-fund', { cwd: state.appDir, timeout: 300 });
+      await runSandboxCommand(context, 'npm install --no-audit --no-fund', {
+        cwd: state.appDir,
+        timeout: 300,
+      });
     }
   } catch {
     // Non-fatal — preview startup below will surface a real failure.
@@ -80,16 +130,22 @@ export async function runProjectResumePipeline(context: any): Promise<Response> 
 
   let preview: Record<string, unknown> = {};
   try {
+    // startPreviewServer already waits until the server answers; no second assert.
     const server = await startPreviewServer(context, state);
-    await assertPreviewServerReady(context, server.readyPath);
     const links = await resolvePublicLinks(context);
     state.previewUrl = links.previewUrl;
     state.sandboxDebugUrl = links.sandboxDebugUrl;
-    preview = { url: links.previewUrl, sandboxDebugUrl: links.sandboxDebugUrl };
+    preview = {
+      url: links.previewUrl,
+      sandboxDebugUrl: links.sandboxDebugUrl,
+      framework: server.framework,
+    };
   } catch (error) {
     state.previewUrl = undefined;
     state.sandboxDebugUrl = undefined;
-    preview = { error: error instanceof Error ? error.message : 'Failed to restart the preview.' };
+    preview = {
+      error: error instanceof Error ? error.message : 'Failed to restart the preview.',
+    };
   }
 
   let items: FileTreeItem[] = [];
@@ -101,16 +157,23 @@ export async function runProjectResumePipeline(context: any): Promise<Response> 
 
   await saveProjectState(context, conversationId, state);
 
-  return json({
+  return jsonResponse({
     ok: true,
+    stage: 'workspace',
     conversation_id: conversationId,
-    messages,
-    activityHistory,
     hasProject: true,
     preview,
     files: { root: state.appDir, items },
-    // Restore the download pointer too, so the "Download source" button survives a
-    // page refresh (the archive is built on demand by /download; this is just a link).
     download: { url: '/download', filename: 'source.zip' },
   });
+}
+
+// Router kept for the thin agents/resume.ts entry. Body `{ stage: "workspace" }`
+// selects the slow path; anything else (including `{}`) is the fast history path.
+export async function runProjectResumePipeline(context: any): Promise<Response> {
+  const stage = await readResumeStage(context);
+  if (stage === 'workspace') {
+    return runProjectResumeWorkspacePipeline(context);
+  }
+  return runProjectResumeHistoryPipeline(context);
 }

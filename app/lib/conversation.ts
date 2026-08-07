@@ -2,23 +2,35 @@ import type { ChatMessage, ResumeData } from '../types/workspace';
 
 export const CONVERSATION_STORAGE_KEY = 'web-dev-agent-conversation-id';
 
-const resumeRequests = new Map<string, Promise<ResumeData | null>>();
+function resumeHeaders(conversationId: string): HeadersInit {
+  return {
+    'content-type': 'application/json',
+    conversationId,
+    'makers-conversation-id': conversationId,
+  };
+}
 
-export function fetchResume(conversationId: string) {
-  const existing = resumeRequests.get(conversationId);
-  if (existing) return existing;
-  const request = fetch('/resume', {
+// Fast store-only resume: chat history without touching the sandbox.
+export function fetchResumeHistory(conversationId: string) {
+  return fetch('/resume?stage=history', {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      conversationId,
-      'makers-conversation-id': conversationId,
-    },
-    body: '{}',
+    headers: resumeHeaders(conversationId),
+    body: JSON.stringify({ stage: 'history' }),
   }).then((response) => response.json().catch(() => null) as Promise<ResumeData | null>);
-  resumeRequests.set(conversationId, request);
-  void request.finally(() => window.setTimeout(() => resumeRequests.delete(conversationId), 1_000));
-  return request;
+}
+
+// Slow resume: restore snapshot, npm install, restart preview, return files.
+export function fetchResumeWorkspace(conversationId: string) {
+  return fetch('/resume?stage=workspace', {
+    method: 'POST',
+    headers: resumeHeaders(conversationId),
+    body: JSON.stringify({ stage: 'workspace' }),
+  }).then((response) => response.json().catch(() => null) as Promise<ResumeData | null>);
+}
+
+/** @deprecated Prefer fetchResumeHistory + fetchResumeWorkspace. */
+export function fetchResume(conversationId: string) {
+  return fetchResumeHistory(conversationId);
 }
 
 export function createConversationId() {
