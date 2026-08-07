@@ -99,6 +99,12 @@ export type FileTreeItem = {
   name: string;
   type: 'file' | 'directory';
   depth: number;
+  // Modification time in epoch milliseconds, and byte size. Both are the cache
+  // key the frontend uses to decide whether its copy of a file is still current,
+  // so a click can skip the /file round trip. Absent when the sandbox `find` does
+  // not support -printf (see getFileTree's fallback).
+  mtime?: number;
+  size?: number;
 };
 
 // Progress events streamed to the frontend. tool_use is the model's tool request,

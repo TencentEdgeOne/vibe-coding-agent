@@ -1,5 +1,8 @@
 import { runCodingAgent } from './_agent';
-import { AUTO_FIX_MAX_ATTEMPTS } from './_constants';
+import {
+  AUTO_FIX_MAX_ATTEMPTS,
+  PREVIEW_BATCH_MAX_FILES,
+} from './_constants';
 import {
   appendTurn,
   clearProjectSnapshot,
@@ -16,6 +19,7 @@ import {
   createProjectArchive,
   getFileTree,
   readFileFromSandbox,
+  readFilesFromSandbox,
   resetProjectWorkspace,
   restoreProjectArchive,
   resolvePublicLinks,
@@ -39,6 +43,18 @@ import { normalizeRelPath } from './utils/_paths';
 import { sanitizeAssistantText } from './utils/_text';
 
 const SANDBOX_EXTENSION_SECONDS = 1800;
+
+// Caps for streaming generated file contents to the frontend (see
+// handleProjectFilesChanged). Per-file keeps a single large asset off the stream;
+// the per-turn budget bounds how much the replay buffer can hold.
+const FILE_PUSH_MAX_BYTES = 96 * 1024;
+const FILE_PUSH_TURN_BUDGET_BYTES = 2 * 1024 * 1024;
+
+const utf8Encoder = new TextEncoder();
+
+function utf8ByteLength(value: string) {
+  return utf8Encoder.encode(value).length;
+}
 
 type SandboxWithTimeoutExtension = {
   extendTimeout?: (seconds: number) => unknown;
@@ -290,43 +306,85 @@ export async function runFileReadPipeline(context: any): Promise<Response> {
     selectedConversationSource: conversationSource,
   };
   const pathParam = getRequestQueryParam(context, 'path');
+  const pathsParam = getRequestQueryParam(context, 'paths');
   const relPath = pathParam.value;
+  const batchPaths = pathsParam.value
+    .split(',')
+    .map((path) => path.trim())
+    .filter(Boolean);
+  const requestedPaths = batchPaths.length > 0 ? batchPaths : [relPath];
+  const isBatch = batchPaths.length > 0;
+  const json = (data: Record<string, unknown>, status = 200) => new Response(
+    JSON.stringify(data),
+    {
+      status,
+      headers: {
+        'content-type': 'application/json; charset=utf-8',
+        'cache-control': 'no-store',
+      },
+    },
+  );
+
   if (!conversationId) {
     debugLog(context, '[file-read]', {
       ...diagnosticBase,
-      rawPath: relPath,
-      pathSource: pathParam.source,
+      rawPath: isBatch ? batchPaths : relPath,
+      pathSource: isBatch ? pathsParam.source : pathParam.source,
       normalizedPath: null,
       error: 'missing conversation_id',
     });
-    return new Response(JSON.stringify({ ok: false, error: 'missing conversation_id' }), {
-      headers: { 'content-type': 'application/json; charset=utf-8' },
-    });
+    return json({ ok: false, error: 'missing conversation_id' }, 400);
   }
-  const norm = normalizeRelPath(relPath);
-  if (!norm) {
+  if (isBatch && batchPaths.length > PREVIEW_BATCH_MAX_FILES) {
+    return json({
+      ok: false,
+      error: `At most ${PREVIEW_BATCH_MAX_FILES} files can be read at once.`,
+    }, 400);
+  }
+
+  const normalizedPaths = requestedPaths.map((path) => normalizeRelPath(path));
+  if (normalizedPaths.some((path) => !path)) {
     debugLog(context, '[file-read]', {
       ...diagnosticBase,
-      rawPath: relPath,
-      pathSource: pathParam.source,
+      rawPath: isBatch ? batchPaths : relPath,
+      pathSource: isBatch ? pathsParam.source : pathParam.source,
       normalizedPath: null,
       error: 'invalid path',
       request: getRequestDebugSnapshot(context),
     });
-    return new Response(JSON.stringify({ ok: false, error: 'invalid path' }), {
-      headers: { 'content-type': 'application/json; charset=utf-8' },
-    });
+    return json({ ok: false, error: 'invalid path' }, 400);
   }
+  const paths = [...new Set(normalizedPaths as string[])];
 
   const state = await getProjectState(context, conversationId);
   debugLog(context, '[file-read]', {
     ...diagnosticBase,
-    rawPath: relPath,
-    pathSource: pathParam.source,
-    normalizedPath: norm,
+    rawPath: isBatch ? batchPaths : relPath,
+    pathSource: isBatch ? pathsParam.source : pathParam.source,
+    normalizedPath: isBatch ? paths : paths[0],
     appDir: state.appDir,
     stage: 'before-read',
   });
+
+  if (isBatch) {
+    const files = await readFilesFromSandbox(context, state, paths);
+    const responseBytes = files.reduce(
+      (total, file) => total + (file.ok && file.content ? utf8ByteLength(file.content) : 0),
+      0,
+    );
+    debugLog(context, '[file-read]', {
+      ...diagnosticBase,
+      normalizedPath: paths,
+      appDir: state.appDir,
+      requested: paths.length,
+      succeeded: files.filter((file) => file.ok).length,
+      responseBytes,
+      stage: 'after-batch-read',
+    });
+    return json({ ok: true, files });
+  }
+
+  const norm = paths[0];
   const res = await readFileFromSandbox(context, state, norm);
   debugLog(context, '[file-read]', {
     ...diagnosticBase,
@@ -338,10 +396,7 @@ export async function runFileReadPipeline(context: any): Promise<Response> {
     truncated: res.truncated,
     stage: 'after-read',
   });
-  return new Response(
-    JSON.stringify({ path: norm, ...res }),
-    { headers: { 'content-type': 'application/json; charset=utf-8' } },
-  );
+  return json({ path: norm, ...res });
 }
 
 export async function runProjectDownloadPipeline(context: any): Promise<Response> {
@@ -763,10 +818,30 @@ export async function runChatPipeline(
       return [];
     }
   };
-  const pushEarlyFileTree = async () => {
-    // Push file_tree as soon as scaffold succeeds so the Files panel does not
-    // have to wait for the whole turn. Failures are non-fatal because the final
-    // state is pushed again at turn completion.
+  // The model already handed us the full text of every file it wrote, so stream it
+  // to the frontend instead of making it fetch the file back over /file (which costs
+  // a sandbox shell round trip per click). Bounded per file and per turn so a large
+  // asset cannot bloat the stream or the in-process replay buffer — anything over
+  // budget simply falls back to /file.
+  let filePushBudgetBytes = FILE_PUSH_TURN_BUDGET_BYTES;
+  const handleProjectFilesChanged = async (file?: { path: string; content: string }) => {
+    if (file) {
+      const bytes = utf8ByteLength(file.content);
+      if (bytes <= FILE_PUSH_MAX_BYTES && bytes <= filePushBudgetBytes) {
+        filePushBudgetBytes -= bytes;
+        send({
+          type: 'file_content',
+          data: {
+            path: normalizeRelPath(file.path) || file.path,
+            content: file.content,
+            size: bytes,
+          },
+        });
+      }
+    }
+    // Push the tree right after the content so its mtime stamps what was just
+    // sent, and so the Files panel does not wait for the whole turn. Failures are
+    // non-fatal because the final state is pushed again at turn completion.
     await pushFileTree('Failed to read the file list after scaffold.');
   };
 
@@ -780,7 +855,7 @@ export async function runChatPipeline(
     !state.created,
     handleScaffoldLog,
     forwardProgress,
-    pushEarlyFileTree,
+    handleProjectFilesChanged,
     abortSignal,
   );
 
@@ -964,7 +1039,7 @@ export async function runChatPipeline(
       false,
       handleScaffoldLog,
       forwardProgress,
-      pushEarlyFileTree,
+      handleProjectFilesChanged,
       abortSignal,
     );
     if (autoFixResult.stopped || abortSignal?.aborted) {

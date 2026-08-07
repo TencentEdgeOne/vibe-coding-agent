@@ -54,7 +54,9 @@ export function buildProjectScaffoldTool(
 export function buildWriteProjectFileTool(
   context: any,
   state: ProjectState,
-  onResult?: (result: { written: string }) => void | Promise<void>,
+  // The content is handed back so the pipeline can push it straight to the
+  // frontend, which then renders the file without a /file round trip.
+  onResult?: (result: { written: string; content: string }) => void | Promise<void>,
 ) {
   return defineClaudeTool(
     'write_project_file',
@@ -80,7 +82,7 @@ export function buildWriteProjectFileTool(
           await context.sandbox.files.makeDir(`${state.appDir}/${parent}`);
         }
         await context.sandbox.files.write(`${state.appDir}/${relPath}`, file.content);
-        await onResult?.({ written: relPath });
+        await onResult?.({ written: relPath, content: file.content });
         return {
           content: [{
             type: 'text' as const,

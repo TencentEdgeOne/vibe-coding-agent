@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, memo, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { AlertCircle, ArrowUp, CheckCircle2, Download, ExternalLink, Plus, Sparkles, X } from 'lucide-react';
@@ -71,6 +71,11 @@ type FileTreeItem = {
   name: string;
   type: 'file' | 'directory';
   depth: number;
+  // Cache key for the file content cache: while these are unchanged, a click can
+  // render from cache instead of hitting /file. Absent on sandboxes whose `find`
+  // cannot report them, in which case caching is disabled.
+  mtime?: number;
+  size?: number;
 };
 
 type FileTree = {
@@ -151,6 +156,16 @@ type ChatStreamEvent =
   | {
       type: 'file_tree';
       data?: FileTree;
+    }
+  | {
+      // Full text of a file the agent just wrote, pushed so the Files panel can
+      // render it without fetching it back over /file.
+      type: 'file_content';
+      data?: {
+        path?: string;
+        content?: string;
+        size?: number;
+      };
     }
   | {
       type: 'preview_ready';
@@ -745,6 +760,87 @@ function LanguageSwitch({
   );
 }
 
+type FileCacheEntry = {
+  content: string;
+  size: number;
+  truncated: boolean;
+  // The tree mtime this content belongs to. `undefined` means the content was just
+  // streamed from a write and is waiting for the next file_tree to stamp it.
+  mtime?: number;
+};
+
+// Caches generated file contents so opening a file does not cost a /file request
+// (each one still wakes the agent route and crosses the sandbox boundary). Entries come
+// from two places: the file_content events the agent pushes as it writes, and
+// /file responses for files it never wrote this session. The sandbox mtime/size
+// reported by the file tree decides when an entry is still good.
+function useFileContentCache() {
+  const cacheRef = useRef<Map<string, FileCacheEntry>>(new Map());
+  const [version, setVersion] = useState(0);
+  const bump = useCallback(() => setVersion((current) => current + 1), []);
+
+  const read = useCallback((path: string) => cacheRef.current.get(path), []);
+
+  const write = useCallback((path: string, entry: FileCacheEntry) => {
+    cacheRef.current.set(path, entry);
+    bump();
+  }, [bump]);
+
+  const clear = useCallback(() => {
+    if (cacheRef.current.size === 0) return;
+    cacheRef.current.clear();
+    bump();
+  }, [bump]);
+
+  const reconcile = useCallback((tree: FileTree | null) => {
+    const cache = cacheRef.current;
+    if (cache.size === 0) return;
+    if (!tree) {
+      cache.clear();
+      bump();
+      return;
+    }
+
+    const items = new Map(
+      tree.items.filter((item) => item.type === 'file').map((item) => [item.path, item]),
+    );
+    let changed = false;
+    for (const [path, entry] of cache) {
+      const item = items.get(path);
+      // Gone from the project, or the sandbox cannot report mtime/size at all
+      // (busybox find) — in the latter case caching is unsafe, so drop it and let
+      // clicks fall back to /file.
+      if (!item || (item.mtime === undefined && item.size === undefined)) {
+        cache.delete(path);
+        changed = true;
+        continue;
+      }
+      // A size mismatch means the file moved on underneath us — most likely a
+      // shell command rewrote what we had just streamed.
+      if (item.size !== undefined && item.size !== entry.size) {
+        cache.delete(path);
+        changed = true;
+        continue;
+      }
+      if (entry.mtime === undefined) {
+        cache.set(path, { ...entry, mtime: item.mtime });
+        changed = true;
+        continue;
+      }
+      if (entry.mtime !== item.mtime) {
+        cache.delete(path);
+        changed = true;
+      }
+    }
+    if (changed) bump();
+  }, [bump]);
+
+  return useMemo(
+    () => ({ version, read, write, clear, reconcile }),
+    [version, read, write, clear, reconcile],
+  );
+}
+
 export default function Home() {
   const [language, setLanguage] = useState<Locale>('zh');
   const [deployUrl, setDeployUrl] = useState(TENCENT_CLOUD_DEPLOY_URL);
@@ -777,6 +873,7 @@ export default function Home() {
   const [showWorkspacePanel, setShowWorkspacePanel] = useState(false);
   const [fileTree, setFileTree] = useState<FileTree | null>(null);
   const [filesRefreshing, setFilesRefreshing] = useState(false);
+  const fileCache = useFileContentCache();
   const [activePreviewUrl, setActivePreviewUrl] = useState('');
   const [activePreviewRevision, setActivePreviewRevision] = useState(0);
   const [activePreviewLoaded, setActivePreviewLoaded] = useState(false);
@@ -811,6 +908,21 @@ export default function Home() {
     () => createWorkspaceTitle(messages, language === 'zh' ? '未命名项目' : 'Untitled project'),
     [language, messages],
   );
+  const clearFileCache = fileCache.clear;
+  useEffect(() => {
+    clearFileCache();
+  }, [clearFileCache, conversationId]);
+
+  // Every new file listing is the authoritative view of what is on disk, so use it
+  // to stamp or drop cached file contents. Covers all three sources of a tree
+  // (streamed file_tree, the final result, and /resume). Deliberately keyed on the
+  // tree alone: reconciling on a cache write would stamp freshly streamed content
+  // with the previous listing's mtime.
+  const reconcileFileCache = fileCache.reconcile;
+  useEffect(() => {
+    reconcileFileCache(fileTree);
+  }, [fileTree, reconcileFileCache]);
+
   useEffect(() => {
     const { domain } = extractProjectName();
     setDeployUrl(getDeployUrl(domain));
@@ -1398,6 +1510,17 @@ export default function Home() {
           status: event.data.status || (event.data.ok === false ? 'failed' : 'completed'),
           outputSummary: event.data.outputSummary || event.data.preview,
           endedAt: event.data.endedAt || Date.now(),
+        });
+        return;
+      }
+      if (event.type === 'file_content' && event.data?.path) {
+        // The agent just wrote this file and handed us the text, so seed the cache
+        // now; the file_tree event that follows stamps it with the sandbox mtime.
+        const content = event.data.content || '';
+        fileCache.write(event.data.path, {
+          content,
+          size: typeof event.data.size === 'number' ? event.data.size : content.length,
+          truncated: false,
         });
         return;
       }
@@ -2002,6 +2125,7 @@ export default function Home() {
                 refreshing={filesRefreshing}
                 conversationId={conversationId}
                 copy={t.files}
+                cache={fileCache}
               />
             )}
           </div>
@@ -3070,22 +3194,92 @@ type FilePreviewState =
     }
   | { status: 'error'; path: string; error: string };
 
+type FileReadResult = {
+  ok?: boolean;
+  path?: string;
+  content?: string;
+  size?: number;
+  truncated?: boolean;
+  error?: string;
+};
+
+const FILE_PREFETCH_MAX_FILES = 8;
+const FILE_PREFETCH_MAX_BYTES = 384 * 1024;
+const FILE_PREFETCH_MAX_SINGLE_BYTES = 128 * 1024;
+const PREFETCH_TEXT_EXTENSION = /\.(?:[cm]?[jt]sx?|json|css|scss|sass|html?|mdx?|ya?ml|py|go|rs|sh|vue|svelte|toml)$/i;
+
+function canPrefetchFile(item: FileTreeItem) {
+  return (
+    item.type === 'file'
+    && (item.size === undefined || item.size <= FILE_PREFETCH_MAX_SINGLE_BYTES)
+    && (
+      PREFETCH_TEXT_EXTENSION.test(item.path)
+      || /(?:^|\/)(?:dockerfile|makefile|\.env(?:\..*)?)$/i.test(item.path)
+    )
+  );
+}
+
+function selectFilesToPrefetch(tree: FileTree, isCached: (path: string) => boolean) {
+  const priorityPaths = [
+    'package.json',
+    'src/App.tsx',
+    'src/App.jsx',
+    'src/main.tsx',
+    'src/main.jsx',
+    'app/page.tsx',
+    'app/layout.tsx',
+    'app/globals.css',
+    'index.html',
+    'README.md',
+  ];
+  const priority = new Map(priorityPaths.map((path, index) => [path.toLowerCase(), index]));
+  const candidates = tree.items
+    .filter((item) => (
+      canPrefetchFile(item)
+      && !isCached(item.path)
+    ))
+    .sort((a, b) => {
+      const aPriority = priority.get(a.path.toLowerCase()) ?? priorityPaths.length;
+      const bPriority = priority.get(b.path.toLowerCase()) ?? priorityPaths.length;
+      return aPriority - bPriority || (a.size ?? 0) - (b.size ?? 0);
+    });
+
+  const selected: string[] = [];
+  let bytes = 0;
+  for (const item of candidates) {
+    const estimatedBytes = item.size ?? 32 * 1024;
+    if (selected.length >= FILE_PREFETCH_MAX_FILES) break;
+    if (bytes + estimatedBytes > FILE_PREFETCH_MAX_BYTES) continue;
+    selected.push(item.path);
+    bytes += estimatedBytes;
+  }
+  return selected;
+}
+
 function FilesPanel({
   tree,
   refreshing,
   conversationId,
   copy,
+  cache,
 }: {
   tree: FileTree | null;
   refreshing: boolean;
   conversationId: string | null;
   copy: FileCopy;
+  cache: ReturnType<typeof useFileContentCache>;
 }) {
   const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(() => new Set());
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [preview, setPreview] = useState<FilePreviewState>({ status: 'idle' });
   // Track the latest requested path so slower responses cannot overwrite newer selections.
   const latestRequestRef = useRef<string | null>(null);
+  const prefetchByPathRef = useRef<Map<string, Promise<void>>>(new Map());
+  const treeRef = useRef(tree);
+  treeRef.current = tree;
+  const cacheVersion = cache.version;
+  const readCachedFile = cache.read;
+  const writeCachedFile = cache.write;
 
   // Clear local file preview state when the conversation changes and the file tree root changes.
   useEffect(() => {
@@ -3093,6 +3287,7 @@ function FilesPanel({
     setSelectedPath(null);
     setPreview({ status: 'idle' });
     latestRequestRef.current = null;
+    prefetchByPathRef.current.clear();
   }, [tree?.root]);
 
   const visibleItems = useMemo(() => {
@@ -3122,11 +3317,87 @@ function FilesPanel({
     });
   };
 
-  const loadFile = async (path: string) => {
-    setSelectedPath(path);
+  const prefetchFiles = useCallback((paths: string[]) => {
+    const requested = [...new Set(paths)].filter(
+      (path) => !readCachedFile(path) && !prefetchByPathRef.current.has(path),
+    );
+    if (requested.length === 0) return Promise.resolve();
+
+    let request: Promise<void>;
+    request = (async () => {
+      try {
+        const headers: HeadersInit = {};
+        const cid = conversationId || getOrCreateCachedConversationId();
+        if (cid) {
+          headers['makers-conversation-id'] = cid;
+          headers['conversationId'] = cid;
+        }
+        const query = new URLSearchParams({ paths: requested.join(',') });
+        const resp = await fetch(`/file?${query.toString()}`, { method: 'GET', headers });
+        const data = (await resp.json()) as { ok?: boolean; files?: FileReadResult[] };
+        if (!data.ok || !Array.isArray(data.files)) return;
+
+        const currentItems = new Map(
+          (treeRef.current?.items || [])
+            .filter((item) => item.type === 'file')
+            .map((item) => [item.path, item]),
+        );
+        for (const file of data.files) {
+          if (!file.ok || !file.path || typeof file.content !== 'string') continue;
+          const item = currentItems.get(file.path);
+          writeCachedFile(file.path, {
+            content: file.content,
+            size: typeof file.size === 'number' ? file.size : file.content.length,
+            truncated: Boolean(file.truncated),
+            mtime: item?.mtime,
+          });
+        }
+      } catch {
+        // Prefetch is opportunistic. A click retries through the single-file path.
+      }
+    })().finally(() => {
+      for (const path of requested) {
+        if (prefetchByPathRef.current.get(path) === request) {
+          prefetchByPathRef.current.delete(path);
+        }
+      }
+    });
+    for (const path of requested) {
+      prefetchByPathRef.current.set(path, request);
+    }
+    return request;
+  }, [conversationId, readCachedFile, writeCachedFile]);
+
+  // Warm the most likely entry/config/source files whenever a new tree arrives.
+  // One batch request replaces several route and sandbox round trips.
+  useEffect(() => {
+    if (!tree) return;
+    const paths = selectFilesToPrefetch(tree, (path) => Boolean(readCachedFile(path)));
+    if (paths.length > 0) void prefetchFiles(paths);
+  }, [prefetchFiles, readCachedFile, tree]);
+
+  // This only runs for files that were neither streamed nor prefetched (or whose
+  // cached copy went stale). It waits for an in-flight prefetch to avoid duplicate
+  // reads when the user clicks immediately after the tree appears.
+  const fetchFile = useCallback(async (path: string, options: { silent?: boolean } = {}) => {
     latestRequestRef.current = path;
-    setPreview({ status: 'loading', path });
+    if (!options.silent) {
+      setPreview({ status: 'loading', path });
+    }
     try {
+      const pendingPrefetch = prefetchByPathRef.current.get(path);
+      if (pendingPrefetch) {
+        await pendingPrefetch;
+        const prefetched = readCachedFile(path);
+        if (prefetched) {
+          if (latestRequestRef.current === path) {
+            setPreview({ status: 'ready', path, ...prefetched });
+          }
+          return;
+        }
+        if (latestRequestRef.current !== path) return;
+      }
+
       const headers: HeadersInit = {};
       const cid = conversationId || getOrCreateCachedConversationId();
       if (cid) {
@@ -3137,14 +3408,7 @@ function FilesPanel({
         method: 'GET',
         headers,
       });
-      const data = (await resp.json()) as {
-        ok?: boolean;
-        path?: string;
-        content?: string;
-        size?: number;
-        truncated?: boolean;
-        error?: string;
-      };
+      const data = (await resp.json()) as FileReadResult;
       // Discard this response if the user selected another file while it was loading.
       if (latestRequestRef.current !== path) {
         return;
@@ -3153,13 +3417,15 @@ function FilesPanel({
         setPreview({ status: 'error', path, error: data.error || copy.readFailed });
         return;
       }
-      setPreview({
-        status: 'ready',
-        path,
+      // No mtime yet: like streamed content, the next file listing stamps it. Doing
+      // it here would risk pinning the content to a listing it does not belong to.
+      const entry = {
         content: data.content || '',
-        truncated: Boolean(data.truncated),
         size: typeof data.size === 'number' ? data.size : 0,
-      });
+        truncated: Boolean(data.truncated),
+      };
+      writeCachedFile(path, entry);
+      setPreview({ status: 'ready', path, ...entry });
     } catch (err) {
       if (latestRequestRef.current !== path) {
         return;
@@ -3170,7 +3436,53 @@ function FilesPanel({
         error: err instanceof Error ? err.message : copy.requestFailed,
       });
     }
+  }, [conversationId, copy, readCachedFile, writeCachedFile]);
+
+  const loadFile = (path: string) => {
+    setSelectedPath(path);
+    const cached = readCachedFile(path);
+    if (cached) {
+      latestRequestRef.current = path;
+      setPreview({
+        status: 'ready',
+        path,
+        content: cached.content,
+        truncated: cached.truncated,
+        size: cached.size,
+      });
+      return;
+    }
+    void fetchFile(path);
   };
+
+  // Keep the open file current. When the agent rewrites it the new text arrives in
+  // the cache and swaps in silently; when the cache entry is dropped because the
+  // file changed in a way we could not observe, refetch instead of leaving stale
+  // code on screen.
+  const previewStatus = preview.status;
+  const previewPath = preview.status === 'idle' ? null : preview.path;
+  useEffect(() => {
+    const path = selectedPath;
+    if (!path) return;
+    const cached = readCachedFile(path);
+    if (cached) {
+      setPreview((current) => (
+        current.status === 'ready' && current.path === path && current.content === cached.content
+          ? current
+          : {
+            status: 'ready',
+            path,
+            content: cached.content,
+            truncated: cached.truncated,
+            size: cached.size,
+          }
+      ));
+      return;
+    }
+    if (previewStatus === 'ready' && previewPath === path) {
+      void fetchFile(path, { silent: true });
+    }
+  }, [cacheVersion, fetchFile, previewPath, previewStatus, readCachedFile, selectedPath]);
 
   if (!tree || tree.items.length === 0) {
     return (
@@ -3202,6 +3514,11 @@ function FilesPanel({
                       toggleDirectory(item.path);
                     } else {
                       loadFile(item.path);
+                    }
+                  }}
+                  onMouseEnter={() => {
+                    if (canPrefetchFile(item) && !readCachedFile(item.path)) {
+                      void prefetchFiles([item.path]);
                     }
                   }}
                   className={`flex w-full min-w-max items-center gap-2 rounded-[7px] px-2 py-1.5 text-left transition ${

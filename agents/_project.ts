@@ -5,12 +5,18 @@ import {
   PREVIEW_PUBLIC_PORT,
   PREVIEW_SERVER_PORT,
   PREVIEW_BINARY_EXTENSIONS,
+  PREVIEW_BATCH_MAX_BYTES,
   PREVIEW_MAX_BYTES,
   ARCHIVE_EXCLUDED_DIRECTORIES,
   DOWNLOAD_ARCHIVE_MAX_BYTES,
 } from './_constants';
 import type { BuildResult, BuildStatus, FileTreeItem, ProjectSnapshot, ProjectState, ScaffoldLog } from './_types';
 import { debugLog } from './utils/_debug';
+import {
+  capBatchReadResults,
+  truncateUtf8,
+  type PreviewReadResult,
+} from './utils/_file-preview';
 import { readFileExtension, safeSegment } from './utils/_paths';
 import { detectFatalToolError } from './utils/_text';
 
@@ -287,20 +293,21 @@ export async function getFileTree(context: any, state: ProjectState): Promise<Fi
   const ignoredDirectoryPruneExpression = FILE_TREE_IGNORED_DIRECTORIES
     .map((dir) => `-path './${dir}'`)
     .join(' -o ');
+  const findExpression = `find . \\( ${ignoredDirectoryPruneExpression} \\) -prune -o -maxdepth 4`;
+  // A single `find -printf` yields type, mtime and size together, which lets the
+  // frontend cache file contents and skip the /file round trip while they are
+  // unchanged. Busybox find has no -printf, so fall back to the portable loop and
+  // emit the same four columns with zeroed metadata (the frontend then refetches
+  // on every click, i.e. the previous behaviour).
   const result = await runSandboxCommand(
     context,
     [
-      'find .',
-      `\\( ${ignoredDirectoryPruneExpression} \\) -prune`,
-      "-o -maxdepth 4 -print",
-      "| while IFS= read -r path; do",
-      "[ \"$path\" = \".\" ] && continue;",
-      "if [ -d \"$path\" ]; then",
-      "printf 'directory\\t%s\\n' \"$path\";",
-      "else",
-      "printf 'file\\t%s\\n' \"$path\";",
-      "fi;",
-      "done",
+      `{ ${findExpression} -printf '%y\\t%T@\\t%s\\t%p\\n' 2>/dev/null; }`,
+      '||',
+      `{ ${findExpression} -print | while IFS= read -r path; do`,
+      'if [ -d "$path" ]; then printf \'d\\t0\\t0\\t%s\\n\' "$path";',
+      'else printf \'f\\t0\\t0\\t%s\\n\' "$path"; fi;',
+      'done; }',
     ].join(' '),
     {
       cwd: state.appDir,
@@ -314,33 +321,43 @@ export async function getFileTree(context: any, state: ProjectState): Promise<Fi
 
   return result.stdout
     .split('\n')
-    .map((line: string) => line.trim())
+    .map((line: string) => line.trimEnd())
     .map((line: string) => {
-      const separatorIndex = line.indexOf('\t');
-      const type = separatorIndex >= 0 ? line.slice(0, separatorIndex) : '';
-      const rawPath = separatorIndex >= 0 ? line.slice(separatorIndex + 1) : '';
+      const [kind = '', mtimeRaw = '', sizeRaw = '', ...pathParts] = line.split('\t');
       return {
-        rawPath,
-        type,
+        kind,
+        mtimeRaw,
+        sizeRaw,
+        rawPath: pathParts.join('\t'),
       };
     })
-    .filter((item: { rawPath: string; type: string }) => (
+    .filter((item) => (
       item.rawPath
-      && (item.type === 'file' || item.type === 'directory')
+      && item.rawPath !== '.'
+      // 'l' (symlink) is listed as a file so a linked source file stays visible.
+      && (item.kind === 'f' || item.kind === 'l' || item.kind === 'd')
     ))
-    .filter((item: { rawPath: string; type: string }) => {
+    .filter((item) => {
       const name = item.rawPath.replace(/^\.\//, '').split('/').pop() || '';
       return !FILE_TREE_IGNORED_FILENAMES.has(name);
     })
     .slice(0, 220)
-    .map((item: { rawPath: string; type: string }) => {
+    .map((item) => {
       const path = item.rawPath.replace(/^\.\//, '');
       const name = path.split('/').pop() || path;
+      // %T@ is fractional epoch seconds; keep milliseconds so a same-second
+      // rewrite still invalidates the frontend cache.
+      const mtimeSeconds = Number.parseFloat(item.mtimeRaw);
+      const size = Number.parseInt(item.sizeRaw, 10);
       return {
         path,
         name,
-        type: item.type as 'file' | 'directory',
+        type: (item.kind === 'd' ? 'directory' : 'file') as 'file' | 'directory',
         depth: path.split('/').length - 1,
+        ...(Number.isFinite(mtimeSeconds) && mtimeSeconds > 0
+          ? { mtime: Math.round(mtimeSeconds * 1000) }
+          : {}),
+        ...(Number.isFinite(size) && size > 0 ? { size } : {}),
       };
     });
 }
@@ -797,60 +814,51 @@ async function detectPythonPreviewCommand(
   return null;
 }
 
+export type FileReadResult = PreviewReadResult;
+
 export async function readFileFromSandbox(
   context: any,
   state: ProjectState,
   relPath: string,
-): Promise<{
-  ok: boolean;
-  content?: string;
-  size?: number;
-  truncated?: boolean;
-  error?: string;
-}> {
+): Promise<FileReadResult> {
   const ext = readFileExtension(relPath);
   if (ext && PREVIEW_BINARY_EXTENSIONS.has(ext)) {
     return { ok: false, error: `Binary files cannot be previewed (${ext}).` };
   }
 
-  // Read through commands.run with head -c so the size can be limited without
-  // relying on the uncertain sandbox.files.read signature. Quote the path and
-  // escape embedded single quotes to avoid shell injection.
-  const safePath = relPath.replace(/'/g, "'\\''");
-  const cmd = `if [ ! -f '${safePath}' ]; then echo "__NOTFOUND__" 1>&2; exit 2; fi; wc -c < '${safePath}' | tr -d ' '; echo "__SEP__"; head -c ${PREVIEW_MAX_BYTES + 1} '${safePath}'`;
-  let result;
+  let content: string;
   try {
-    result = await runSandboxCommand(context, cmd, {
-      cwd: state.appDir,
-      timeout: 15,
-    });
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Read failed.' };
-  }
-
-  if (result.exitCode !== 0) {
-    const stderr = String(result.stderr || '').trim();
-    if (stderr.includes('__NOTFOUND__')) {
-      return { ok: false, error: 'File does not exist.' };
+    const result = await context.sandbox.files.read(`${state.appDir}/${relPath}`);
+    if (typeof result === 'string') {
+      content = result;
+    } else if (result instanceof Uint8Array) {
+      content = new TextDecoder().decode(result);
+    } else if (result instanceof ArrayBuffer) {
+      content = new TextDecoder().decode(new Uint8Array(result));
+    } else if (
+      result
+      && typeof result === 'object'
+      && typeof (result as { content?: unknown }).content === 'string'
+    ) {
+      // Keep compatibility with runtimes that wrap the file body.
+      content = (result as { content: string }).content;
+    } else {
+      return { ok: false, error: 'Unexpected sandbox file read result.' };
     }
-    return { ok: false, error: stderr || 'Read failed.' };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Read failed.';
+    return {
+      ok: false,
+      error: /not[\s_-]*found|no such file|does not exist/i.test(message)
+        ? 'File does not exist.'
+        : message,
+    };
   }
 
-  const stdout = String(result.stdout || '');
-  const sepIdx = stdout.indexOf('__SEP__\n');
-  if (sepIdx === -1) {
-    return { ok: false, error: 'Unexpected read format.' };
-  }
-  const sizeStr = stdout.slice(0, sepIdx).trim();
-  const size = Number(sizeStr) || 0;
-  let content = stdout.slice(sepIdx + '__SEP__\n'.length);
-  let truncated = false;
-  if (content.length > PREVIEW_MAX_BYTES) {
-    content = content.slice(0, PREVIEW_MAX_BYTES);
-    truncated = true;
-  } else if (size > PREVIEW_MAX_BYTES) {
-    truncated = true;
-  }
+  const truncatedFile = truncateUtf8(content, PREVIEW_MAX_BYTES);
+  content = truncatedFile.content;
+  const { size, truncated } = truncatedFile;
+
   // Binary fallback: treat the file as binary if the first 4KB contains many
   // non-printable control characters.
   const sample = content.slice(0, 4096);
@@ -865,6 +873,18 @@ export async function readFileFromSandbox(
   }
 
   return { ok: true, content, size, truncated };
+}
+
+export async function readFilesFromSandbox(
+  context: any,
+  state: ProjectState,
+  paths: string[],
+): Promise<Array<FileReadResult & { path: string }>> {
+  const results = await Promise.all(paths.map(async (path) => ({
+    path,
+    ...await readFileFromSandbox(context, state, path),
+  })));
+  return capBatchReadResults(results, PREVIEW_BATCH_MAX_BYTES);
 }
 
 type ProjectArchiveResult =

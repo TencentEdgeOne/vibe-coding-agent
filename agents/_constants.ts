@@ -48,6 +48,8 @@ export const PREVIEW_BINARY_EXTENSIONS = new Set([
 ]);
 
 export const PREVIEW_MAX_BYTES = 256 * 1024;
+export const PREVIEW_BATCH_MAX_FILES = 12;
+export const PREVIEW_BATCH_MAX_BYTES = 1024 * 1024;
 
 export const FILE_TREE_IGNORED_DIRECTORIES = [
   'node_modules',

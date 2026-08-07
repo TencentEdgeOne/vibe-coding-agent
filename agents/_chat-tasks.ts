@@ -83,7 +83,28 @@ function getOrCreateLiveTask(conversationId: string, task: ChatTask): LiveChatTa
   return liveTask;
 }
 
+// file_content events carry whole files. Only the newest version of a path is
+// worth replaying to a client that reconnects mid-run, so repeated writes to the
+// same file must not pile up in the buffer.
+function filePushPath(event: TaskEvent): string {
+  if (event.type !== 'file_content') return '';
+  const data = event.data && typeof event.data === 'object'
+    ? event.data as Record<string, unknown>
+    : {};
+  return typeof data.path === 'string' ? data.path : '';
+}
+
 function publish(liveTask: LiveChatTask, event: TaskEvent) {
+  const supersededPath = filePushPath(event);
+  if (supersededPath) {
+    const previousIndex = liveTask.events.findIndex(
+      (record) => filePushPath(record.event) === supersededPath,
+    );
+    if (previousIndex >= 0) {
+      liveTask.events.splice(previousIndex, 1);
+    }
+  }
+
   const record = {
     sequence: ++liveTask.nextSequence,
     event,

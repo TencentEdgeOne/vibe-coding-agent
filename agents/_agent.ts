@@ -317,7 +317,10 @@ export async function runCodingAgent(
   isNewProject: boolean,
   onScaffoldLog?: (log: ScaffoldLog) => void,
   onProgress?: (event: AgentProgressEvent) => void,
-  onScaffoldDone?: () => void | Promise<void>,
+  // Fires after the scaffold succeeds (no argument) and after every
+  // write_project_file (with the file just written, so the pipeline can stream
+  // its content to the frontend instead of making it fetch the file back).
+  onProjectFilesChanged?: (file?: { path: string; content: string }) => void | Promise<void>,
   abortSignal?: AbortSignal,
 ): Promise<CodingAgentResult> {
   // Prefer AI Gateway for model access, with backward-compatible Anthropic / DeepSeek config.
@@ -425,9 +428,9 @@ export async function runCodingAgent(
     const writeProjectFileTool = buildWriteProjectFileTool(
       context,
       state,
-      async () => {
+      async ({ written, content }) => {
         projectTouched = true;
-        await onScaffoldDone?.();
+        await onProjectFilesChanged?.({ path: written, content });
       },
     );
     const mcpTools = [
@@ -688,9 +691,9 @@ export async function runCodingAgent(
               ) {
                 scaffoldHandled = true;
                 try {
-                  await onScaffoldDone?.();
+                  await onProjectFilesChanged?.();
                 } catch (err) {
-                  console.warn('[scaffold-done] onScaffoldDone failed', err);
+                  console.warn('[scaffold-done] onProjectFilesChanged failed', err);
                 }
               }
               // Detect sandbox infrastructure failures only on is_error=true tool
