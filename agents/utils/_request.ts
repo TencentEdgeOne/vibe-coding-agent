@@ -1,20 +1,45 @@
-// Request helpers for the agents/github/* endpoints. Self-contained (no dependency
-// on _pipelines) so the OAuth endpoints stay lightweight. Mirrors the query/header
-// resolution the rest of the app relies on for the EdgeOne request shape.
+// Request helpers for the agents/github/* endpoints and agent pipelines. Self-contained
+// so the OAuth endpoints stay lightweight. Mirrors the query/header resolution the rest
+// of the app relies on for the EdgeOne request shape.
 
-export function getHeader(context: any, name: string): string {
+export function getRequestHeader(context: any, name: string): string {
   const headers = context?.request?.headers;
   if (!headers) return '';
+
+  // Headers / Map-like (case-insensitive get).
   if (typeof headers.get === 'function') {
     return String(headers.get(name) || '');
   }
-  const lower = name.toLowerCase();
-  const value = headers[name] ?? headers[lower];
+
+  // Plain objects: try exact / lower-case keys, then a case-insensitive scan
+  // (some runtimes normalize header names inconsistently).
+  const lowerName = name.toLowerCase();
+  const directValue = headers[name] ?? headers[lowerName];
+  const value = directValue
+    ?? Object.entries(headers).find(([key]) => key.toLowerCase() === lowerName)?.[1];
   return typeof value === 'string' ? value : String(value || '');
 }
 
-function fromString(rawValue: unknown, name: string): string {
-  if (typeof rawValue !== 'string' || !rawValue.trim()) return '';
+/** Alias of getRequestHeader — kept for existing OAuth / lightweight callers. */
+export function getHeader(context: any, name: string): string {
+  return getRequestHeader(context, name);
+}
+
+function queryValueToString(value: unknown): string {
+  if (Array.isArray(value)) {
+    return queryValueToString(value[0]);
+  }
+  if (value === undefined || value === null) {
+    return '';
+  }
+  return typeof value === 'string' ? value : String(value);
+}
+
+function getSearchParamFromString(rawValue: unknown, name: string): string {
+  if (typeof rawValue !== 'string' || !rawValue.trim()) {
+    return '';
+  }
+
   const raw = rawValue.trim();
   try {
     if (raw.startsWith('?')) {
@@ -29,29 +54,126 @@ function fromString(rawValue: unknown, name: string): string {
   } catch {
     return '';
   }
+
   return '';
 }
 
-export function getQueryParam(context: any, name: string): string {
+export function getRequestQueryParam(context: any, name: string): {
+  value: string;
+  source: string;
+} {
   const request = context?.request || {};
-  for (const field of ['url', 'path', 'pathname', 'search', 'queryString', 'rawUrl', 'originalUrl']) {
-    const value = fromString(request[field], name);
-    if (value) return value;
+  const stringFields = [
+    'url',
+    'path',
+    'pathname',
+    'search',
+    'queryString',
+    'rawUrl',
+    'originalUrl',
+  ];
+  for (const field of stringFields) {
+    const value = getSearchParamFromString(request[field], name);
+    if (value) {
+      return { value, source: `request.${field}` };
+    }
   }
-  const queryObjects = [request.query, request.params, request.searchParams, context?.query, context?.params];
+
+  const queryObjects = [
+    { source: 'request.query', value: request.query },
+    { source: 'request.params', value: request.params },
+    { source: 'request.searchParams', value: request.searchParams },
+    { source: 'context.query', value: context?.query },
+    { source: 'context.params', value: context?.params },
+  ];
   for (const query of queryObjects) {
-    if (query && typeof query.get === 'function') {
-      const value = query.get(name);
-      if (value) return Array.isArray(value) ? String(value[0]) : String(value);
+    if (query.value && typeof query.value.get === 'function') {
+      const value = query.value.get(name);
+      if (value) {
+        return { value: queryValueToString(value), source: query.source };
+      }
       continue;
     }
-    if (query && typeof query === 'object') {
-      const value = (query as Record<string, unknown>)[name];
-      if (Array.isArray(value) && value.length) return String(value[0]);
-      if (value !== undefined && value !== null && value !== '') return String(value);
+    if (!query || typeof query !== 'object') continue;
+    const value = query.value?.[name];
+    const normalized = queryValueToString(value);
+    if (normalized) {
+      return { value: normalized, source: query.source };
     }
   }
-  return '';
+
+  return { value: '', source: 'none' };
+}
+
+export function getQueryParam(context: any, name: string): string {
+  return getRequestQueryParam(context, name).value;
+}
+
+export function getRequestDebugSnapshot(context: any): Record<string, unknown> {
+  const request = context?.request || {};
+  const snapshot: Record<string, unknown> = {
+    requestKeys: Object.keys(request).slice(0, 24),
+  };
+  for (const field of ['url', 'path', 'pathname', 'search', 'queryString', 'rawUrl', 'originalUrl']) {
+    if (typeof request[field] === 'string' && request[field]) {
+      snapshot[field] = request[field].slice(0, 300);
+    }
+  }
+  for (const field of ['query', 'params', 'searchParams']) {
+    const value = request[field];
+    if (value && typeof value === 'object') {
+      snapshot[field] = typeof value.entries === 'function'
+        ? Object.fromEntries(Array.from(value.entries() as Iterable<[PropertyKey, unknown]>).slice(0, 20))
+        : Object.keys(value).slice(0, 20);
+    }
+  }
+  return snapshot;
+}
+
+export function maskConversationId(value: string): string {
+  if (!value) return '<empty>';
+  if (value.length <= 12) return `${value.slice(0, 2)}...${value.slice(-2)}`;
+  return `${value.slice(0, 6)}...${value.slice(-6)}`;
+}
+
+/**
+ * Resolve conversation id from the dual-channel routing shape used by Makers:
+ * context.conversation_id → makers-conversation-id → conversationId header,
+ * optionally falling back to query cid / conversationId (for plain navigations).
+ */
+export function resolveConversationId(
+  context: any,
+  options?: { allowQuery?: boolean },
+): { conversationId: string; source: string } {
+  const contextConversationId = String(context?.conversation_id || '');
+  if (contextConversationId) {
+    return { conversationId: contextConversationId, source: 'context.conversation_id' };
+  }
+
+  const pagesHeaderConversationId = getRequestHeader(context, 'makers-conversation-id');
+  if (pagesHeaderConversationId) {
+    return { conversationId: pagesHeaderConversationId, source: 'makers-conversation-id' };
+  }
+
+  const headerConversationId = getRequestHeader(context, 'conversationId');
+  if (headerConversationId) {
+    return { conversationId: headerConversationId, source: 'conversationId' };
+  }
+
+  if (options?.allowQuery) {
+    // Query-param fallback so a plain navigation can still target the right
+    // sandbox; the frontend prefers the headers.
+    const cid = getRequestQueryParam(context, 'cid');
+    if (cid.value) {
+      return { conversationId: cid.value, source: cid.source };
+    }
+    const conversationIdQuery = getRequestQueryParam(context, 'conversationId');
+    if (conversationIdQuery.value) {
+      return { conversationId: conversationIdQuery.value, source: conversationIdQuery.source };
+    }
+  }
+
+  return { conversationId: '', source: 'none' };
 }
 
 // Best-effort public origin (scheme + host). On EdgeOne the public Pages domain is

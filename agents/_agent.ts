@@ -35,6 +35,7 @@ import {
 } from './utils/_text';
 import { debugLog, isDebugEnabled } from './utils/_debug';
 import { summarizeToolInput, summarizeToolOutput } from './utils/_activity';
+import { isInstallCommand, isPreviewCommand, shortenToolName } from './utils/_tool-phase';
 
 function pickEnvValue(context: any, key: string) {
   const value = context?.env?.[key];
@@ -55,11 +56,6 @@ function buildAnthropicCustomHeaders(customHeaders: string, conversationId: stri
       ? `${GATEWAY_CONVERSATION_ID_HEADER_NAME}: ${safeConversationId}`
       : '',
   ].filter(Boolean).join('\n');
-}
-
-function shortenToolName(name: string) {
-  const match = name.match(/^mcp__[^_]+__(.+)$/);
-  return match ? match[1] : name;
 }
 
 function extractSandboxCommand(input: unknown) {
@@ -187,28 +183,6 @@ function summarizeSdkMessage(event: SDKMessage): Record<string, unknown> {
     uuid: typeof (event as any).uuid === 'string' ? (event as any).uuid : '',
     subtype: typeof (event as any).subtype === 'string' ? (event as any).subtype : undefined,
   };
-}
-
-function isInstallCommand(cmd: string) {
-  const normalized = cmd.toLowerCase();
-  return (
-    /\bnpm\s+(install|i)\b/.test(normalized)
-    || /\bpnpm\s+install\b/.test(normalized)
-    || /\byarn\s+install\b/.test(normalized)
-    || /\bbun\s+install\b/.test(normalized)
-    || /\bpython3?\s+-m\s+pip\s+install\b/.test(normalized)
-    || /\bpip3?\s+install\b/.test(normalized)
-  );
-}
-
-function isPreviewCommand(cmd: string) {
-  const normalized = cmd.toLowerCase();
-  return (
-    /\b(npm|pnpm|yarn|bun)\s+(run\s+)?(dev|start)\b/.test(normalized)
-    || /\b(next|vite|astro|nuxt)\s+dev\b/.test(normalized)
-    || /\bpython\s+-m\s+http\.server\b/.test(normalized)
-    || /\b(3000|8080)\b/.test(normalized) && /\b(dev|serve|server|preview|proxy)\b/.test(normalized)
-  );
 }
 
 type ToolProgressPhase = 'scaffold' | 'code' | 'install' | 'preview' | 'link';

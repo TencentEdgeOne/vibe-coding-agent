@@ -6,6 +6,7 @@ import {
 } from './_memory';
 import type { ChatTask, ChatTaskStatus, StreamSend } from './_types';
 import { createSSEResponse, sseEvent } from './_shared';
+import { resolveConversationId } from './utils/_request';
 
 type TaskEvent = Record<string, unknown>;
 
@@ -38,17 +39,8 @@ function createTaskId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-function getRequestHeader(context: any, name: string): string {
-  const headers = context?.request?.headers;
-  if (!headers) return '';
-  const lowerName = name.toLowerCase();
-  const directValue = headers[name] ?? headers[lowerName];
-  const value = directValue ?? Object.entries(headers).find(([key]) => key.toLowerCase() === lowerName)?.[1];
-  return typeof value === 'string' ? value : String(value || '');
-}
-
 export function getConversationId(context: any): string {
-  return String(context?.conversation_id || getRequestHeader(context, 'makers-conversation-id') || getRequestHeader(context, 'conversationId') || '').trim();
+  return resolveConversationId(context).conversationId.trim();
 }
 
 function isTerminalEvent(event: TaskEvent) {
