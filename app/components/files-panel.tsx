@@ -393,10 +393,10 @@ export function FilesPanel({
                       void prefetchFiles([item.path]);
                     }
                   }}
-                  className={`flex w-full min-w-max items-center gap-2 rounded-[7px] px-2 py-1.5 text-left transition ${
+                  className={`flex w-full min-w-max items-center gap-2 rounded-[7px] px-2 py-1.5 text-left transition-colors ${
                     isSelected
                       ? 'bg-accent font-semibold text-accent-foreground'
-                      : 'text-secondary-foreground hover:bg-[#eef2f8]'
+                      : 'text-secondary-foreground hover:bg-[#eef2f8] hover:text-foreground'
                   }`}
                   style={{ paddingLeft: `${8 + item.depth * 18}px` }}
                 >

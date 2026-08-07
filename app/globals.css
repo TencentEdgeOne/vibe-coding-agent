@@ -122,6 +122,17 @@ a {
   font: inherit;
 }
 
+button:not(:disabled),
+[role='button']:not([aria-disabled='true']),
+[role='tab']:not([disabled]),
+[role='switch']:not(:disabled) {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
 textarea::placeholder,
 input::placeholder {
   opacity: 1;
@@ -162,10 +173,22 @@ input::placeholder {
   background: linear-gradient(135deg, var(--brand), var(--brand-deep));
   color: #fff;
   box-shadow: 0 8px 20px -10px rgba(47, 107, 255, 0.6);
+  transition:
+    transform 150ms ease,
+    box-shadow 150ms ease,
+    filter 150ms ease,
+    opacity 150ms ease;
 }
 
 .btn-brand:hover:not(:disabled) {
   transform: translateY(-1px);
+  filter: brightness(1.06);
+  box-shadow: 0 12px 26px -10px rgba(47, 107, 255, 0.72);
+}
+
+.btn-brand:active:not(:disabled) {
+  transform: translateY(0);
+  filter: brightness(0.98);
 }
 
 .btn-brand:disabled {
@@ -412,6 +435,7 @@ input::placeholder {
 }
 
 .tool-activity-trigger:hover {
+  background: #f0f1f3;
   color: var(--foreground);
 }
 
@@ -538,16 +562,26 @@ input::placeholder {
   flex: 0 0 32px;
   place-items: center;
   border-radius: 7px;
-  transition: background 150ms ease, color 150ms ease, opacity 150ms ease;
+  transition:
+    background 150ms ease,
+    color 150ms ease,
+    opacity 150ms ease,
+    transform 150ms ease,
+    box-shadow 150ms ease;
 }
 
 .composer-icon {
   color: #777d87;
 }
 
-.composer-icon:hover {
+.composer-icon:hover:not(:disabled) {
   background: #f0f1f3;
   color: var(--foreground);
+}
+
+.composer-icon:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .composer-send,
@@ -563,6 +597,8 @@ input::placeholder {
 .composer-stop:hover,
 .composer-send:hover:not(:disabled) {
   background: var(--brand-deep);
+  box-shadow: 0 6px 14px -8px rgba(47, 107, 255, 0.65);
+  transform: translateY(-1px);
 }
 
 @keyframes workspace-panel-pop {
@@ -663,11 +699,25 @@ input::placeholder {
   font-size: 12px !important;
   font-weight: 600;
   box-shadow: none !important;
-  transition: color 150ms ease, border-color 150ms ease;
+  transition:
+    color 160ms ease,
+    border-color 160ms ease,
+    opacity 160ms ease;
+}
+
+.workspace-tab svg {
+  opacity: 0.72;
+  transition: opacity 160ms ease, color 160ms ease;
 }
 
 .workspace-tab:hover {
-  color: #353a43 !important;
+  color: #454b56 !important;
+  border-bottom-color: #d5d9e0 !important;
+  background: transparent !important;
+}
+
+.workspace-tab:hover svg {
+  opacity: 1;
 }
 
 .workspace-tab[data-state='active'] {
@@ -675,6 +725,17 @@ input::placeholder {
   background: transparent !important;
   color: #17191d !important;
   box-shadow: none !important;
+}
+
+.workspace-tab[data-state='active'] svg {
+  opacity: 1;
+  color: var(--brand);
+}
+
+.workspace-tab[data-state='active']:hover {
+  color: var(--brand-deep) !important;
+  border-bottom-color: var(--brand) !important;
+  background: transparent !important;
 }
 
 .workspace-tab-count {
@@ -740,14 +801,19 @@ input::placeholder {
   border: 1px solid transparent;
   border-radius: 7px;
   color: #68717e;
-  transition: border-color 150ms ease, background 150ms ease, color 150ms ease;
+  transition:
+    border-color 150ms ease,
+    background 150ms ease,
+    color 150ms ease,
+    transform 150ms ease;
 }
 
 .workspace-icon-button:hover:not(:disabled),
 .workspace-icon-button:focus-visible {
   border-color: #e6e8ec;
-  background: #f4f5f7;
+  background: #eef2f8;
   color: #17191d;
+  transform: translateY(-1px);
 }
 
 .workspace-icon-button:disabled {
@@ -1014,6 +1080,8 @@ input::placeholder {
   width: auto;
   gap: 2px;
   padding-right: 14px;
+  background: color-mix(in srgb, var(--brand) 8%, white);
+  color: var(--brand-deep);
 }
 
 .action-chip:hover:not(:disabled) .action-chip-label,

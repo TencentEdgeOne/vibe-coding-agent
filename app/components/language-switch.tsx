@@ -15,16 +15,16 @@ export function LanguageSwitch({
   className?: string;
 }) {
   const itemClass = (active: boolean) =>
-    `font-semibold leading-none transition-all ${
+    `rounded-md px-1.5 py-1 font-semibold leading-none transition-all ${
       active
         ? 'scale-110 text-primary'
-        : 'text-muted-foreground hover:text-foreground'
+        : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
     }`;
   return (
     <div
       role="group"
       aria-label={ariaLabel}
-      className={`flex items-center gap-1.5 text-sm ${className}`}
+      className={`flex items-center gap-1 text-sm ${className}`}
     >
       <button
         type="button"

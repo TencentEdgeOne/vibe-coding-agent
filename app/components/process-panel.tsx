@@ -71,9 +71,9 @@ export const ProcessPanel = memo(function ProcessPanel({
             event.preventDefault();
             onToggle();
           }}
-          className="flex min-w-0 w-full cursor-pointer flex-wrap items-center justify-between gap-2 rounded-lg px-1 py-1 text-left transition focus:outline-none focus-visible:ring-1 focus-visible:ring-primary/50"
+          className="flex min-w-0 w-full cursor-pointer flex-wrap items-center justify-between gap-2 rounded-lg px-1 py-1 text-left transition-colors hover:bg-accent/60 focus:outline-none focus-visible:ring-1 focus-visible:ring-primary/50"
         >
-          <span className="flex size-6 items-center justify-center rounded-full text-primary transition hover:text-accent-foreground">
+          <span className="flex size-6 items-center justify-center rounded-full text-primary transition-colors hover:text-accent-foreground">
             <span
               aria-hidden="true"
               className={`block size-0 border-y-[5px] border-y-transparent border-l-[8px] border-l-current transition-transform ${
@@ -90,10 +90,10 @@ export const ProcessPanel = memo(function ProcessPanel({
               onToggleThinking();
             }}
             onKeyDown={(event) => event.stopPropagation()}
-            className={`flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-medium transition ${
+            className={`flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-medium transition-colors ${
               showThinking
-                ? 'bg-accent text-accent-foreground'
-                : 'bg-secondary text-muted-foreground hover:text-foreground'
+                ? 'bg-accent text-accent-foreground hover:bg-accent/80'
+                : 'bg-secondary text-muted-foreground hover:bg-border hover:text-foreground'
             }`}
           >
             <span

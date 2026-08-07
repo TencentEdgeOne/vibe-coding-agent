@@ -1435,7 +1435,7 @@ export default function Home() {
                     type="submit"
                     disabled={!canSend}
                     aria-label={t.home.fastBuild}
-                    className="btn-brand ml-auto inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-60"
+                    className="btn-brand ml-auto inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-sm font-semibold"
                   >
                     {loading ? (
                       <span className="size-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
@@ -1454,7 +1454,7 @@ export default function Home() {
                   key={example}
                   type="button"
                   onClick={() => setInput(example)}
-                  className="rounded-full border border-border bg-card px-3.5 py-1.5 text-[13px] text-secondary-foreground transition hover:border-primary/45 hover:text-accent-foreground"
+                  className="rounded-full border border-border bg-card px-3.5 py-1.5 text-[13px] text-secondary-foreground transition-colors hover:border-primary/45 hover:bg-accent hover:text-accent-foreground"
                 >
                   {example}
                 </button>
@@ -1747,7 +1747,7 @@ export default function Home() {
                   href={githubNotice.repo}
                   target="_blank"
                   rel="noreferrer"
-                  className="max-w-full truncate rounded-lg bg-accent px-3 py-1.5 font-mono text-xs text-muted-foreground transition-colors hover:text-foreground"
+                  className="max-w-full truncate rounded-lg bg-accent px-3 py-1.5 font-mono text-xs text-muted-foreground transition-colors hover:bg-accent/80 hover:text-foreground"
                 >
                   {githubNotice.repo.replace(/^https?:\/\//, '')}
                 </a>
