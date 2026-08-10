@@ -69,7 +69,7 @@ export type FileTree = {
 
 export type ResumeData = {
   ok?: boolean;
-  stage?: 'history' | 'workspace';
+  stage?: 'history' | 'workspace' | 'preview';
   conversation_id?: string;
   messages?: { role: 'user' | 'assistant'; content: string }[];
   hasProject?: boolean;

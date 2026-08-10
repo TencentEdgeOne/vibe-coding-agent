@@ -13,6 +13,7 @@ export {
 } from './project/_fs';
 export {
   resolvePublicLinks,
+  rewritePreviewAccessToken,
   startPreviewServer,
   assertPreviewServerReady,
 } from './project/_preview';

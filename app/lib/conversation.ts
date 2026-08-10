@@ -37,6 +37,25 @@ export function fetchResumeWorkspace(conversationId: string) {
     .finally(() => clearTimeout(timer));
 }
 
+// Light resume: re-mint the public preview URL with a fresh sandbox
+// envdAccessToken. May escalate to full workspace restore when the sandbox
+// has gone cold, so use the same client ceiling as fetchResumeWorkspace.
+const RESUME_PREVIEW_CLIENT_TIMEOUT_MS = 130_000;
+
+export function fetchResumePreview(conversationId: string) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), RESUME_PREVIEW_CLIENT_TIMEOUT_MS);
+  return fetch('/resume?stage=preview', {
+    method: 'POST',
+    headers: resumeHeaders(conversationId),
+    body: JSON.stringify({ stage: 'preview' }),
+    signal: controller.signal,
+  })
+    .then((response) => response.json().catch(() => null) as Promise<ResumeData | null>)
+    .catch(() => null)
+    .finally(() => clearTimeout(timer));
+}
+
 /** @deprecated Prefer fetchResumeHistory + fetchResumeWorkspace. */
 export function fetchResume(conversationId: string) {
   return fetchResumeHistory(conversationId);

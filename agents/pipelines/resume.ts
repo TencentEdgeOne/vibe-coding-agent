@@ -11,6 +11,7 @@ import {
   getFileTree,
   resolvePublicLinks,
   restoreProjectArchive,
+  rewritePreviewAccessToken,
   runSandboxCommand,
   startPreviewServer,
 } from '../_project';
@@ -54,7 +55,7 @@ function projectStateImpliesPreview(state: ProjectState, activityHistory: Persis
     || activityHistoryImpliesPreview(activityHistory);
 }
 
-type ResumeStage = 'history' | 'workspace';
+type ResumeStage = 'history' | 'workspace' | 'preview';
 
 // Hard ceiling for the whole workspace stage so a stuck sandbox call cannot
 // leave the browser spinner pending indefinitely after stop/refresh.
@@ -77,12 +78,16 @@ function jsonResponse(obj: Record<string, unknown>, status = 200) {
 
 async function readResumeStage(context: any): Promise<ResumeStage> {
   const fromQuery = getRequestQueryParam(context, 'stage').value;
-  if (fromQuery === 'workspace' || fromQuery === 'history') {
+  if (fromQuery === 'workspace' || fromQuery === 'history' || fromQuery === 'preview') {
     return fromQuery;
   }
   try {
     const body = await context?.request?.json?.();
-    if (body && typeof body === 'object' && (body.stage === 'workspace' || body.stage === 'history')) {
+    if (
+      body
+      && typeof body === 'object'
+      && (body.stage === 'workspace' || body.stage === 'history' || body.stage === 'preview')
+    ) {
       return body.stage;
     }
   } catch {
@@ -169,6 +174,26 @@ async function ensureProjectDependencies(context: any, state: ProjectState) {
 async function republishPreviewOnResume(context: any, state: ProjectState) {
   try {
     await assertPreviewServerReady(context);
+    const accessToken = typeof context.sandbox?.envdAccessToken === 'string'
+      ? context.sandbox.envdAccessToken
+      : '';
+
+    // Prefer rotating the token on the URL the iframe already used. Fresh
+    // getHost() can mint a LazySandbox host whose /preview/ proxy is not ready,
+    // which shows up in the panel as {"error":"Not Found",...}.
+    if (state.previewUrl && accessToken) {
+      const rewritten = rewritePreviewAccessToken(state.previewUrl, accessToken);
+      if (rewritten) {
+        const warmLinks = await resolvePublicLinks(context);
+        state.previewUrl = rewritten;
+        state.sandboxDebugUrl = warmLinks.sandboxDebugUrl || state.sandboxDebugUrl;
+        return {
+          url: rewritten,
+          sandboxDebugUrl: state.sandboxDebugUrl,
+        };
+      }
+    }
+
     const warmLinks = await resolvePublicLinks(context);
     if (warmLinks.previewUrl) {
       state.previewUrl = warmLinks.previewUrl;
@@ -353,12 +378,88 @@ export async function runProjectResumeWorkspacePipeline(context: any): Promise<R
   }
 }
 
-// Router kept for the thin agents/resume.ts entry. Body `{ stage: "workspace" }`
-// selects the slow path; anything else (including `{}`) is the fast history path.
+// Light path: re-mint the public preview URL (fresh envdAccessToken) without
+// restoring the full workspace. Used when the SPA tab stays open but the
+// iframe's access_token expires — visibility return / toolbar refresh.
+// Falls back to full workspace restore when the sandbox has gone cold.
+async function runPreviewRefreshBody(context: any, conversationId: string) {
+  const [state, activityHistory] = await Promise.all([
+    getProjectState(context, conversationId),
+    getActivityHistory(context, conversationId),
+  ]);
+  const hadPreview = projectStateImpliesPreview(state, activityHistory);
+  if (!hadPreview) {
+    return {
+      ok: true as const,
+      stage: 'preview' as const,
+      conversation_id: conversationId,
+      preview: {},
+    };
+  }
+
+  try {
+    const preview = await republishPreviewOnResume(context, state);
+    state.previewPublished = true;
+    try {
+      await saveProjectState(context, conversationId, state);
+    } catch {
+      // Non-fatal — the fresh URL below is still usable for this session.
+    }
+
+    return {
+      ok: true as const,
+      stage: 'preview' as const,
+      conversation_id: conversationId,
+      preview,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn('[resume:preview] remint failed, escalating to workspace restore:', message);
+    const workspace = await runWorkspaceRestoreBody(context, conversationId);
+    return {
+      ...workspace,
+      stage: 'preview' as const,
+    };
+  }
+}
+
+export async function runProjectResumePreviewPipeline(context: any): Promise<Response> {
+  const { conversationId } = resolveConversationId(context, { allowQuery: true });
+  if (!conversationId) {
+    return jsonResponse({ ok: false, error: 'missing conversation_id' }, 400);
+  }
+
+  try {
+    // Allow workspace-restore escalation inside the light path, so budget matches
+    // the slow resume ceiling (and the client abort in fetchResumePreview).
+    const payload = await withTimeout(
+      runPreviewRefreshBody(context, conversationId),
+      WORKSPACE_RESUME_BUDGET_MS,
+      'preview refresh',
+    );
+    return jsonResponse(payload);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Preview refresh failed.';
+    console.warn('[resume:preview]', message);
+    return jsonResponse({
+      ok: true,
+      stage: 'preview',
+      conversation_id: conversationId,
+      preview: { error: message },
+    });
+  }
+}
+
+// Router kept for the thin agents/resume.ts entry.
+// `stage=workspace` → slow restore; `stage=preview` → re-mint preview URL;
+// anything else (including `{}`) → fast history path.
 export async function runProjectResumePipeline(context: any): Promise<Response> {
   const stage = await readResumeStage(context);
   if (stage === 'workspace') {
     return runProjectResumeWorkspacePipeline(context);
+  }
+  if (stage === 'preview') {
+    return runProjectResumePreviewPipeline(context);
   }
   return runProjectResumeHistoryPipeline(context);
 }

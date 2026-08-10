@@ -70,6 +70,17 @@ function appendAccessToken(url: string, token: string) {
   }
 }
 
+/** Rotate envdAccessToken on an already-published preview URL (same host/path). */
+export function rewritePreviewAccessToken(existingUrl: string, token: string) {
+  try {
+    const parsed = new URL(existingUrl);
+    parsed.searchParams.set('access_token', token);
+    return parsed.toString();
+  } catch {
+    return undefined;
+  }
+}
+
 function resolvePreviewAllowedHost(context: any) {
   try {
     const previewHost = context.sandbox.getHost(PREVIEW_PUBLIC_PORT);

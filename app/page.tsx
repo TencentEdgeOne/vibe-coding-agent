@@ -39,6 +39,7 @@ import {
   createWorkspaceTitle,
   extractProjectName,
   fetchResumeHistory,
+  fetchResumePreview,
   fetchResumeWorkspace,
   getAssistantScrollSignature,
   getDeployUrl,
@@ -121,6 +122,11 @@ export default function Home() {
   const activePreviewUrlRef = useRef('');
   const activePreviewRevisionRef = useRef(0);
   const previewRevisionRef = useRef(0);
+  const previewRefreshInFlightRef = useRef(false);
+  const conversationIdRef = useRef<string | null>(null);
+  const loadingRef = useRef(false);
+  const workspaceRestoringRef = useRef(false);
+  const hasLivePreviewRef = useRef(false);
   const processStepRevealTimersRef = useRef<Record<string, number>>({});
   const showProcessThinkingRef = useRef(true);
   const chatAbortControllerRef = useRef<AbortController | null>(null);
@@ -134,6 +140,12 @@ export default function Home() {
     isStartingFromHome: boolean;
     streamUrl: string;
   }) => Promise<void>>(async () => {});
+  // Visibility / toolbar preview refresh — kept on a ref so the listener effect
+  // can stay mount-only while still calling the latest implementation.
+  const refreshPreviewLinkRef = useRef<(options?: {
+    showLoading?: boolean;
+    allowWorkspaceFallback?: boolean;
+  }) => Promise<boolean>>(async () => false);
 
   const t = TRANSLATIONS[language];
   const canSend = input.trim().length > 0 && !loading;
@@ -158,6 +170,22 @@ export default function Home() {
   useEffect(() => {
     clearFileCache();
   }, [clearFileCache, conversationId]);
+
+  useEffect(() => {
+    conversationIdRef.current = conversationId;
+  }, [conversationId]);
+
+  useEffect(() => {
+    loadingRef.current = loading;
+  }, [loading]);
+
+  useEffect(() => {
+    workspaceRestoringRef.current = workspaceRestoring;
+  }, [workspaceRestoring]);
+
+  useEffect(() => {
+    hasLivePreviewRef.current = Boolean(preview?.url);
+  }, [preview?.url]);
 
   // Every new file listing is the authoritative view of what is on disk, so use it
   // to stamp or drop cached file contents. Covers all three sources of a tree
@@ -407,6 +435,95 @@ export default function Home() {
 
     return () => {
       cancelled = true;
+    };
+  }, []);
+
+  // Re-mint the iframe access_token when the tab becomes visible again, or when
+  // the user hits refresh. The SPA keeps the old preview URL in memory; the
+  // sandbox gateway rejects expired envdAccessToken with AUTHENTICATION_FAILED.
+  useEffect(() => {
+    const applyFreshPreviewUrl = (url: string, sandboxDebugUrl?: string) => {
+      setPreview({ url, sandboxDebugUrl });
+      const revision = previewRevisionRef.current + 1;
+      previewRevisionRef.current = revision;
+      activePreviewUrlRef.current = url;
+      activePreviewRevisionRef.current = revision;
+      setActivePreviewUrl(url);
+      setActivePreviewRevision(revision);
+      setActivePreviewLoaded(false);
+      setPendingPreviewUrl('');
+      setPendingPreviewRevision(0);
+    };
+
+    const refreshPreviewLink = async (options?: {
+      showLoading?: boolean;
+      allowWorkspaceFallback?: boolean;
+    }) => {
+      const id = conversationIdRef.current;
+      if (
+        !id
+        || !hasLivePreviewRef.current
+        || loadingRef.current
+        || workspaceRestoringRef.current
+        || previewRefreshInFlightRef.current
+      ) {
+        return false;
+      }
+
+      previewRefreshInFlightRef.current = true;
+      if (options?.showLoading) {
+        setActivePreviewLoaded(false);
+      }
+
+      try {
+        // Backend stage=preview remints the token on the existing host, and
+        // escalates to full workspace restore when the sandbox has gone cold.
+        const data = await fetchResumePreview(id);
+        if (data?.ok && data.preview?.url) {
+          applyFreshPreviewUrl(data.preview.url, data.preview.sandboxDebugUrl);
+          if (data.files?.items?.length) {
+            setFileTree(data.files);
+          }
+          if (data.download?.url) {
+            setDownload(data.download);
+          }
+          return true;
+        }
+        if (options?.allowWorkspaceFallback) {
+          const workspaceData = await fetchResumeWorkspace(id);
+          if (workspaceData?.ok && workspaceData.preview?.url) {
+            applyFreshPreviewUrl(
+              workspaceData.preview.url,
+              workspaceData.preview.sandboxDebugUrl,
+            );
+            if (workspaceData.files?.items?.length) {
+              setFileTree(workspaceData.files);
+            }
+            if (workspaceData.download?.url) {
+              setDownload(workspaceData.download);
+            }
+            return true;
+          }
+        }
+        return false;
+      } finally {
+        previewRefreshInFlightRef.current = false;
+      }
+    };
+
+    refreshPreviewLinkRef.current = refreshPreviewLink;
+
+    const onVisibility = () => {
+      if (document.visibilityState !== 'visible') {
+        return;
+      }
+      void refreshPreviewLink();
+    };
+
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      refreshPreviewLinkRef.current = async () => false;
     };
   }, []);
 
@@ -1311,14 +1428,25 @@ export default function Home() {
   }
 
   function handleRefreshPreview() {
-    if (!activePreviewUrl) {
+    if (!activePreviewUrlRef.current) {
       return;
     }
-    const revision = previewRevisionRef.current + 1;
-    previewRevisionRef.current = revision;
-    activePreviewRevisionRef.current = revision;
-    setActivePreviewRevision(revision);
-    setActivePreviewLoaded(false);
+    void (async () => {
+      const refreshed = await refreshPreviewLinkRef.current({
+        showLoading: true,
+        allowWorkspaceFallback: true,
+      });
+      if (refreshed) {
+        return;
+      }
+      // Last resort: reload the current iframe src (same token). Prefer the
+      // resume paths above — they mint a fresh envdAccessToken.
+      const revision = previewRevisionRef.current + 1;
+      previewRevisionRef.current = revision;
+      activePreviewRevisionRef.current = revision;
+      setActivePreviewRevision(revision);
+      setActivePreviewLoaded(false);
+    })();
   }
 
   function handleOpenPreview() {
