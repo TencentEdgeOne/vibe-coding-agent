@@ -43,6 +43,8 @@ export type LinkInfo = {
   sandboxDebugUrl?: string;
   filename?: string;
   error?: string;
+  /** Preview resume had to restart the dev server, so any loaded iframe is stale. */
+  restarted?: boolean;
 };
 
 export type InitLog = {

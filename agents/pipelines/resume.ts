@@ -190,6 +190,7 @@ async function republishPreviewOnResume(context: any, state: ProjectState) {
         return {
           url: rewritten,
           sandboxDebugUrl: state.sandboxDebugUrl,
+          restarted: false,
         };
       }
     }
@@ -201,6 +202,7 @@ async function republishPreviewOnResume(context: any, state: ProjectState) {
       return {
         url: warmLinks.previewUrl,
         sandboxDebugUrl: warmLinks.sandboxDebugUrl,
+        restarted: false,
       };
     }
   } catch {
@@ -223,6 +225,8 @@ async function republishPreviewOnResume(context: any, state: ProjectState) {
   return {
     url: links.previewUrl,
     sandboxDebugUrl: links.sandboxDebugUrl,
+    // The dev server is a new process: whatever an open iframe shows is dead.
+    restarted: true,
   };
 }
 
@@ -304,7 +308,7 @@ async function runWorkspaceRestoreBody(context: any, conversationId: string) {
   // project often has a scaffold but is not previewable yet.
   const shouldRestartPreview = !generationActive && hasFileItems && hadPreview;
 
-  let preview: { url?: string; sandboxDebugUrl?: string; error?: string } = {};
+  let preview: { url?: string; sandboxDebugUrl?: string; error?: string; restarted?: boolean } = {};
   if (shouldRestartPreview) {
     try {
       preview = await withTimeout(

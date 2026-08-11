@@ -900,6 +900,20 @@ input::placeholder {
   background: var(--card);
 }
 
+/* Tab panes live side by side and are toggled with display, so the preview
+   iframe survives a switch to the Code tab instead of reloading. */
+.workspace-panel-pane {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.workspace-panel-pane.is-hidden {
+  display: none;
+}
+
 .workspace-preview-shell {
   display: flex;
   min-height: 0;

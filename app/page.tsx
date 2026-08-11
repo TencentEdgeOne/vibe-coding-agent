@@ -86,6 +86,24 @@ import type {
   TimelineStep,
 } from './types/workspace';
 
+// Coming back to the tab does not need a fresh envdAccessToken every time: skip
+// the re-mint when the last one is still recent.
+const PREVIEW_REFRESH_MIN_INTERVAL_MS = 60_000;
+// Below this hidden duration the loaded iframe keeps its session, so a fresh URL
+// is stored for copy / open only and the frame is left untouched (no reload).
+// Beyond it the token is likely dead, so reloading with a new one is the lesser evil.
+const PREVIEW_STALE_AFTER_HIDDEN_MS = 10 * 60_000;
+
+function isSamePreviewTarget(a: string, b: string) {
+  try {
+    const left = new URL(a);
+    const right = new URL(b);
+    return left.origin === right.origin && left.pathname === right.pathname;
+  } catch {
+    return false;
+  }
+}
+
 export default function Home() {
   const [language, setLanguage] = useState<Locale>('zh');
   const [deployUrl, setDeployUrl] = useState(TENCENT_CLOUD_DEPLOY_URL);
@@ -134,6 +152,8 @@ export default function Home() {
   const activePreviewRevisionRef = useRef(0);
   const previewRevisionRef = useRef(0);
   const previewRefreshInFlightRef = useRef(false);
+  const previewHiddenAtRef = useRef(0);
+  const previewRefreshedAtRef = useRef(0);
   const conversationIdRef = useRef<string | null>(null);
   const loadingRef = useRef(false);
   const workspaceRestoringRef = useRef(false);
@@ -156,10 +176,15 @@ export default function Home() {
   const refreshPreviewLinkRef = useRef<(options?: {
     showLoading?: boolean;
     allowWorkspaceFallback?: boolean;
+    remountIframe?: boolean;
   }) => Promise<boolean>>(async () => false);
 
   const t = TRANSLATIONS[language];
   const canSend = input.trim().length > 0 && !loading;
+  // `preview.url` always carries the freshest access_token, while `activePreviewUrl`
+  // is only what the iframe happens to be showing (deliberately left stale so a
+  // token rotation does not reload the running app).
+  const shareablePreviewUrl = preview?.url || activePreviewUrl;
   const hasWorkspace = messages.length > 0 || Boolean(preview) || Boolean(build) || workspaceRestoring;
   // Cycling typewriter placeholder for the landing prompt (see plan/design-mockup.html).
   // Reuses the localized example prompts; pauses while the field has text.
@@ -359,6 +384,7 @@ export default function Home() {
       if (data.preview?.url) {
         setPreview(data.preview);
         setSandboxTab('preview');
+        previewRefreshedAtRef.current = Date.now();
         const revision = previewRevisionRef.current + 1;
         previewRevisionRef.current = revision;
         activePreviewUrlRef.current = data.preview.url;
@@ -443,8 +469,25 @@ export default function Home() {
   // the user hits refresh. The SPA keeps the old preview URL in memory; the
   // sandbox gateway rejects expired envdAccessToken with AUTHENTICATION_FAILED.
   useEffect(() => {
-    const applyFreshPreviewUrl = (url: string, sandboxDebugUrl?: string) => {
+    const applyFreshPreviewUrl = (
+      url: string,
+      sandboxDebugUrl?: string,
+      options?: { remountIframe?: boolean },
+    ) => {
       setPreview({ url, sandboxDebugUrl });
+      previewRefreshedAtRef.current = Date.now();
+
+      // Same host and path means only the token rotated. Reloading would throw
+      // away the running app (route, scroll, form state), so keep the frame and
+      // let copy / open / the next reload pick up the fresh URL from `preview`.
+      if (
+        options?.remountIframe === false
+        && activePreviewUrlRef.current
+        && isSamePreviewTarget(activePreviewUrlRef.current, url)
+      ) {
+        return;
+      }
+
       const revision = previewRevisionRef.current + 1;
       previewRevisionRef.current = revision;
       activePreviewUrlRef.current = url;
@@ -459,6 +502,7 @@ export default function Home() {
     const refreshPreviewLink = async (options?: {
       showLoading?: boolean;
       allowWorkspaceFallback?: boolean;
+      remountIframe?: boolean;
     }) => {
       const id = conversationIdRef.current;
       if (
@@ -472,6 +516,9 @@ export default function Home() {
       }
 
       previewRefreshInFlightRef.current = true;
+      // Stamp the attempt, not just the success, so a dead sandbox is not probed
+      // again on every tab switch.
+      previewRefreshedAtRef.current = Date.now();
       if (options?.showLoading) {
         setActivePreviewLoaded(false);
       }
@@ -481,7 +528,11 @@ export default function Home() {
         // escalates to full workspace restore when the sandbox has gone cold.
         const data = await fetchResumePreview(id);
         if (data?.ok && data.preview?.url) {
-          applyFreshPreviewUrl(data.preview.url, data.preview.sandboxDebugUrl);
+          applyFreshPreviewUrl(data.preview.url, data.preview.sandboxDebugUrl, {
+            // A restarted dev server invalidates whatever the frame is showing,
+            // so that case always reloads even when the caller asked not to.
+            remountIframe: options?.remountIframe !== false || data.preview.restarted === true,
+          });
           if (data.files?.items?.length) {
             setFileTree(data.files);
           }
@@ -516,9 +567,20 @@ export default function Home() {
 
     const onVisibility = () => {
       if (document.visibilityState !== 'visible') {
+        previewHiddenAtRef.current = Date.now();
         return;
       }
-      void refreshPreviewLink();
+
+      const hiddenFor = previewHiddenAtRef.current
+        ? Date.now() - previewHiddenAtRef.current
+        : 0;
+      previewHiddenAtRef.current = 0;
+      const wentStale = hiddenFor >= PREVIEW_STALE_AFTER_HIDDEN_MS;
+      const sinceLastRefresh = Date.now() - previewRefreshedAtRef.current;
+      if (!wentStale && sinceLastRefresh < PREVIEW_REFRESH_MIN_INTERVAL_MS) {
+        return;
+      }
+      void refreshPreviewLink({ remountIframe: wentStale });
     };
 
     document.addEventListener('visibilitychange', onVisibility);
@@ -871,6 +933,7 @@ export default function Home() {
 
       setPreview(nextPreview);
       setSandboxTab('preview');
+      previewRefreshedAtRef.current = Date.now();
       let revision = activatedPreviewRevisions.get(nextPreview.url);
       if (revision === undefined) {
         revision = previewRevisionRef.current + 1;
@@ -1448,17 +1511,17 @@ export default function Home() {
   }
 
   function handleOpenPreview() {
-    if (activePreviewUrl) {
-      window.open(activePreviewUrl, '_blank', 'noopener,noreferrer');
+    if (shareablePreviewUrl) {
+      window.open(shareablePreviewUrl, '_blank', 'noopener,noreferrer');
     }
   }
 
   async function handleCopyPreviewUrl() {
-    if (!activePreviewUrl || !navigator.clipboard) {
+    if (!shareablePreviewUrl || !navigator.clipboard) {
       return;
     }
     try {
-      await navigator.clipboard.writeText(activePreviewUrl);
+      await navigator.clipboard.writeText(shareablePreviewUrl);
       setPreviewCopied(true);
       window.setTimeout(() => setPreviewCopied(false), 1600);
     } catch {
@@ -1720,7 +1783,7 @@ export default function Home() {
                     title={previewCopied ? t.workspace.previewUrlCopied : t.workspace.copyPreviewUrl}
                   >
                     <span className="workspace-panel-status-dot" aria-hidden="true" />
-                    <span>{activePreviewUrl.replace(/^https?:\/\//, '')}</span>
+                    <span>{shareablePreviewUrl.replace(/^https?:\/\//, '')}</span>
                     {previewCopied ? <Check /> : <Copy />}
                   </button>
                   <div className="workspace-viewport-switch" role="group" aria-label="Viewport">
@@ -1765,8 +1828,11 @@ export default function Home() {
           </div>
 
           <div className="workspace-panel-content">
-            {sandboxTab === 'preview' ? (
-              preview?.url ? (
+            {/* The preview pane stays mounted and is only hidden behind the Code tab:
+                unmounting the iframe would reload the sandbox app (and lose its route,
+                scroll position and form state) on every tab switch. */}
+            <div className={`workspace-panel-pane ${sandboxTab === 'preview' ? '' : 'is-hidden'}`}>
+              {preview?.url ? (
                 <div className={`workspace-preview-shell is-${previewViewport}`}>
                   <div className="workspace-preview-stage">
                   <div className="workspace-preview-frame">
@@ -1818,16 +1884,20 @@ export default function Home() {
                     </>
                   )}
                 </div>
-              )
-            ) : (
-              <FilesPanel
-                tree={fileTree}
-                refreshing={filesRefreshing || workspaceRestoring}
-                conversationId={conversationId}
-                copy={t.files}
-                cache={fileCache}
-                focusPath={filesFocusPath}
-              />
+              )}
+            </div>
+
+            {sandboxTab === 'files' && (
+              <div className="workspace-panel-pane">
+                <FilesPanel
+                  tree={fileTree}
+                  refreshing={filesRefreshing || workspaceRestoring}
+                  conversationId={conversationId}
+                  copy={t.files}
+                  cache={fileCache}
+                  focusPath={filesFocusPath}
+                />
+              </div>
             )}
           </div>
 
