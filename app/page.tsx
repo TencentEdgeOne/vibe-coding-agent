@@ -9,14 +9,26 @@ import {
   Copy,
   Download,
   ExternalLink,
-  MonitorPlay,
+  Eye,
+  Laptop,
   RefreshCw,
+  Smartphone,
   Sparkles,
   X,
 } from 'lucide-react';
 import { sanitizeAssistantText } from '../agents/utils/_text';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import {
@@ -24,9 +36,8 @@ import {
   type AssistantActivity,
 } from './components/agent-conversation';
 import { FilesPanel } from './components/files-panel';
-import { ArrowIcon, FigmaIcon, GitHubIcon } from './components/icons';
+import { GitHubIcon } from './components/icons';
 import { LanguageSwitch } from './components/language-switch';
-import { ProcessPanel } from './components/process-panel';
 import { useFileContentCache } from './hooks/use-file-content-cache';
 import { useTypewriterPlaceholder } from './hooks/use-typewriter-placeholder';
 import {
@@ -36,7 +47,6 @@ import {
   cacheConversationId,
   createConversationId,
   createMessageId,
-  createWorkspaceTitle,
   extractProjectName,
   fetchResumeHistory,
   fetchResumePreview,
@@ -104,7 +114,7 @@ export default function Home() {
   const [openSteps, setOpenSteps] = useState<Record<string, boolean>>({});
   const [showProcessThinking, setShowProcessThinking] = useState(true);
   const [sandboxTab, setSandboxTab] = useState<'preview' | 'files'>('preview');
-  const [showWorkspacePanel, setShowWorkspacePanel] = useState(false);
+  const [previewViewport, setPreviewViewport] = useState<'desktop' | 'mobile'>('desktop');
   const [fileTree, setFileTree] = useState<FileTree | null>(null);
   const [filesRefreshing, setFilesRefreshing] = useState(false);
   // Path the Files panel should open (first generated file). Cleared on new project.
@@ -150,7 +160,6 @@ export default function Home() {
   const t = TRANSLATIONS[language];
   const canSend = input.trim().length > 0 && !loading;
   const hasWorkspace = messages.length > 0 || Boolean(preview) || Boolean(build) || workspaceRestoring;
-  const fileCount = fileTree?.items.filter((item) => item.type === 'file').length ?? 0;
   // Cycling typewriter placeholder for the landing prompt (see plan/design-mockup.html).
   // Reuses the localized example prompts; pauses while the field has text.
   const placeholderPhrases = useMemo(() => t.home.examples.map((example) => `${example}…`), [t]);
@@ -162,10 +171,6 @@ export default function Home() {
   const latestAssistantScrollSignature = latestAssistantMessage
     ? getAssistantScrollSignature(latestAssistantMessage)
     : '';
-  const workspaceTitle = useMemo(
-    () => createWorkspaceTitle(messages, language === 'zh' ? '未命名项目' : 'Untitled project'),
-    [language, messages],
-  );
   const clearFileCache = fileCache.clear;
   useEffect(() => {
     clearFileCache();
@@ -330,7 +335,6 @@ export default function Home() {
 
       setMessages(nextMessages);
       if (data.hasProject || data.needsWorkspace || activeTask) {
-        setShowWorkspacePanel(Boolean(data.hasProject || data.needsWorkspace));
         if (data.hasProject || data.needsWorkspace) {
           // If a preview was published before, stay on the preview pane and show
           // the restoring spinner while workspace resume restarts the server.
@@ -347,16 +351,12 @@ export default function Home() {
       const hasFiles = Boolean(data.files?.items.some((item) => item.type === 'file'));
       if (data.files) {
         setFileTree(data.files);
-        if (hasFiles) {
-          setShowWorkspacePanel(true);
-        }
       }
       if (data.download?.url) {
         setDownload(data.download);
       }
       if (data.preview?.url) {
         setPreview(data.preview);
-        setShowWorkspacePanel(true);
         setSandboxTab('preview');
         const revision = previewRevisionRef.current + 1;
         previewRevisionRef.current = revision;
@@ -680,7 +680,6 @@ export default function Home() {
       openedFirstFile = true;
       pendingFirstFilePath = null;
       setFilesFocusPath(path);
-      setShowWorkspacePanel(true);
       setSandboxTab('files');
     };
 
@@ -1011,7 +1010,6 @@ export default function Home() {
       if (event.type === 'preview_ready' && event.data) {
         sawProjectActivity = true;
         if (event.data.preview) {
-          setShowWorkspacePanel(true);
           activatePreview(event.data.preview);
         }
         if (event.data.download) {
@@ -1158,7 +1156,6 @@ export default function Home() {
       setFilesFocusPath(null);
       setWorkspaceRestoring(false);
       setSandboxTab('preview');
-      setShowWorkspacePanel(false);
       activePreviewUrlRef.current = '';
       activePreviewRevisionRef.current = 0;
       previewRevisionRef.current = 0;
@@ -1487,7 +1484,7 @@ export default function Home() {
     setFilesFocusPath(null);
     setWorkspaceRestoring(false);
     setSandboxTab('preview');
-    setShowWorkspacePanel(false);
+    setPreviewViewport('desktop');
     activePreviewUrlRef.current = '';
     activePreviewRevisionRef.current = 0;
     previewRevisionRef.current = 0;
@@ -1520,29 +1517,96 @@ export default function Home() {
         hasWorkspace ? 'h-screen overflow-hidden' : 'min-h-screen'
       }`}
     >
+      <header className="site-topbar">
+        <div className="site-brand" aria-label="MAKERS VIBE CODING">MAKERS VIBE CODING</div>
+        <div className="site-topbar-actions">
+          <LanguageSwitch
+            language={language}
+            onChange={setLanguage}
+            ariaLabel={t.languageToggleAria}
+            className="site-language"
+          />
+          {hasWorkspace && githubEnabled && download?.url && (
+            <button
+              type="button"
+              onClick={handleExportGithub}
+              disabled={githubBusy}
+              className="site-icon-button"
+              aria-label={githubBusy ? t.workspace.githubExporting : t.workspace.exportGithub}
+              title={githubBusy ? t.workspace.githubExporting : t.workspace.exportGithub}
+            >
+              {githubBusy ? <span className="size-4 animate-spin rounded-full border-2 border-transparent border-t-current" /> : <GitHubIcon />}
+            </button>
+          )}
+          {hasWorkspace && download?.url && (
+            <button
+              type="button"
+              onClick={handleDownload}
+              disabled={downloadBusy}
+              className="site-icon-button"
+              aria-label={downloadBusy ? t.workspace.downloading : t.workspace.downloadSource}
+              title={downloadBusy ? t.workspace.downloading : t.workspace.downloadSource}
+            >
+              {downloadBusy ? <span className="size-4 animate-spin rounded-full border-2 border-transparent border-t-current" /> : <Download />}
+            </button>
+          )}
+          {hasWorkspace && (
+            <button type="button" onClick={handleNewProject} disabled={loading} className="site-secondary-button">
+              {t.workspace.newProject}
+            </button>
+          )}
+          {hasWorkspace && CLAIM_DEPLOY_ENABLED && (
+            <button type="button" onClick={handleClaimDeploy} className="site-secondary-button">
+              {t.deployLabel}
+            </button>
+          )}
+          <Dialog>
+            <DialogTrigger asChild>
+              <Button size="sm">Contact</Button>
+            </DialogTrigger>
+            <DialogContent className="contact-dialog">
+              <DialogHeader>
+                <DialogTitle>{language === 'zh' ? '集成平台化部署能力' : 'Integrate deployment capabilities'}</DialogTitle>
+                <DialogDescription>
+                  {language === 'zh'
+                    ? '将代码生成、实时预览与全球加速部署能力集成到你的产品中。我们提供开放 API 与专属技术支持，并可针对业务场景定制接入方案。'
+                    : 'Bring code generation, live preview, and globally accelerated deployment into your product with open APIs and dedicated technical support.'}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="contact-points">
+                <span>{language === 'zh' ? '开放 API 与完整接入文档' : 'Open APIs and integration documentation'}</span>
+                <span>{language === 'zh' ? '实时预览与全球边缘部署' : 'Live preview and global edge deployment'}</span>
+                <span>{language === 'zh' ? '面向业务场景的专属支持' : 'Dedicated support for your use case'}</span>
+              </div>
+              <DialogFooter>
+                <DialogClose asChild>
+                  <Button variant="outline">{language === 'zh' ? '稍后' : 'Later'}</Button>
+                </DialogClose>
+                <Button asChild>
+                  <a href="https://edgeone.ai/" target="_blank" rel="noreferrer">
+                    {language === 'zh' ? '了解 EdgeOne' : 'Explore EdgeOne'}
+                  </a>
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </div>
+      </header>
       {!hasWorkspace && (
-        <LanguageSwitch
-          language={language}
-          onChange={setLanguage}
-          ariaLabel={t.languageToggleAria}
-          className="fixed right-4 top-3 z-50"
-        />
-      )}
-      {!hasWorkspace && (
-        <section className="flex flex-1 flex-col items-center justify-center px-6 py-16 text-center">
+        <section className="home-stage flex flex-1 flex-col items-center justify-center px-6 py-12 text-center">
           <div className="w-full max-w-[820px]">
-            <h1 className="text-[clamp(2.1rem,4.6vw,3.1rem)] font-extrabold leading-[1.16] tracking-[-0.025em]">
+            <h1 className="text-[clamp(2rem,4vw,2.75rem)] font-bold leading-[1.18]">
               {t.home.titleBefore}
               {language === 'en' ? ' ' : ''}
-              <span className="text-brand-gradient">{t.home.titleAccent}</span>
+              <span className="text-primary">{t.home.titleAccent}</span>
               {language === 'en' ? ' ' : ''}
               {t.home.titleAfter}
             </h1>
-            <p className="mt-4 text-[clamp(0.95rem,1.4vw,1.15rem)] text-muted-foreground">
+            <p className="mt-3 text-[15px] text-muted-foreground">
               {t.home.subtitle}
             </p>
 
-            <Card className="mt-10 gap-0 rounded-2xl border-border p-5 text-left shadow-[0_18px_50px_-30px_rgba(20,30,60,0.45)] transition-shadow focus-within:border-primary/50 focus-within:shadow-[0_20px_60px_-28px_rgba(47,107,255,0.35)]">
+            <Card className="mt-8 gap-0 rounded-[10px] border-border p-4 text-left shadow-none transition-[border-color,box-shadow] focus-within:border-primary focus-within:shadow-[0_0_0_3px_rgba(47,107,255,0.12)]">
               <form onSubmit={handleSubmit}>
                 <Textarea
                   value={input}
@@ -1556,14 +1620,14 @@ export default function Home() {
                   }}
                   placeholder={typedPlaceholder || t.home.placeholder}
                   rows={3}
-                  className="min-h-[124px] resize-none border-0 bg-transparent px-2 py-1 text-lg leading-relaxed shadow-none focus-visible:ring-0 md:text-lg"
+                  className="min-h-[104px] resize-none border-0 bg-transparent px-1 py-1 text-[14px] leading-relaxed shadow-none focus-visible:ring-0"
                 />
                 <div className="mt-3 flex items-center gap-2.5">
                   <button
                     type="submit"
                     disabled={!canSend}
                     aria-label={t.home.fastBuild}
-                    className="btn-brand ml-auto inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-sm font-semibold"
+                    className="ml-auto inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-4 text-xs font-semibold text-primary-foreground transition-colors hover:bg-[var(--brand-deep)] disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {loading ? (
                       <span className="size-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
@@ -1582,7 +1646,7 @@ export default function Home() {
                   key={example}
                   type="button"
                   onClick={() => setInput(example)}
-                  className="rounded-full border border-border bg-card px-3.5 py-1.5 text-[13px] text-secondary-foreground transition-colors hover:border-primary/45 hover:bg-accent hover:text-accent-foreground"
+                  className="rounded-lg border border-border bg-card px-3.5 py-1.5 text-[12px] text-secondary-foreground transition-colors hover:border-primary/45 hover:bg-accent hover:text-accent-foreground"
                 >
                   {example}
                 </button>
@@ -1594,20 +1658,15 @@ export default function Home() {
 
       <section
         className={`min-h-0 min-w-0 w-full flex-1 ${
-          hasWorkspace
-            ? showWorkspacePanel
-              ? 'workspace-shell'
-              : 'block'
-            : 'hidden'
+          hasWorkspace ? 'workspace-shell' : 'hidden'
         }`}
       >
         <AgentConversation
-          title={workspaceTitle}
           messages={messages}
           input={input}
           loading={loading}
           canSend={canSend}
-          compact={showWorkspacePanel}
+          compact
           copy={{
             agentName: t.workspace.agentName,
             you: t.workspace.you,
@@ -1617,19 +1676,18 @@ export default function Home() {
             stopped: t.workspace.activityStopped,
             input: t.workspace.activityInput,
             output: t.workspace.activityOutput,
+            workedFor: t.workspace.workedFor,
             placeholder: t.workspace.changePlaceholder,
             send: t.workspace.send,
             stop: t.workspace.stop,
-            newProject: t.workspace.newProject,
           }}
           onInputChange={setInput}
           onSubmit={() => void sendMessage(input)}
           onStop={() => void handleStop()}
-          onNewProject={handleNewProject}
         />
 
         {/* ===== RIGHT: preview / files ===== */}
-        {showWorkspacePanel && <div className="workspace-result-panel">
+        {hasWorkspace && <div className="workspace-result-panel">
           <div className="workspace-topbar">
             <Tabs
               value={sandboxTab}
@@ -1638,27 +1696,48 @@ export default function Home() {
             >
               <TabsList className="workspace-tabs">
                 <TabsTrigger value="preview" className="workspace-tab">
-                  <MonitorPlay className="size-3.5" />
-                  {t.workspace.livePreview}
+                  <Eye />
+                  {t.workspace.preview}
                 </TabsTrigger>
                 <TabsTrigger value="files" className="workspace-tab">
-                  <Code2 className="size-3.5" />
+                  <Code2 />
                   {t.workspace.code}
-                  {fileCount ? <span className="workspace-tab-count">{fileCount}</span> : null}
                   {filesRefreshing && <span className="workspace-tab-refreshing">{t.files.refreshing}</span>}
                 </TabsTrigger>
               </TabsList>
             </Tabs>
 
             <div className="workspace-topbar-actions">
-              {sandboxTab === 'preview' && preview?.url && (
-                <span className={`workspace-panel-status ${activePreviewLoaded ? 'is-ready' : ''}`}>
-                  <span className="workspace-panel-status-dot" aria-hidden="true" />
-                  {activePreviewLoaded ? t.workspace.previewReady : t.workspace.previewLoading}
-                </span>
-              )}
               {sandboxTab === 'preview' && activePreviewUrl && (
                 <>
+                  <button
+                    type="button"
+                    onClick={handleCopyPreviewUrl}
+                    className={`workspace-url-chip ${activePreviewLoaded ? 'is-ready' : ''}`}
+                    title={previewCopied ? t.workspace.previewUrlCopied : t.workspace.copyPreviewUrl}
+                  >
+                    <span className="workspace-panel-status-dot" aria-hidden="true" />
+                    <span>{activePreviewUrl.replace(/^https?:\/\//, '')}</span>
+                    {previewCopied ? <Check /> : <Copy />}
+                  </button>
+                  <div className="workspace-viewport-switch" role="group" aria-label="Viewport">
+                    <button
+                      type="button"
+                      aria-pressed={previewViewport === 'desktop'}
+                      onClick={() => setPreviewViewport('desktop')}
+                      title="Desktop"
+                    >
+                      <Laptop />
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={previewViewport === 'mobile'}
+                      onClick={() => setPreviewViewport('mobile')}
+                      title="Mobile"
+                    >
+                      <Smartphone />
+                    </button>
+                  </div>
                   <button
                     type="button"
                     onClick={handleRefreshPreview}
@@ -1667,15 +1746,6 @@ export default function Home() {
                     data-tooltip={t.workspace.refreshPreview}
                   >
                     <RefreshCw className="size-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleCopyPreviewUrl}
-                    className="workspace-icon-button"
-                    aria-label={previewCopied ? t.workspace.previewUrlCopied : t.workspace.copyPreviewUrl}
-                    data-tooltip={previewCopied ? t.workspace.previewUrlCopied : t.workspace.copyPreviewUrl}
-                  >
-                    {previewCopied ? <Check className="size-3.5 text-[var(--ok)]" /> : <Copy className="size-3.5" />}
                   </button>
                   <button
                     type="button"
@@ -1688,60 +1758,14 @@ export default function Home() {
                   </button>
                 </>
               )}
-              {download?.url && (
-                <button
-                  type="button"
-                  onClick={handleDownload}
-                  disabled={downloadBusy}
-                  aria-label={downloadBusy ? t.workspace.downloading : t.workspace.downloadSource}
-                  data-tooltip={downloadBusy ? t.workspace.downloading : t.workspace.downloadSource}
-                  className="workspace-icon-button"
-                >
-                  {downloadBusy ? <span className="size-3.5 animate-spin rounded-full border-2 border-transparent border-t-current" /> : <Download className="size-3.5" />}
-                </button>
-              )}
-              {githubEnabled && download?.url && (
-                <button
-                  type="button"
-                  onClick={handleExportGithub}
-                  disabled={githubBusy}
-                  aria-label={githubBusy ? t.workspace.githubExporting : t.workspace.exportGithub}
-                  data-tooltip={githubBusy ? t.workspace.githubExporting : t.workspace.exportGithub}
-                  className="workspace-icon-button"
-                >
-                  {githubBusy ? <span className="size-3.5 animate-spin rounded-full border-2 border-transparent border-t-current" /> : <GitHubIcon />}
-                </button>
-              )}
-              {CLAIM_DEPLOY_ENABLED && (
-                <button
-                  type="button"
-                  onClick={handleClaimDeploy}
-                  aria-label={t.workspace.claimDeploy}
-                  data-tooltip={t.workspace.claimDeploy}
-                  className="workspace-icon-button"
-                >
-                  <img src="/edgeone.png" alt="EdgeOne" className="size-[18px] rounded-full" />
-                </button>
-              )}
-              <LanguageSwitch
-                language={language}
-                onChange={setLanguage}
-                ariaLabel={t.languageToggleAria}
-                className="workspace-language"
-              />
             </div>
           </div>
 
           <div className="workspace-panel-content">
             {sandboxTab === 'preview' ? (
               preview?.url ? (
-                <div className="workspace-preview-shell">
-                  <div className="workspace-preview-toolbar">
-                    <div className="workspace-preview-location" title={preview.url}>
-                      <span className="workspace-preview-location-dot" aria-hidden="true" />
-                      <span>{preview.url.replace(/^https?:\/\//, '')}</span>
-                    </div>
-                  </div>
+                <div className={`workspace-preview-shell is-${previewViewport}`}>
+                  <div className="workspace-preview-stage">
                   <div className="workspace-preview-frame">
                     {!activePreviewLoaded && (
                       <div className="workspace-preview-loading">
@@ -1766,6 +1790,7 @@ export default function Home() {
                         className="invisible pointer-events-none absolute inset-0 h-full w-full border-0"
                       />
                     )}
+                  </div>
                   </div>
                 </div>
               ) : (

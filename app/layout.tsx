@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Web Dev Agent',
+  title: 'MAKERS VIBE CODING',
   description: '把一个粗略想法变成精致的应用、网站或原型。',
 };
 

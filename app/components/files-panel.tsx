@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronRight, FileCode2, Folder, FolderOpen } from 'lucide-react';
 import { Highlight, type PrismTheme } from 'prism-react-renderer';
 import type { FileCopy } from '../i18n';
 import type { FileTree, FileTreeItem } from '../types/workspace';
@@ -365,13 +366,13 @@ export function FilesPanel({
   }
 
   return (
-    <div className="grid min-h-0 flex-1 grid-cols-[190px_minmax(0,1fr)] overflow-hidden bg-card text-secondary-foreground">
-      <aside className="flex min-h-0 flex-col border-r border-[#eef0f3] bg-[#fafbfd]">
-        <div className="min-h-0 flex-1 overflow-auto p-2">
-          <div className="px-2 pt-1.5 pb-1 text-[10px] font-medium uppercase tracking-[0.06em] text-muted-foreground">
+    <div className="grid min-h-0 flex-1 grid-cols-[220px_minmax(0,1fr)] overflow-hidden bg-white text-[#24292f] max-sm:grid-cols-[164px_minmax(0,1fr)]">
+      <aside className="flex min-h-0 flex-col border-r border-[#e6e8ec] bg-[#f8f9fb]">
+        <div className="min-h-0 flex-1 overflow-auto px-2 py-2.5">
+          <div className="flex h-8 items-center px-2 text-[11px] font-semibold text-[#4d5561]">
             {copy.projectFiles}
           </div>
-          <div className="space-y-0.5 font-mono text-[12.5px] leading-5">
+          <div className="flex flex-col gap-px text-[12px] leading-5">
             {visibleItems.map((item) => {
               const isDirectory = item.type === 'directory';
               const isCollapsed = collapsedDirs.has(item.path);
@@ -393,19 +394,25 @@ export function FilesPanel({
                       void prefetchFiles([item.path]);
                     }
                   }}
-                  className={`flex w-full min-w-max items-center gap-2 rounded-[7px] px-2 py-1.5 text-left transition-colors ${
+                  className={`group relative flex h-7 w-full min-w-max items-center gap-1.5 rounded-[5px] pr-2 text-left transition-colors ${
                     isSelected
-                      ? 'bg-accent font-semibold text-accent-foreground'
-                      : 'text-secondary-foreground hover:bg-[#eef2f8] hover:text-foreground'
+                      ? 'bg-[#e7efff] font-medium text-[#174ea6]'
+                      : 'text-[#4d5561] hover:bg-[#eef0f3] hover:text-[#17181c]'
                   }`}
-                  style={{ paddingLeft: `${8 + item.depth * 18}px` }}
+                  style={{ paddingLeft: `${7 + item.depth * 16}px` }}
                 >
-                  {isDirectory && (
-                    <span className="text-muted-foreground" aria-hidden="true">
-                      {isCollapsed ? '▸' : '▾'}
-                    </span>
+                  {isDirectory ? (
+                    <>
+                      <ChevronRight className={`size-3 shrink-0 text-[#8a929e] transition-transform ${isCollapsed ? '' : 'rotate-90'}`} aria-hidden="true" />
+                      {isCollapsed ? <Folder className="size-3.5 shrink-0 text-[#788391]" /> : <FolderOpen className="size-3.5 shrink-0 text-[#5f6f82]" />}
+                    </>
+                  ) : (
+                    <>
+                      <span className="size-3 shrink-0" aria-hidden="true" />
+                      <FileCode2 className={`size-3.5 shrink-0 ${isSelected ? 'text-[#2f6bff]' : 'text-[#9aa1ad]'}`} aria-hidden="true" />
+                    </>
                   )}
-                  <span>{item.name}</span>
+                  <span className="truncate">{item.name}</span>
                 </button>
               );
             })}
@@ -420,9 +427,7 @@ export function FilesPanel({
   );
 }
 
-// Light syntax theme mirroring the GitHub-light tokens in plan/design-mockup.html
-// (tok-kw #cf222e, tok-fn #8250df, tok-str #0a7d33, tok-cm #8b949e, tok-tag #116329,
-// tok-num/attr #0550ae). Background stays transparent so the code surface shows through.
+// GitHub Light-inspired syntax theme for the code workspace.
 export const CODE_THEME: PrismTheme = {
   plain: { color: '#24292f', backgroundColor: 'transparent' },
   styles: [
@@ -502,7 +507,7 @@ export function FileContentView({ preview, copy }: { preview: FilePreviewState; 
   if (preview.status === 'loading') {
     return (
       <div className="flex h-full min-h-0 flex-col">
-        <div className="flex items-center gap-2 border-b border-border bg-[#fafbfd] px-4 py-3 text-xs text-primary">
+        <div className="flex h-10 items-center gap-2 border-b border-[#e6e8ec] bg-[#f8f9fb] px-4 text-xs text-primary">
           <Spinner />
           <span className="truncate font-mono text-[11px] text-muted-foreground">
             {copy.loading(preview.path)}
@@ -517,7 +522,7 @@ export function FileContentView({ preview, copy }: { preview: FilePreviewState; 
   if (preview.status === 'error') {
     return (
       <div className="flex h-full min-h-0 flex-col">
-        <div className="border-b border-border bg-[#fafbfd] px-4 py-3">
+        <div className="flex h-10 items-center border-b border-[#e6e8ec] bg-[#f8f9fb] px-4">
           <p className="truncate font-mono text-[11px] text-muted-foreground">{preview.path}</p>
         </div>
         <div className="flex flex-1 items-center justify-center px-6 text-center text-destructive">
@@ -530,8 +535,8 @@ export function FileContentView({ preview, copy }: { preview: FilePreviewState; 
   const lines = preview.content.split('\n');
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-[#fafbfd] px-4 py-3">
-        <p className="min-w-0 truncate font-mono text-[11px] text-secondary-foreground">
+      <div className="flex min-h-10 flex-wrap items-center justify-between gap-2 border-b border-[#e6e8ec] bg-[#f8f9fb] px-4 py-2">
+        <p className="min-w-0 truncate font-mono text-[11px] font-medium text-[#343941]">
           {preview.path}
         </p>
         <div className="flex shrink-0 items-center gap-2 font-mono text-[11px] text-muted-foreground">
@@ -546,14 +551,14 @@ export function FileContentView({ preview, copy }: { preview: FilePreviewState; 
       </div>
       <Highlight code={preview.content} language={prismLanguage(preview.path)} theme={CODE_THEME}>
         {({ tokens, getTokenProps }) => (
-          <pre className="min-h-0 flex-1 overflow-auto bg-white py-3 font-mono text-[12px] leading-5 text-foreground">
+          <pre className="min-h-0 flex-1 overflow-auto bg-white py-3 font-mono text-[12px] leading-5 text-[#24292f]">
             <code>
               {tokens.map((line, lineIndex) => (
                 <span
                   key={lineIndex}
                   className="grid min-w-max grid-cols-[3.5rem_minmax(0,1fr)] gap-3 px-4"
                 >
-                  <span className="select-none text-right text-muted-foreground/60">
+                  <span className="select-none border-r border-[#eef0f3] pr-3 text-right text-[#a1a7b0]">
                     {lineIndex + 1}
                   </span>
                   <span className="whitespace-pre">
