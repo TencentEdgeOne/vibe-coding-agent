@@ -43,6 +43,7 @@ import { useFileContentCache } from './hooks/use-file-content-cache';
 import { useTypewriterPlaceholder } from './hooks/use-typewriter-placeholder';
 import {
   CLAIM_DEPLOY_ENABLED,
+  TENCENT_CLOUD_CONTACT_URL,
   TENCENT_CLOUD_DEPLOY_URL,
   base64ToBlob,
   cacheConversationId,
@@ -53,6 +54,7 @@ import {
   fetchResumePreview,
   fetchResumeWorkspace,
   getAssistantScrollSignature,
+  getContactUrl,
   getDeployUrl,
   getOrCreateCachedConversationId,
   getStoredConversationId,
@@ -107,6 +109,7 @@ function isSamePreviewTarget(a: string, b: string) {
 export default function Home() {
   const [language, setLanguage] = useState<Locale>('zh');
   const [deployUrl, setDeployUrl] = useState(TENCENT_CLOUD_DEPLOY_URL);
+  const [contactUrl, setContactUrl] = useState(TENCENT_CLOUD_CONTACT_URL);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [conversationId, setConversationId] = useState<string | null>(null);
@@ -233,6 +236,7 @@ export default function Home() {
   useEffect(() => {
     const { domain } = extractProjectName();
     setDeployUrl(getDeployUrl(domain));
+    setContactUrl(getContactUrl(domain));
   }, []);
 
   useEffect(() => {
@@ -1664,7 +1668,7 @@ export default function Home() {
                   <Button variant="outline">{language === 'zh' ? '取消' : 'Cancel'}</Button>
                 </DialogClose>
                 <Button asChild>
-                  <a href="https://edgeone.ai/" target="_blank" rel="noreferrer">
+                  <a href={contactUrl} target="_blank" rel="noreferrer">
                     {language === 'zh' ? '联系我们' : 'Contact us'}
                   </a>
                 </Button>

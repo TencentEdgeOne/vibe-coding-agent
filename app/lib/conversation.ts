@@ -159,11 +159,17 @@ export function extractProjectName() {
 
 export const EDGEONE_AI_DEPLOY_URL = 'https://edgeone.ai/makers/new?template=vibe-coding-agent&from=within&fromAgent=1&agentLang=typescript';
 export const TENCENT_CLOUD_DEPLOY_URL = 'https://console.cloud.tencent.com/edgeone/makers/new?template=vibe-coding-agent&from=within&fromAgent=1&agentLang=typescript';
+export const EDGEONE_AI_CONTACT_URL = 'https://pages.edgeone.ai/contact?source=pages-home';
+export const TENCENT_CLOUD_CONTACT_URL = 'https://cloud.tencent.com/online-service?from=connect-us';
 // 认领部署（EdgeOne）功能暂不上线，先隐藏入口。上线时改回 true 即可。
 export const CLAIM_DEPLOY_ENABLED = false;
 
 export function getDeployUrl(domain: string) {
   return domain === 'edgeone.dev' ? EDGEONE_AI_DEPLOY_URL : TENCENT_CLOUD_DEPLOY_URL;
+}
+
+export function getContactUrl(domain: string) {
+  return domain === 'edgeone.dev' ? EDGEONE_AI_CONTACT_URL : TENCENT_CLOUD_CONTACT_URL;
 }
 
 // Decode a base64 string into a Blob. The source archive arrives base64-encoded
