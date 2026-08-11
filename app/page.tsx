@@ -11,6 +11,7 @@ import {
   ExternalLink,
   Eye,
   Laptop,
+  MessageCircle,
   RefreshCw,
   Smartphone,
   Sparkles,
@@ -1562,29 +1563,31 @@ export default function Home() {
           )}
           <Dialog>
             <DialogTrigger asChild>
-              <Button size="sm">Contact</Button>
+              <Button size="sm">{language === 'zh' ? '联系我们' : 'Contact'}</Button>
             </DialogTrigger>
-            <DialogContent className="contact-dialog">
+            <DialogContent
+              className="contact-dialog"
+              overlayClassName="contact-dialog-overlay"
+              showCloseButton={false}
+            >
               <DialogHeader>
+                <div className="contact-dialog-icon" aria-hidden="true">
+                  <MessageCircle />
+                </div>
                 <DialogTitle>{language === 'zh' ? '集成平台化部署能力' : 'Integrate deployment capabilities'}</DialogTitle>
                 <DialogDescription>
                   {language === 'zh'
-                    ? '将代码生成、实时预览与全球加速部署能力集成到你的产品中。我们提供开放 API 与专属技术支持，并可针对业务场景定制接入方案。'
-                    : 'Bring code generation, live preview, and globally accelerated deployment into your product with open APIs and dedicated technical support.'}
+                    ? '希望把代码生成、实时预览与全球加速部署能力集成到你自己的产品中？我们提供开放 API 与专属技术支持，可根据你的业务场景定制接入方案。欢迎与我们联系，一起聊聊具体需求。'
+                    : "Want to bring code generation, live preview, and globally accelerated deployment into your own product? We provide open APIs and dedicated technical support tailored to your business needs. Get in touch and let's talk."}
                 </DialogDescription>
               </DialogHeader>
-              <div className="contact-points">
-                <span>{language === 'zh' ? '开放 API 与完整接入文档' : 'Open APIs and integration documentation'}</span>
-                <span>{language === 'zh' ? '实时预览与全球边缘部署' : 'Live preview and global edge deployment'}</span>
-                <span>{language === 'zh' ? '面向业务场景的专属支持' : 'Dedicated support for your use case'}</span>
-              </div>
-              <DialogFooter>
+              <DialogFooter className="contact-dialog-footer">
                 <DialogClose asChild>
-                  <Button variant="outline">{language === 'zh' ? '稍后' : 'Later'}</Button>
+                  <Button variant="outline">{language === 'zh' ? '取消' : 'Cancel'}</Button>
                 </DialogClose>
                 <Button asChild>
                   <a href="https://edgeone.ai/" target="_blank" rel="noreferrer">
-                    {language === 'zh' ? '了解 EdgeOne' : 'Explore EdgeOne'}
+                    {language === 'zh' ? '联系我们' : 'Contact us'}
                   </a>
                 </Button>
               </DialogFooter>
