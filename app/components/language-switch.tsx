@@ -1,8 +1,13 @@
 'use client';
 
+import { cn } from '@/lib/utils';
 import type { Locale } from '../i18n';
 
-// 语言切换：两个文字按钮 中 / En，选中的高亮为蓝色并略放大，点击切换。
+const OPTIONS: { value: Locale; label: string }[] = [
+  { value: 'zh', label: '中文' },
+  { value: 'en', label: 'EN' },
+];
+
 export function LanguageSwitch({
   language,
   onChange,
@@ -14,35 +19,26 @@ export function LanguageSwitch({
   ariaLabel: string;
   className?: string;
 }) {
-  const itemClass = (active: boolean) =>
-    `rounded-md px-1.5 py-1 font-semibold leading-none transition-all ${
-      active
-        ? 'scale-110 text-primary'
-        : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-    }`;
   return (
     <div
       role="group"
       aria-label={ariaLabel}
-      className={`flex items-center gap-1 text-sm ${className}`}
+      className={cn('site-lang-toggle', className)}
     >
-      <button
-        type="button"
-        onClick={() => onChange('zh')}
-        aria-pressed={language === 'zh'}
-        className={itemClass(language === 'zh')}
-      >
-        中
-      </button>
-      <span className="text-muted-foreground/40">/</span>
-      <button
-        type="button"
-        onClick={() => onChange('en')}
-        aria-pressed={language === 'en'}
-        className={itemClass(language === 'en')}
-      >
-        En
-      </button>
+      {OPTIONS.map((option) => {
+        const active = language === option.value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            aria-pressed={active}
+            onClick={() => onChange(option.value)}
+            className={cn('site-lang-option', active && 'is-active')}
+          >
+            {option.label}
+          </button>
+        );
+      })}
     </div>
   );
 }

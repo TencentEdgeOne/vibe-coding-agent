@@ -138,6 +138,8 @@ export default function Home() {
   const [filesRefreshing, setFilesRefreshing] = useState(false);
   // Path the Files panel should open (first generated file). Cleared on new project.
   const [filesFocusPath, setFilesFocusPath] = useState<string | null>(null);
+  // Right preview/code panel stays closed until the first real file arrives (or resume).
+  const [resultPanelOpen, setResultPanelOpen] = useState(false);
   // Slow resume stage: snapshot restore + npm install + preview restart.
   const [workspaceRestoring, setWorkspaceRestoring] = useState(false);
   const fileCache = useFileContentCache();
@@ -368,6 +370,7 @@ export default function Home() {
           setSandboxTab(data.hasPreview ? 'preview' : 'files');
           setWorkspaceRestoring(true);
           setFilesRefreshing(true);
+          setResultPanelOpen(true);
         }
       }
       return true;
@@ -377,6 +380,9 @@ export default function Home() {
       const hasFiles = Boolean(data.files?.items.some((item) => item.type === 'file'));
       if (data.files) {
         setFileTree(data.files);
+      }
+      if (hasFiles || data.preview?.url) {
+        setResultPanelOpen(true);
       }
       if (data.download?.url) {
         setDownload(data.download);
@@ -744,6 +750,7 @@ export default function Home() {
       pendingFirstFilePath = null;
       setFilesFocusPath(path);
       setSandboxTab('files');
+      setResultPanelOpen(true);
     };
 
     const patchAssistant = (patch: Partial<ChatMessage>) => {
@@ -933,6 +940,7 @@ export default function Home() {
 
       setPreview(nextPreview);
       setSandboxTab('preview');
+      setResultPanelOpen(true);
       previewRefreshedAtRef.current = Date.now();
       let revision = activatedPreviewRevisions.get(nextPreview.url);
       if (revision === undefined) {
@@ -979,6 +987,9 @@ export default function Home() {
       }
       if (data.files) {
         setFileTree(data.files);
+        if (data.files.items.some((item) => item.type === 'file')) {
+          setResultPanelOpen(true);
+        }
       }
       setFilesRefreshing(false);
 
@@ -1218,6 +1229,7 @@ export default function Home() {
       setFileTree(null);
       setFilesRefreshing(false);
       setFilesFocusPath(null);
+      setResultPanelOpen(false);
       setWorkspaceRestoring(false);
       setSandboxTab('preview');
       activePreviewUrlRef.current = '';
@@ -1546,6 +1558,7 @@ export default function Home() {
     setFileTree(null);
     setFilesRefreshing(false);
     setFilesFocusPath(null);
+    setResultPanelOpen(false);
     setWorkspaceRestoring(false);
     setSandboxTab('preview');
     setPreviewViewport('desktop');
@@ -1626,7 +1639,9 @@ export default function Home() {
           )}
           <Dialog>
             <DialogTrigger asChild>
-              <Button size="sm">{language === 'zh' ? '联系我们' : 'Contact'}</Button>
+              <Button size="sm" className="h-7 px-3 text-xs">
+                {language === 'zh' ? '联系我们' : 'Contact'}
+              </Button>
             </DialogTrigger>
             <DialogContent
               className="contact-dialog"
@@ -1724,7 +1739,9 @@ export default function Home() {
 
       <section
         className={`min-h-0 min-w-0 w-full flex-1 ${
-          hasWorkspace ? 'workspace-shell' : 'hidden'
+          hasWorkspace
+            ? `workspace-shell${resultPanelOpen ? '' : ' is-chat-only'}`
+            : 'hidden'
         }`}
       >
         <AgentConversation
@@ -1752,8 +1769,8 @@ export default function Home() {
           onStop={() => void handleStop()}
         />
 
-        {/* ===== RIGHT: preview / files ===== */}
-        {hasWorkspace && <div className="workspace-result-panel">
+        {/* ===== RIGHT: preview / files — mounts after the first written file ===== */}
+        {resultPanelOpen && <div className="workspace-result-panel">
           <div className="workspace-topbar">
             <Tabs
               value={sandboxTab}
@@ -1773,19 +1790,24 @@ export default function Home() {
               </TabsList>
             </Tabs>
 
+            <div className="workspace-topbar-center">
+              {sandboxTab === 'preview' && activePreviewUrl && (
+                <button
+                  type="button"
+                  onClick={handleCopyPreviewUrl}
+                  className={`workspace-url-chip ${activePreviewLoaded ? 'is-ready' : ''}`}
+                  title={previewCopied ? t.workspace.previewUrlCopied : t.workspace.copyPreviewUrl}
+                >
+                  <span className="workspace-panel-status-dot" aria-hidden="true" />
+                  <span>{shareablePreviewUrl.replace(/^https?:\/\//, '')}</span>
+                  {previewCopied ? <Check /> : <Copy />}
+                </button>
+              )}
+            </div>
+
             <div className="workspace-topbar-actions">
               {sandboxTab === 'preview' && activePreviewUrl && (
                 <>
-                  <button
-                    type="button"
-                    onClick={handleCopyPreviewUrl}
-                    className={`workspace-url-chip ${activePreviewLoaded ? 'is-ready' : ''}`}
-                    title={previewCopied ? t.workspace.previewUrlCopied : t.workspace.copyPreviewUrl}
-                  >
-                    <span className="workspace-panel-status-dot" aria-hidden="true" />
-                    <span>{shareablePreviewUrl.replace(/^https?:\/\//, '')}</span>
-                    {previewCopied ? <Check /> : <Copy />}
-                  </button>
                   <div className="workspace-viewport-switch" role="group" aria-label="Viewport">
                     <button
                       type="button"
