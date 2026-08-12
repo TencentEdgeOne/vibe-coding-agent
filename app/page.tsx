@@ -1906,7 +1906,7 @@ export default function Home() {
                   ) : (
                     <>
                       <p>{t.workspace.previewEmpty}</p>
-                      <p className="mt-3 max-w-xl text-xs leading-5 text-muted-foreground">
+                      <p className="workspace-empty-disclaimer">
                         {t.workspace.constructionDisclaimer}
                       </p>
                     </>

@@ -1376,14 +1376,17 @@ input::placeholder {
 }
 
 .assistant-trace-trigger {
-  display: inline-flex;
-  max-width: 100%;
+  display: flex;
+  width: 100%;
+  min-width: 0;
   align-items: center;
   gap: 6px;
-  border-radius: 5px;
+  border-radius: 6px;
+  padding: 3px 5px 3px 2px;
   color: #6b7280;
   font-size: 12px;
-  line-height: 24px;
+  line-height: 20px;
+  text-align: left;
   transition: color 160ms ease, background 160ms ease;
 }
 
@@ -1745,10 +1748,15 @@ input::placeholder {
   font-weight: 600;
 }
 
-.workspace-empty-state > p:last-of-type {
-  max-width: 360px;
+.workspace-empty-state > p:last-of-type,
+.workspace-empty-disclaimer {
   margin-top: 0;
+  max-width: min(100%, 42em);
   color: #8a929e;
+  font-size: 12px;
+  line-height: 1.5;
+  text-wrap: balance;
+  white-space: normal;
 }
 
 .contact-dialog {
