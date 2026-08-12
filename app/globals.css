@@ -130,35 +130,6 @@ input::placeholder {
   opacity: 1;
 }
 
-/* GitHub export result dialog — fade the backdrop, pop the card in. */
-.gh-overlay {
-  animation: gh-overlay-in 160ms ease-out both;
-}
-
-.gh-card {
-  animation: gh-card-in 200ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
-}
-
-@keyframes gh-overlay-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-@keyframes gh-card-in {
-  from {
-    opacity: 0;
-    transform: translateY(8px) scale(0.96);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
 /* Brand gradient — shared by primary buttons, send keys, user bubbles.
    Mirrors mockup's linear-gradient(135deg, --brand, --brand-deep). */
 .btn-brand {

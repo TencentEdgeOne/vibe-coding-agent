@@ -2,9 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  AlertCircle,
   Check,
-  CheckCircle2,
   Code2,
   Copy,
   Download,
@@ -15,7 +13,6 @@ import {
   RefreshCw,
   Smartphone,
   Sparkles,
-  X,
 } from 'lucide-react';
 import { sanitizeAssistantText } from '../agents/utils/_text';
 import { Button } from '@/components/ui/button';
@@ -37,7 +34,6 @@ import {
   type AssistantActivity,
 } from './components/agent-conversation';
 import { FilesPanel } from './components/files-panel';
-import { GitHubIcon } from './components/icons';
 import { LanguageSwitch } from './components/language-switch';
 import { useFileContentCache } from './hooks/use-file-content-cache';
 import { useTypewriterPlaceholder } from './hooks/use-typewriter-placeholder';
@@ -125,10 +121,6 @@ export default function Home() {
   const [preview, setPreview] = useState<LinkInfo | null>(null);
   const [download, setDownload] = useState<LinkInfo | null>(null);
   const [downloadBusy, setDownloadBusy] = useState(false);
-  const [githubEnabled, setGithubEnabled] = useState(true);
-  const [githubBusy, setGithubBusy] = useState(false);
-  const [githubNotice, setGithubNotice] = useState<{ ok: boolean; repo?: string; reason?: string } | null>(null);
-  const githubPopupRef = useRef<Window | null>(null);
   const [build, setBuild] = useState<BuildInfo | null>(null);
   const [loading, setLoading] = useState(false);
   // Per-assistant-message progress expansion state. The running message is
@@ -598,63 +590,6 @@ export default function Home() {
       document.removeEventListener('visibilitychange', onVisibility);
       refreshPreviewLinkRef.current = async () => false;
     };
-  }, []);
-
-  useEffect(() => {
-    // Probe GitHub OAuth config. Optimistic default (button shown): only hide when
-    // the endpoint explicitly reports it is not configured, so a stale route or a
-    // transient failure never wrongly hides a configured instance.
-    // (plan/github-oauth-claim.md §6)
-    let cancelled = false;
-    fetch('/github/config')
-      .then((r) => r.json())
-      .then((d) => {
-        if (!cancelled) setGithubEnabled(d?.enabled !== false);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    // Fallback path only: when the popup was blocked, the OAuth flow ran as a full-page
-    // navigation and the callback redirected this tab back with ?github=... Read it,
-    // then strip the query so a refresh does not re-show it. The normal (popup) path
-    // delivers the result via postMessage below and never reloads this page.
-    const params = new URLSearchParams(window.location.search);
-    const github = params.get('github');
-    if (!github) {
-      return;
-    }
-    if (github === 'success') {
-      setGithubNotice({ ok: true, repo: params.get('repo') || undefined });
-    } else {
-      setGithubNotice({ ok: false, reason: params.get('reason') || 'push_failed' });
-    }
-    window.history.replaceState({}, '', window.location.pathname);
-  }, []);
-
-  useEffect(() => {
-    // Normal path: the OAuth popup posts its result back here (see oauthPopupResult in
-    // agents/utils/_request.ts), so the main page shows the outcome without reloading.
-    function onMessage(event: MessageEvent) {
-      if (event.origin !== window.location.origin) return;
-      const data = event.data as { source?: string; github?: string; repo?: string; reason?: string };
-      if (!data || data.source !== 'github-oauth') return;
-      setGithubBusy(false);
-      if (data.github === 'success') {
-        setGithubNotice({ ok: true, repo: data.repo || undefined });
-      } else {
-        setGithubNotice({ ok: false, reason: data.reason || 'push_failed' });
-      }
-      if (githubPopupRef.current && !githubPopupRef.current.closed) {
-        githubPopupRef.current.close();
-      }
-      githubPopupRef.current = null;
-    }
-    window.addEventListener('message', onMessage);
-    return () => window.removeEventListener('message', onMessage);
   }, []);
 
   useEffect(() => {
@@ -1466,38 +1401,6 @@ export default function Home() {
     }
   }
 
-  // Kick off the GitHub OAuth push in a popup window so the main page never reloads.
-  // The popup runs /github/start → GitHub → /github/callback, which posts the result
-  // back via postMessage (handled above). If the popup is blocked, fall back to a
-  // full-page navigation. See plan/github-oauth-claim.md §6.
-  function handleExportGithub() {
-    const cid = conversationId || getOrCreateCachedConversationId();
-    if (!cid || githubBusy) {
-      return;
-    }
-    setGithubBusy(true);
-    const url = `/github/start?cid=${encodeURIComponent(cid)}`;
-    const w = 520;
-    const h = 680;
-    const left = window.screenX + Math.max(0, (window.outerWidth - w) / 2);
-    const top = window.screenY + Math.max(0, (window.outerHeight - h) / 2);
-    const popup = window.open(url, 'github-oauth', `width=${w},height=${h},left=${left},top=${top}`);
-    if (!popup) {
-      // Popup blocked: full-page navigation (result comes back via ?github= on reload).
-      window.location.href = url;
-      return;
-    }
-    githubPopupRef.current = popup;
-    // Reset the spinner if the user closes the popup without finishing.
-    const timer = window.setInterval(() => {
-      if (githubPopupRef.current && githubPopupRef.current.closed) {
-        window.clearInterval(timer);
-        githubPopupRef.current = null;
-        setGithubBusy(false);
-      }
-    }, 600);
-  }
-
   // Placeholder for "claim deployment" (plan §3.1). Until the platform drop/claim API
   // is ready, this opens the EdgeOne console (plan's option A: finish the claim there).
   function handleClaimDeploy() {
@@ -1608,18 +1511,6 @@ export default function Home() {
               ariaLabel={t.languageToggleAria}
               className="site-language"
             />
-          )}
-          {hasWorkspace && githubEnabled && download?.url && (
-            <button
-              type="button"
-              onClick={handleExportGithub}
-              disabled={githubBusy}
-              className="site-icon-button"
-              aria-label={githubBusy ? t.workspace.githubExporting : t.workspace.exportGithub}
-              title={githubBusy ? t.workspace.githubExporting : t.workspace.exportGithub}
-            >
-              {githubBusy ? <span className="size-4 animate-spin rounded-full border-2 border-transparent border-t-current" /> : <GitHubIcon />}
-            </button>
           )}
           {hasWorkspace && download?.url && (
             <button
@@ -1954,89 +1845,6 @@ export default function Home() {
           )}
         </div>}
       </section>
-
-      {githubNotice && (
-        <div
-          className="gh-overlay fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-sm"
-          onClick={() => setGithubNotice(null)}
-        >
-          <Card
-            className="gh-card relative w-full max-w-sm overflow-hidden rounded-2xl border-border p-0 shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              type="button"
-              aria-label={t.workspace.githubClose}
-              onClick={() => setGithubNotice(null)}
-              className="absolute right-3 top-3 rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            >
-              <X className="h-4 w-4" />
-            </button>
-
-            <div className="flex flex-col items-center gap-3 px-6 pb-6 pt-8 text-center">
-              <span
-                className={`flex h-14 w-14 items-center justify-center rounded-full ${
-                  githubNotice.ok ? 'bg-primary/10' : 'bg-destructive/10'
-                }`}
-              >
-                {githubNotice.ok ? (
-                  <CheckCircle2 className="h-7 w-7 text-primary" />
-                ) : (
-                  <AlertCircle className="h-7 w-7 text-destructive" />
-                )}
-              </span>
-
-              <h3 className="text-base font-semibold text-foreground">
-                {githubNotice.ok ? t.workspace.githubSuccessTitle : t.workspace.githubErrorTitle}
-              </h3>
-              <p className="text-sm leading-relaxed text-muted-foreground">
-                {githubNotice.ok
-                  ? t.workspace.githubSuccessDesc
-                  : t.workspace.githubReasons[githubNotice.reason || 'push_failed']
-                    || t.workspace.githubReasons.push_failed}
-              </p>
-
-              {githubNotice.ok && githubNotice.repo && (
-                <a
-                  href={githubNotice.repo}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="max-w-full truncate rounded-lg bg-accent px-3 py-1.5 font-mono text-xs text-muted-foreground transition-colors hover:bg-accent/80 hover:text-foreground"
-                >
-                  {githubNotice.repo.replace(/^https?:\/\//, '')}
-                </a>
-              )}
-
-              <div className="mt-3 flex w-full gap-2">
-                <Button variant="outline" className="flex-1" onClick={() => setGithubNotice(null)}>
-                  {t.workspace.githubClose}
-                </Button>
-                {githubNotice.ok ? (
-                  githubNotice.repo && (
-                    <Button
-                      className="btn-brand flex-1"
-                      onClick={() => window.open(githubNotice.repo, '_blank', 'noreferrer')}
-                    >
-                      <ExternalLink className="mr-1.5 h-4 w-4" />
-                      {t.workspace.githubOpenRepo}
-                    </Button>
-                  )
-                ) : (
-                  <Button
-                    className="btn-brand flex-1"
-                    onClick={() => {
-                      setGithubNotice(null);
-                      handleExportGithub();
-                    }}
-                  >
-                    {t.workspace.githubRetry}
-                  </Button>
-                )}
-              </div>
-            </div>
-          </Card>
-        </div>
-      )}
     </main>
   );
 }

@@ -24,9 +24,6 @@ Web Dev Agent 可以把自然语言需求转换为可运行的 Web 项目。每�
 | `AI_GATEWAY_BASE_URL` | 是 | 网关 Base URL。使用 Makers Models 时填写 `https://ai-gateway.edgeone.link/v1`。 |
 | `AI_GATEWAY_MODEL` | 否 | 模型 ID。默认值为 `@makers/minimax-m2.7`（Makers 内置模型）。 |
 | `WEB_DEV_AGENT_DEBUG` | 否 | 设置为 `true` 或 `1` 时启用脱敏的服务端调试日志。默认关闭。 |
-| `GITHUB_CLIENT_ID` | 否 | GitHub OAuth App 的 Client ID。用于启用「导出到 GitHub」功能；未配置时导出按钮会隐藏。 |
-| `GITHUB_CLIENT_SECRET` | 否 | GitHub OAuth App 的 Client Secret。需与 `GITHUB_CLIENT_ID` 一起配置，用于完成 OAuth 令牌交换。 |
-| `GITHUB_OAUTH_REDIRECT_URI` | 否 | OAuth 回调地址。默认 `<origin>/github/callback`；仅当你的 GitHub App 配置了不同回调地址时才需覆盖。 |
 
 本模板遵循 OpenAI 兼容标准，可以将这些变量指向 Makers Models 或任意兼容供应商。
 
