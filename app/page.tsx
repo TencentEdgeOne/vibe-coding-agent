@@ -1601,12 +1601,14 @@ export default function Home() {
       <header className="site-topbar">
         <div className="site-brand" aria-label="MAKERS VIBE CODING">MAKERS VIBE CODING</div>
         <div className="site-topbar-actions">
-          <LanguageSwitch
-            language={language}
-            onChange={setLanguage}
-            ariaLabel={t.languageToggleAria}
-            className="site-language"
-          />
+          {!hasWorkspace && (
+            <LanguageSwitch
+              language={language}
+              onChange={setLanguage}
+              ariaLabel={t.languageToggleAria}
+              className="site-language"
+            />
+          )}
           {hasWorkspace && githubEnabled && download?.url && (
             <button
               type="button"
