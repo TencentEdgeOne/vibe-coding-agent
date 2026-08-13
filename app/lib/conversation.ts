@@ -41,6 +41,13 @@ export function cacheConversationId(value: string) {
   window.localStorage.setItem(CONVERSATION_STORAGE_KEY, trimmed);
 }
 
+export function clearCachedConversationId() {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  window.localStorage.removeItem(CONVERSATION_STORAGE_KEY);
+}
+
 export function createMessageId(role: ChatMessage['role']) {
   return `${role}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }

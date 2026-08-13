@@ -32,6 +32,7 @@ import {
   TENCENT_CLOUD_DEPLOY_URL,
   base64ToBlob,
   cacheConversationId,
+  clearCachedConversationId,
   createConversationId,
   createMessageId,
   extractProjectName,
@@ -220,7 +221,6 @@ export function WorkspaceScreen() {
     let cancelled = false;
     const existing = getStoredConversationId();
     if (!existing) {
-      setConversationId(createConversationId());
       return;
     }
 
@@ -393,7 +393,14 @@ export function WorkspaceScreen() {
 
           if (event.type === 'resume_history' && event.data?.ok) {
             const historyData = event.data;
-            applyHistory(historyData);
+            const restored = applyHistory(historyData);
+            if (!restored) {
+              // A cached ID alone does not mean a conversation exists. Remove
+              // stale/empty IDs so later refreshes stay on the home screen.
+              clearCachedConversationId();
+              conversationIdRef.current = null;
+              setConversationId(null);
+            }
             // History arrives first, so the UI paints while workspace restore
             // continues over this same HTTP connection.
             setResumeChecked(true);
@@ -1255,19 +1262,18 @@ export function WorkspaceScreen() {
     }
   }
 
-  // Start a fresh project. Needed because resume-on-load means a refresh no longer
-  // clears the workspace, so this is the explicit way back to an empty home screen
-  // with a brand-new conversation.
+  // Return to an uncommitted home state. A conversation ID is created and cached
+  // only when the user sends the first message, so refreshing an untouched home
+  // screen does not trigger an empty /resume request.
   function startNewProject() {
-    const next = createConversationId();
     workspaceEpochRef.current += 1;
     chatAbortControllerRef.current = null;
     activeTurnIdRef.current = '';
     stoppingRef.current = false;
     loadingRef.current = false;
-    conversationIdRef.current = next;
-    cacheConversationId(next);
-    setConversationId(next);
+    conversationIdRef.current = null;
+    clearCachedConversationId();
+    setConversationId(null);
     setMessages([]);
     setLoading(false);
     setPreview(null);

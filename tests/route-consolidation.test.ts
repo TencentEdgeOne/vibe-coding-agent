@@ -33,6 +33,19 @@ test('file panel performs no automatic or hover prefetch', async () => {
   assert.match(source, /fetch\(`\/file\?path=/);
 });
 
+test('an untouched new project does not persist an empty conversation', async () => {
+  const screen = await readFile('app/features/workspace/workspace-screen.tsx', 'utf8');
+  const start = screen.indexOf('function startNewProject()');
+  const end = screen.indexOf('function handleNewProject()', start);
+  const startBlock = screen.slice(start, end);
+
+  assert.ok(start >= 0 && end > start);
+  assert.match(startBlock, /clearCachedConversationId\(\)/);
+  assert.match(startBlock, /setConversationId\(null\)/);
+  assert.doesNotMatch(startBlock, /cacheConversationId\(/);
+  assert.doesNotMatch(startBlock, /createConversationId\(/);
+});
+
 test('starting a new project does not wait for the old stop request', async () => {
   const screen = await readFile('app/features/workspace/workspace-screen.tsx', 'utf8');
   const client = await readFile('app/features/workspace/workspace-api.ts', 'utf8');
