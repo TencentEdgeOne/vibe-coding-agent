@@ -80,11 +80,16 @@ export function fetchChatTaskStream(streamUrl: string, conversationId: string, s
 export async function stopChatTask(
   conversationId: string,
   turn: PersistedActivityTurn,
+  options: { discardProject?: boolean } = {},
 ) {
   const request = (headers: HeadersInit) => fetch('/stop', {
     method: 'POST',
     headers,
-    body: JSON.stringify({ conversation_id: conversationId, turn }),
+    body: JSON.stringify({
+      conversation_id: conversationId,
+      turn,
+      ...(options.discardProject ? { discardProject: true } : {}),
+    }),
   });
 
   const response = await request({ 'content-type': 'application/json' });

@@ -13,24 +13,31 @@ export async function onRequest(context: any) {
   }
 
   try {
+    const discardProject = context?.request?.body?.discardProject === true;
     // Stop the detached in-process run first (SSE disconnect no longer aborts it).
     abortLiveChatTask(conversationId);
     // Persist stopped before unwind finishes so refresh/resume does not see an
     // activeTask and duplicate the activityHistory user/assistant rows.
     await markChatTaskStopped(context, conversationId);
-    // Snapshot immediately on stop so a refresh right after cancel still sees
-    // hasProject + restorable files (the chat unwind flush can lose the race).
-    try {
-      const state = await getProjectState(context, conversationId);
-      const saved = await persistProjectSnapshot(context, conversationId, state);
-      if (saved && !state.created) {
-        state.created = true;
-        await saveProjectState(context, conversationId, state);
-      }
-    } catch (error) {
-      console.warn('[stop] project snapshot failed', error);
-    }
+    // Cancel the platform run before touching the sandbox. A long-running install
+    // or build can otherwise make the snapshot command queue behind the very work
+    // this endpoint is trying to stop.
     const result = await context.utils?.abortActiveRun?.(conversationId);
+    // "Stop and start new" intentionally abandons this conversation, so avoid a
+    // full zip -> base64 -> store round trip that the new workspace will never use.
+    // A normal Stop still snapshots immediately for same-conversation resume.
+    if (!discardProject) {
+      try {
+        const state = await getProjectState(context, conversationId);
+        const saved = await persistProjectSnapshot(context, conversationId, state);
+        if (saved && !state.created) {
+          state.created = true;
+          await saveProjectState(context, conversationId, state);
+        }
+      } catch (error) {
+        console.warn('[stop] project snapshot failed', error);
+      }
+    }
     const rawTurn = context?.request?.body?.turn;
     if (rawTurn && typeof rawTurn === 'object') {
       const turn = rawTurn as Record<string, unknown>;

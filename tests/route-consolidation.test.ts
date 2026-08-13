@@ -32,3 +32,22 @@ test('file panel performs no automatic or hover prefetch', async () => {
   assert.doesNotMatch(source, /onMouseEnter/);
   assert.match(source, /fetch\(`\/file\?path=/);
 });
+
+test('starting a new project does not wait for the old stop request', async () => {
+  const screen = await readFile('app/features/workspace/workspace-screen.tsx', 'utf8');
+  const client = await readFile('app/features/workspace/workspace-api.ts', 'utf8');
+  const stopRoute = await readFile('agents/stop.ts', 'utf8');
+  const start = screen.indexOf('function confirmNewProject()');
+  const end = screen.indexOf('// Hold the first paint', start);
+  const confirmBlock = screen.slice(start, end);
+  const abortIndex = stopRoute.indexOf('abortActiveRun');
+  const snapshotIndex = stopRoute.indexOf('if (!discardProject)');
+
+  assert.ok(start >= 0 && end > start);
+  assert.match(confirmBlock, /void stopCurrentTask\(\{ discardProject: true \}\)/);
+  assert.match(confirmBlock, /startNewProject\(\)/);
+  assert.doesNotMatch(confirmBlock, /await/);
+  assert.match(client, /options\.discardProject \? \{ discardProject: true \} : \{\}/);
+  assert.ok(abortIndex >= 0 && snapshotIndex > abortIndex);
+  assert.match(stopRoute, /if \(!discardProject\) \{[\s\S]*?persistProjectSnapshot/);
+});

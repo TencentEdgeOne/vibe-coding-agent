@@ -161,6 +161,9 @@ export function WorkspaceScreen() {
   const chatAbortControllerRef = useRef<AbortController | null>(null);
   const activeTurnIdRef = useRef('');
   const stoppingRef = useRef(false);
+  // Invalidates callbacks from an aborted workspace after "Stop and start new"
+  // has already painted the fresh home screen.
+  const workspaceEpochRef = useRef(0);
   // Resume-on-load reconnects to an in-flight run after history paints. The
   // effect closes over this ref so it always calls the latest stream attacher.
   const attachChatStreamRef = useRef<(options: {
@@ -710,6 +713,8 @@ export function WorkspaceScreen() {
       isStartingFromHome,
       streamUrl,
     } = options;
+    const workspaceEpoch = workspaceEpochRef.current;
+    const requestAbortController = options.abortController || new AbortController();
     const activatedPreviewRevisions = new Map<string, number>();
     let sawProjectActivity = false;
     let insertedModifyMarker = false;
@@ -974,6 +979,9 @@ export function WorkspaceScreen() {
     };
 
     const handleStreamEvent = (event: ChatStreamEvent) => {
+      if (workspaceEpoch !== workspaceEpochRef.current) {
+        return;
+      }
       if (event.type === 'task_started') {
         if (event.data?.conversation_id) {
           cacheConversationId(event.data.conversation_id);
@@ -1084,7 +1092,6 @@ export function WorkspaceScreen() {
     };
 
     try {
-      const requestAbortController = options.abortController || new AbortController();
       chatAbortControllerRef.current = requestAbortController;
       stoppingRef.current = false;
 
@@ -1105,7 +1112,11 @@ export function WorkspaceScreen() {
 
       await consumeEventStream<ChatStreamEvent>(response, handleStreamEvent);
     } catch (error) {
-      if ((error instanceof Error && error.name === 'AbortError') || stoppingRef.current) {
+      if (
+        workspaceEpoch !== workspaceEpochRef.current
+        || (error instanceof Error && error.name === 'AbortError')
+        || stoppingRef.current
+      ) {
         return;
       }
       const msg = `${t.response.requestFailedPrefix}${error instanceof Error ? error.message : t.response.unknownError}`;
@@ -1113,34 +1124,41 @@ export function WorkspaceScreen() {
       finalizeAssistant(msg, 'error');
     } finally {
       clearProcessStepRevealTimer();
-      // Fallback only when the stream died unexpectedly. Stop/abort already set a
-      // terminal status; overwriting it would hide an in-flight reconnect.
-      if (!stoppingRef.current) {
-        setMessages((current) =>
-          current.map((item) =>
-            item.id === assistantMessageId && item.status === 'running'
-              ? {
-                  ...item,
-                  status: 'done',
-                  content: item.content || t.response.agentFlowEnded,
-                  thinkingContent: '',
-                  processEvents: appendPendingProcessSteps(item.processEvents ?? [], item.steps ?? [], t.timeline),
-                }
-              : item,
-          ),
-        );
+      const ownsActiveWorkspace = workspaceEpoch === workspaceEpochRef.current
+        && chatAbortControllerRef.current === requestAbortController;
+      // An old aborted stream may unwind after the user has already submitted the
+      // first prompt in a new project. Never let that stale finally block clear the
+      // new request's loading state, controller, or turn id.
+      if (ownsActiveWorkspace) {
+        // Fallback only when the stream died unexpectedly. Stop/abort already set a
+        // terminal status; overwriting it would hide an in-flight reconnect.
+        if (!stoppingRef.current) {
+          setMessages((current) =>
+            current.map((item) =>
+              item.id === assistantMessageId && item.status === 'running'
+                ? {
+                    ...item,
+                    status: 'done',
+                    content: item.content || t.response.agentFlowEnded,
+                    thinkingContent: '',
+                    processEvents: appendPendingProcessSteps(item.processEvents ?? [], item.steps ?? [], t.timeline),
+                  }
+                : item,
+            ),
+          );
+        }
+        setOpenSteps((current) => {
+          if (current[assistantMessageId] === false) return current;
+          return { ...current, [assistantMessageId]: false };
+        });
+        setLoading(false);
+        setFilesRefreshing(false);
+        chatAbortControllerRef.current = null;
+        if (!stoppingRef.current) {
+          activeTurnIdRef.current = '';
+        }
+        stoppingRef.current = false;
       }
-      setOpenSteps((current) => {
-        if (current[assistantMessageId] === false) return current;
-        return { ...current, [assistantMessageId]: false };
-      });
-      setLoading(false);
-      setFilesRefreshing(false);
-      chatAbortControllerRef.current = null;
-      if (!stoppingRef.current) {
-        activeTurnIdRef.current = '';
-      }
-      stoppingRef.current = false;
     }
   }
 
@@ -1259,9 +1277,9 @@ export function WorkspaceScreen() {
     await sendMessage(input);
   }
 
-  async function handleStop() {
-    const cid = conversationId;
-    if (!loading || !cid || stoppingRef.current) return;
+  function stopCurrentTask(options: { discardProject?: boolean } = {}) {
+    const cid = conversationIdRef.current || conversationId;
+    if (!loadingRef.current || !cid || stoppingRef.current) return null;
     stoppingRef.current = true;
     const stoppedText = language === 'zh'
       ? '已停止本次生成，你可以继续描述下一步修改。'
@@ -1298,9 +1316,13 @@ export function WorkspaceScreen() {
       activities: stoppedActivities,
     };
 
-    const stopRequest = stopChatTask(cid, stoppedTurn).catch(() => null);
+    const stopRequest = stopChatTask(cid, stoppedTurn, options).catch(() => null);
     chatAbortControllerRef.current?.abort();
-    await stopRequest;
+    return stopRequest;
+  }
+
+  async function handleStop() {
+    await stopCurrentTask();
   }
 
   async function handleDownload() {
@@ -1392,9 +1414,17 @@ export function WorkspaceScreen() {
   // with a brand-new conversation.
   function startNewProject() {
     const next = createConversationId();
+    workspaceEpochRef.current += 1;
+    chatAbortControllerRef.current = null;
+    activeTurnIdRef.current = '';
+    stoppingRef.current = false;
+    loadingRef.current = false;
+    conversationIdRef.current = next;
     cacheConversationId(next);
     setConversationId(next);
     setMessages([]);
+    setOpenSteps({});
+    setLoading(false);
     setPreview(null);
     setDownload(null);
     setBuild(null);
@@ -1425,10 +1455,12 @@ export function WorkspaceScreen() {
     startNewProject();
   }
 
-  async function confirmNewProject() {
+  function confirmNewProject() {
     setNewProjectConfirmOpen(false);
     if (loadingRef.current) {
-      await handleStop();
+      // Fire cancellation against the old conversation, but do not make the new
+      // workspace wait for snapshot persistence or the /stop response.
+      void stopCurrentTask({ discardProject: true });
     }
     startNewProject();
   }
@@ -1480,7 +1512,7 @@ export function WorkspaceScreen() {
             <DialogClose asChild>
               <Button variant="outline">{t.workspace.newProjectConfirmCancel}</Button>
             </DialogClose>
-            <Button onClick={() => void confirmNewProject()}>
+            <Button onClick={confirmNewProject}>
               {t.workspace.newProjectConfirmContinue}
             </Button>
           </DialogFooter>
