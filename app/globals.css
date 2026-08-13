@@ -1225,7 +1225,7 @@ input::placeholder {
 .workspace-url-chip {
   display: flex;
   height: 26px;
-  width: min(420px, 46vw);
+  width: min(280px, 38vw);
   min-width: 120px;
   align-items: center;
   gap: 7px;
@@ -1238,22 +1238,19 @@ input::placeholder {
   font-size: 11px;
 }
 
-.workspace-url-chip > span:nth-child(2) {
+.workspace-url-chip > span {
   min-width: 0;
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  text-align: left;
 }
 
 .workspace-url-chip svg {
   width: 11px;
   height: 11px;
   flex: 0 0 11px;
-}
-
-.workspace-url-chip.is-ready .workspace-panel-status-dot {
-  background: #2ea043;
 }
 
 .workspace-viewport-switch {

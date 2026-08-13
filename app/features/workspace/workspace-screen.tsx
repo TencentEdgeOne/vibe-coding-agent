@@ -72,6 +72,21 @@ import {
 // Beyond it the token is likely dead, so reloading with a new one is the lesser evil.
 const PREVIEW_STALE_AFTER_HIDDEN_MS = 10 * 60_000;
 
+// Mirror of the sandbox preview base path (agents/_constants.ts). Defined
+// locally so the frontend does not cross the app -> agents boundary.
+const PREVIEW_PATH_PREFIX = '/preview/';
+
+// Render a mirrored preview route (pathname[+search][+hash]) as the address-bar
+// display value: the /preview/ base (and any other leading slashes) is stripped
+// so only the route relative to the app root is shown, with a leading '/'.
+function previewDisplayPathFromPath(path: string) {
+  if (!path) return '/';
+  const stripped = path.startsWith(PREVIEW_PATH_PREFIX)
+    ? path.slice(PREVIEW_PATH_PREFIX.length)
+    : path.replace(/^\/+/, '');
+  return stripped === '' ? '/' : `/${stripped}`;
+}
+
 function isSamePreviewTarget(a: string, b: string) {
   try {
     const left = new URL(a);
@@ -123,6 +138,10 @@ export function WorkspaceScreen() {
   // token's AUTHENTICATION_FAILED response mid-refresh.
   const [previewRefreshing, setPreviewRefreshing] = useState(false);
   const [previewCopied, setPreviewCopied] = useState(false);
+  // Mirror of the preview iframe's current route (pathname + search + hash),
+  // posted back by an injected script. Empty until the first message arrives.
+  const [previewPath, setPreviewPath] = useState('');
+  const previewPathRef = useRef('');
   const [pendingPreviewUrl, setPendingPreviewUrl] = useState('');
   const [pendingPreviewRevision, setPendingPreviewRevision] = useState(0);
   const activePreviewUrlRef = useRef('');
@@ -164,6 +183,11 @@ export function WorkspaceScreen() {
   // token rotation does not reload the running app).
   const shareablePreviewUrl = preview?.url || activePreviewUrl;
   const hasWorkspace = messages.length > 0 || Boolean(preview) || Boolean(build) || workspaceRestoring;
+  // Address bar shows the preview's current route (relative to the /preview/
+  // base) once the injected tracker reports it; before that it falls back to
+  // a bare root path so neither the host domain nor the preview base path is
+  // shown.
+  const previewDisplayPath = previewDisplayPathFromPath(previewPath);
   // Cycling typewriter placeholder for the landing prompt (see plan/design-mockup.html).
   // Reuses the localized example prompts; pauses while the field has text.
   const placeholderPhrases = useMemo(() => t.home.examples.map((example) => `${example}…`), [t]);
@@ -372,6 +396,8 @@ export function WorkspaceScreen() {
         setActivePreviewUrl('');
         setActivePreviewRevision(0);
         setActivePreviewLoaded(false);
+        previewPathRef.current = '';
+        setPreviewPath('');
         if (hasFiles) {
           setSandboxTab('files');
         }
@@ -644,6 +670,25 @@ export function WorkspaceScreen() {
     }, 3000);
     return () => window.clearTimeout(timer);
   }, [pendingPreviewUrl, pendingPreviewRevision]);
+
+  // Track the preview iframe's current route. The sandbox app injects a small
+  // script (Vite transformIndexHtml) that posts `location.pathname + search +
+  // hash` back to the parent so the address bar can mirror it instead of the
+  // raw sandbox host. The listener is mount-only; previewPathRef keeps the
+  // latest value without re-subscribing on every path change.
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      const payload = event.data;
+      if (!payload || typeof payload !== 'object') return;
+      const path = (payload as { __edgeonePreviewPath?: unknown }).__edgeonePreviewPath;
+      if (typeof path !== 'string' || !path) return;
+      if (path === previewPathRef.current) return;
+      previewPathRef.current = path;
+      setPreviewPath(path);
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, []);
 
   async function attachChatStream(options: {
     requestConversationId: string;
@@ -1054,6 +1099,8 @@ export function WorkspaceScreen() {
       setActivePreviewLoaded(false);
       setPendingPreviewUrl('');
       setPendingPreviewRevision(0);
+      previewPathRef.current = '';
+      setPreviewPath('');
     } else if (!conversationId) {
       setConversationId(requestConversationId);
     }
@@ -1253,8 +1300,22 @@ export function WorkspaceScreen() {
     if (!shareablePreviewUrl || !navigator.clipboard) {
       return;
     }
+    // Build the URL to copy from the freshest shareable URL, rewriting its
+    // path to the preview iframe's current route so the link deep-links the
+    // page the user is actually looking at.
+    const urlToCopy = (() => {
+      try {
+        const parsed = new URL(shareablePreviewUrl);
+        if (previewPath) {
+          parsed.pathname = previewPath;
+        }
+        return parsed.toString();
+      } catch {
+        return shareablePreviewUrl;
+      }
+    })();
     try {
-      await navigator.clipboard.writeText(shareablePreviewUrl);
+      await navigator.clipboard.writeText(urlToCopy);
       setPreviewCopied(true);
       window.setTimeout(() => setPreviewCopied(false), 1600);
     } catch {
@@ -1295,6 +1356,8 @@ export function WorkspaceScreen() {
     setPendingPreviewUrl('');
     setPendingPreviewRevision(0);
     setPreviewCopied(false);
+    previewPathRef.current = '';
+    setPreviewPath('');
     setInput('');
   }
 
@@ -1440,11 +1503,10 @@ export function WorkspaceScreen() {
                 <button
                   type="button"
                   onClick={handleCopyPreviewUrl}
-                  className={`workspace-url-chip ${activePreviewLoaded && !previewRefreshing ? 'is-ready' : ''}`}
-                  title={previewCopied ? t.workspace.previewUrlCopied : t.workspace.copyPreviewUrl}
+                  className="workspace-url-chip"
+                  title={previewCopied ? t.workspace.previewPathCopied : t.workspace.copyPreviewPath}
                 >
-                  <span className="workspace-panel-status-dot" aria-hidden="true" />
-                  <span>{shareablePreviewUrl.replace(/^https?:\/\//, '')}</span>
+                  <span dir="ltr">{previewDisplayPath}</span>
                   {previewCopied ? <Check /> : <Copy />}
                 </button>
               )}

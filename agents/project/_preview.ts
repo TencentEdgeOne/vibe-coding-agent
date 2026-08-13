@@ -109,6 +109,10 @@ function buildFrontendPreviewEnvPrefix(context: any) {
   const allowedHost = resolvePreviewAllowedHost(context);
   return [
     `EDGEONE_PREVIEW_BASE_PATH=${shellQuote(PREVIEW_PATH_PREFIX.replace(/\/$/, ''))}`,
+    // Tells the injected preview script to post its URL back to the parent
+    // window so the address bar can mirror the current route instead of the
+    // raw sandbox host.
+    'EDGEONE_PREVIEW_TRACK_PATH=1',
     allowedHost ? `__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=${shellQuote(allowedHost)}` : '',
   ].filter(Boolean).join(' ');
 }
@@ -176,6 +180,29 @@ async function prepareVitePreviewConfig(context: any, state: ProjectState, deps:
     '  legacy: {',
     '    skipWebSocketTokenCheck: true,',
     '  },',
+    '  plugins: [',
+    '    {',
+    "      name: 'edgeone-preview-path-tracker',",
+    "      apply: 'serve',",
+    '      transformIndexHtml: {',
+    "        order: 'post',",
+    '        handler(html) {',
+    "          if (process.env.EDGEONE_PREVIEW_TRACK_PATH !== '1') return html;",
+    '          var script =',
+    "            '<script>(function(){' +",
+    "            'if(window.parent===window)return;' +",
+    "            'var s=function(){window.parent.postMessage({__edgeonePreviewPath:location.pathname+location.search+location.hash},\"*\");};' +",
+    "            's();' +",
+    "            'var h=history.pushState;var r=history.replaceState;' +",
+    "            'history.pushState=function(){var a=h.apply(this,arguments);s();return a;};' +",
+    "            'history.replaceState=function(){var a=r.apply(this,arguments);s();return a;};' +",
+    "            'window.addEventListener(\"popstate\",s);window.addEventListener(\"hashchange\",s);' +",
+    "            '})();<\\/script>';",
+    "          return html.replace('</head>', script + '</head>');",
+    '        },',
+    '      },',
+    '    },',
+    '  ],',
     '  server: {',
     "    host: '0.0.0.0',",
     `    port: Number(process.env.PORT || ${PREVIEW_SERVER_PORT}),`,
