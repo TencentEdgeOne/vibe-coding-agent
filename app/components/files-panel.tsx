@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronRight, FileCode2, Folder, FolderOpen } from 'lucide-react';
 import { Highlight, type PrismTheme } from 'prism-react-renderer';
 import type { FileCopy } from '../i18n';
-import type { FileTree, FileTreeItem } from '../types/workspace';
+import type { FileTree } from '../types/workspace';
 import type { FileContentCache } from '../hooks/use-file-content-cache';
 import { getOrCreateCachedConversationId } from '../lib/conversation';
 import { Spinner } from './markdown-message';
@@ -30,59 +30,6 @@ export type FileReadResult = {
   error?: string;
 };
 
-export const FILE_PREFETCH_MAX_FILES = 8;
-export const FILE_PREFETCH_MAX_BYTES = 384 * 1024;
-export const FILE_PREFETCH_MAX_SINGLE_BYTES = 128 * 1024;
-export const PREFETCH_TEXT_EXTENSION = /\.(?:[cm]?[jt]sx?|json|css|scss|sass|html?|mdx?|ya?ml|py|go|rs|sh|vue|svelte|toml)$/i;
-
-export function canPrefetchFile(item: FileTreeItem) {
-  return (
-    item.type === 'file'
-    && (item.size === undefined || item.size <= FILE_PREFETCH_MAX_SINGLE_BYTES)
-    && (
-      PREFETCH_TEXT_EXTENSION.test(item.path)
-      || /(?:^|\/)(?:dockerfile|makefile|\.env(?:\..*)?)$/i.test(item.path)
-    )
-  );
-}
-
-export function selectFilesToPrefetch(tree: FileTree, isCached: (path: string) => boolean) {
-  const priorityPaths = [
-    'package.json',
-    'src/App.tsx',
-    'src/App.jsx',
-    'src/main.tsx',
-    'src/main.jsx',
-    'app/page.tsx',
-    'app/layout.tsx',
-    'app/globals.css',
-    'index.html',
-    'README.md',
-  ];
-  const priority = new Map(priorityPaths.map((path, index) => [path.toLowerCase(), index]));
-  const candidates = tree.items
-    .filter((item) => (
-      canPrefetchFile(item)
-      && !isCached(item.path)
-    ))
-    .sort((a, b) => {
-      const aPriority = priority.get(a.path.toLowerCase()) ?? priorityPaths.length;
-      const bPriority = priority.get(b.path.toLowerCase()) ?? priorityPaths.length;
-      return aPriority - bPriority || (a.size ?? 0) - (b.size ?? 0);
-    });
-
-  const selected: string[] = [];
-  let bytes = 0;
-  for (const item of candidates) {
-    const estimatedBytes = item.size ?? 32 * 1024;
-    if (selected.length >= FILE_PREFETCH_MAX_FILES) break;
-    if (bytes + estimatedBytes > FILE_PREFETCH_MAX_BYTES) continue;
-    selected.push(item.path);
-    bytes += estimatedBytes;
-  }
-  return selected;
-}
-
 export function FilesPanel({
   tree,
   refreshing,
@@ -104,10 +51,7 @@ export function FilesPanel({
   const [preview, setPreview] = useState<FilePreviewState>({ status: 'idle' });
   // Track the latest requested path so slower responses cannot overwrite newer selections.
   const latestRequestRef = useRef<string | null>(null);
-  const prefetchByPathRef = useRef<Map<string, Promise<void>>>(new Map());
   const focusedPathRef = useRef<string | null>(null);
-  const treeRef = useRef(tree);
-  treeRef.current = tree;
   const cacheVersion = cache.version;
   const readCachedFile = cache.read;
   const writeCachedFile = cache.write;
@@ -119,7 +63,6 @@ export function FilesPanel({
     setPreview({ status: 'idle' });
     latestRequestRef.current = null;
     focusedPathRef.current = null;
-    prefetchByPathRef.current.clear();
   }, [tree?.root]);
 
   const visibleItems = useMemo(() => {
@@ -149,87 +92,14 @@ export function FilesPanel({
     });
   };
 
-  const prefetchFiles = useCallback((paths: string[]) => {
-    const requested = [...new Set(paths)].filter(
-      (path) => !readCachedFile(path) && !prefetchByPathRef.current.has(path),
-    );
-    if (requested.length === 0) return Promise.resolve();
-
-    let request: Promise<void>;
-    request = (async () => {
-      try {
-        const headers: HeadersInit = {};
-        const cid = conversationId || getOrCreateCachedConversationId();
-        if (cid) {
-          headers['makers-conversation-id'] = cid;
-          headers['conversationId'] = cid;
-        }
-        const query = new URLSearchParams({ paths: requested.join(',') });
-        const resp = await fetch(`/file?${query.toString()}`, { method: 'GET', headers });
-        const data = (await resp.json()) as { ok?: boolean; files?: FileReadResult[] };
-        if (!data.ok || !Array.isArray(data.files)) return;
-
-        const currentItems = new Map(
-          (treeRef.current?.items || [])
-            .filter((item) => item.type === 'file')
-            .map((item) => [item.path, item]),
-        );
-        for (const file of data.files) {
-          if (!file.ok || !file.path || typeof file.content !== 'string') continue;
-          const item = currentItems.get(file.path);
-          writeCachedFile(file.path, {
-            content: file.content,
-            size: typeof file.size === 'number' ? file.size : file.content.length,
-            truncated: Boolean(file.truncated),
-            mtime: item?.mtime,
-          });
-        }
-      } catch {
-        // Prefetch is opportunistic. A click retries through the single-file path.
-      }
-    })().finally(() => {
-      for (const path of requested) {
-        if (prefetchByPathRef.current.get(path) === request) {
-          prefetchByPathRef.current.delete(path);
-        }
-      }
-    });
-    for (const path of requested) {
-      prefetchByPathRef.current.set(path, request);
-    }
-    return request;
-  }, [conversationId, readCachedFile, writeCachedFile]);
-
-  // Warm the most likely entry/config/source files whenever a new tree arrives.
-  // One batch request replaces several route and sandbox round trips.
-  useEffect(() => {
-    if (!tree) return;
-    const paths = selectFilesToPrefetch(tree, (path) => Boolean(readCachedFile(path)));
-    if (paths.length > 0) void prefetchFiles(paths);
-  }, [prefetchFiles, readCachedFile, tree]);
-
-  // This only runs for files that were neither streamed nor prefetched (or whose
-  // cached copy went stale). It waits for an in-flight prefetch to avoid duplicate
-  // reads when the user clicks immediately after the tree appears.
+  // Generated files normally arrive over the chat SSE stream. Only files absent
+  // from that cache are fetched, and only after an explicit user click.
   const fetchFile = useCallback(async (path: string, options: { silent?: boolean } = {}) => {
     latestRequestRef.current = path;
     if (!options.silent) {
       setPreview({ status: 'loading', path });
     }
     try {
-      const pendingPrefetch = prefetchByPathRef.current.get(path);
-      if (pendingPrefetch) {
-        await pendingPrefetch;
-        const prefetched = readCachedFile(path);
-        if (prefetched) {
-          if (latestRequestRef.current === path) {
-            setPreview({ status: 'ready', path, ...prefetched });
-          }
-          return;
-        }
-        if (latestRequestRef.current !== path) return;
-      }
-
       const headers: HeadersInit = {};
       const cid = conversationId || getOrCreateCachedConversationId();
       if (cid) {
@@ -387,11 +257,6 @@ export function FilesPanel({
                       toggleDirectory(item.path);
                     } else {
                       loadFile(item.path);
-                    }
-                  }}
-                  onMouseEnter={() => {
-                    if (canPrefetchFile(item) && !readCachedFile(item.path)) {
-                      void prefetchFiles([item.path]);
                     }
                   }}
                   className={`group relative flex h-7 w-full min-w-max items-center gap-1.5 rounded-[5px] pr-2 text-left transition-colors ${

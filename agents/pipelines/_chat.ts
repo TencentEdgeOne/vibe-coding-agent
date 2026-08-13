@@ -1,26 +1,11 @@
 import { runCodingAgent } from '../_agent';
 import { AUTO_FIX_MAX_ATTEMPTS } from '../_constants';
-import {
-  appendTurn,
-  clearProjectSnapshot,
-  getHistory,
-  getProjectSnapshot,
-  getProjectState,
-  saveProjectState,
-  saveActivityTurn,
-} from '../_memory';
-import {
-  createProjectState,
-  getFileTree,
-  resetProjectWorkspace,
-  restoreProjectArchive,
-  runVerification,
-} from '../_project';
+import { getHistory, saveProjectState } from '../_memory';
+import { getFileTree, runVerification } from '../_project';
 import type {
   AgentProgressEvent,
   BuildStatus,
   FileTreeItem,
-  PersistedActivity,
   ScaffoldLog,
   StreamSend,
 } from '../_types';
@@ -38,6 +23,8 @@ import {
   stripReturnedPreviewLinks,
   utf8ByteLength,
 } from './_helpers';
+import { createTurnLifecycle } from './_turn-lifecycle';
+import { prepareProjectWorkspace } from './_workspace';
 
 export async function runChatPipeline(
   context: any,
@@ -84,71 +71,12 @@ export async function runChatPipeline(
   });
 
   const shouldResetProject = options.resetProject === true;
-  const state = shouldResetProject
-    ? createProjectState(conversationId)
-    : await getProjectState(context, conversationId);
-  if (shouldResetProject) {
-    await resetProjectWorkspace(context, state);
-    // Starting over: drop any stale snapshot so a later empty-appDir turn cannot
-    // restore the previous project. (The frontend also rotates conversationId on a
-    // fresh start, so this is belt-and-suspenders.)
-    await clearProjectSnapshot(context, conversationId);
-  } else {
-    // Code persistence (防丢失): the sandbox /tmp is volatile, so the generated
-    // project may be gone between requests. Restore from snapshot when the appDir
-    // is missing OR empty, then always ensure the session directories exist so an
-    // early agent files_list cannot hit "lstat /projects: no such file".
-    try {
-      let hasProjectFiles = false;
-      try {
-        if (await context.sandbox.files.exists(state.appDir)) {
-          const tree = await getFileTree(context, state);
-          hasProjectFiles = tree.some((item) => item.type === 'file');
-        }
-      } catch {
-        hasProjectFiles = false;
-      }
-
-      if (!hasProjectFiles) {
-        const snapshot = await getProjectSnapshot(context, conversationId);
-        if (snapshot) {
-          send({ type: 'status', message: 'Restoring project from snapshot' });
-          const restored = await restoreProjectArchive(context, state, snapshot);
-          if (!restored.ok) {
-            send({
-              type: 'log',
-              phase: 'scaffold',
-              stream: 'stderr',
-              message: restored.error || 'Failed to restore the project from snapshot.',
-            });
-          } else {
-            hasProjectFiles = true;
-          }
-        }
-      }
-
-      await context.sandbox.files.makeDir(state.sessionDir);
-      await context.sandbox.files.makeDir(state.appDir);
-      if (hasProjectFiles) {
-        state.created = true;
-      }
-    } catch (error) {
-      // Restore is best-effort: if it fails, fall through and let the agent
-      // scaffold/regenerate as usual rather than aborting the turn.
-      send({
-        type: 'log',
-        phase: 'scaffold',
-        stream: 'stderr',
-        message: error instanceof Error ? error.message : 'Snapshot restore check failed.',
-      });
-      try {
-        await context.sandbox.files.makeDir(state.sessionDir);
-        await context.sandbox.files.makeDir(state.appDir);
-      } catch {
-        // Scaffold tool will surface a clearer error if dirs still cannot be created.
-      }
-    }
-  }
+  const state = await prepareProjectWorkspace(
+    context,
+    conversationId,
+    shouldResetProject,
+    send,
+  );
   const history = shouldResetProject
     ? []
     : await getHistory(context, conversationId, {
@@ -158,106 +86,21 @@ export async function runChatPipeline(
   const hiddenScaffoldToolUseIds = new Set<string>();
   const activityTurnId = options.turnId
     || String(context?.run_id || `${Date.now()}-${Math.random().toString(36).slice(2)}`);
-  const activities: PersistedActivity[] = [];
 
   // Mid-turn debounced snapshots + exit-path flush so a recycled sandbox still
   // has a restorable projectSnapshot in the store.
   const checkpoint = createProjectCheckpointController(context, conversationId, state);
-
-  const recordProgress = (event: AgentProgressEvent) => {
-    if (event.type === 'text_segment') {
-      const text = event.data.text;
-      if (!text) return;
-      const last = activities.at(-1);
-      if (last?.kind === 'text') {
-        if (last.content.endsWith(text) || last.content.endsWith(text.trim())) {
-          return;
-        }
-        activities[activities.length - 1] = {
-          ...last,
-          content: `${last.content}${text}`,
-        };
-      } else {
-        activities.push({ kind: 'text', content: text });
-      }
-      return;
-    }
-
-    if (event.type === 'tool_use') {
-      const existing = activities.find(
-        (item): item is Extract<PersistedActivity, { kind: 'tool' }> =>
-          item.kind === 'tool' && item.toolUseId === event.data.id,
-      );
-      if (existing) {
-        existing.name = event.data.name || existing.name;
-        existing.inputSummary = event.data.inputSummary || existing.inputSummary;
-        return;
-      }
-      activities.push({
-        kind: 'tool',
-        toolUseId: event.data.id,
-        name: event.data.name,
-        status: 'running',
-        inputSummary: event.data.inputSummary,
-        startedAt: event.data.startedAt || Date.now(),
-      });
-      return;
-    }
-
-    const existing = activities.find(
-      (item): item is Extract<PersistedActivity, { kind: 'tool' }> =>
-        item.kind === 'tool' && item.toolUseId === event.data.tool_use_id,
-    );
-    if (existing) {
-      existing.status = event.data.status || (event.data.ok ? 'completed' : 'failed');
-      existing.outputSummary = event.data.outputSummary || event.data.preview;
-      existing.endedAt = event.data.endedAt || Date.now();
-    }
-  };
-
-  const persistConversationTurn = async (
-    assistant: string,
-    status: 'completed' | 'failed' | 'stopped',
-  ) => {
-    if (status === 'stopped') {
-      for (const activity of activities) {
-        if (activity.kind === 'tool' && activity.status === 'running') {
-          activity.status = 'stopped';
-          activity.endedAt = Date.now();
-        }
-      }
-    }
-    if (!options.userMessagePersisted) {
-      await appendTurn(context, conversationId, 'user', message);
-    }
-    await appendTurn(context, conversationId, 'assistant', assistant);
-    await saveActivityTurn(context, conversationId, {
-      id: activityTurnId,
-      user: message,
-      assistant,
-      status,
-      createdAt: Date.now(),
-      activities,
-    });
-  };
-
-  // Exit-path order: code snapshot first, then projectState, then conversation.
-  // Survives a crash between steps better than conversation-without-code.
-  const finalizeTurn = async (
-    assistant: string,
-    status: 'completed' | 'failed' | 'stopped',
-    finalizeOptions?: { withSnapshot?: boolean; withState?: boolean },
-  ) => {
-    const withSnapshot = finalizeOptions?.withSnapshot === true;
-    const withState = finalizeOptions?.withState !== false;
-    if (withSnapshot) {
-      await checkpoint.flush();
-    }
-    if (withState) {
-      await saveProjectState(context, conversationId, state);
-    }
-    await persistConversationTurn(assistant, status);
-  };
+  const turn = createTurnLifecycle({
+    context,
+    conversationId,
+    message,
+    turnId: activityTurnId,
+    userMessagePersisted: options.userMessagePersisted === true,
+    state,
+    checkpoint,
+  });
+  const recordProgress = turn.recordProgress;
+  const finalizeTurn = turn.finalize;
 
   const handleScaffoldLog = (log: ScaffoldLog) => {
     if (!isInitialProjectTurn) {

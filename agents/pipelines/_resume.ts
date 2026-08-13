@@ -16,8 +16,10 @@ import {
   startPreviewServer,
 } from '../_project';
 import type { FileTreeItem, PersistedActivity, PersistedActivityTurn, ProjectState } from '../_types';
+import { createSSEResponse, sseEvent } from '../_shared';
 import { getRequestQueryParam, resolveConversationId } from '../utils/_request';
 import { withTimeout } from './_helpers';
+import { loadResumeFileContents } from './_resume-files';
 
 function toolNameImpliesProject(name: string) {
   return name.includes('write_project_file')
@@ -98,12 +100,7 @@ async function readResumeStage(context: any): Promise<ResumeStage> {
 
 // Fast path: store reads only. No sandbox restore / npm install / preview.
 // Lets the UI paint chat history immediately after a refresh.
-export async function runProjectResumeHistoryPipeline(context: any): Promise<Response> {
-  const { conversationId } = resolveConversationId(context, { allowQuery: true });
-  if (!conversationId) {
-    return jsonResponse({ ok: false, error: 'missing conversation_id' }, 400);
-  }
-
+async function loadProjectResumeHistory(context: any, conversationId: string) {
   const [messages, activityHistory, snapshot, chatTask, state] = await Promise.all([
     getHistory(context, conversationId),
     getActivityHistory(context, conversationId),
@@ -128,22 +125,29 @@ export async function runProjectResumeHistoryPipeline(context: any): Promise<Res
         resetProject: chatTask.resetProject === true,
         createdAt: chatTask.createdAt,
         startedAt: chatTask.startedAt,
-        streamUrl: `/chat/stream?runId=${encodeURIComponent(chatTask.id)}`,
+        streamUrl: `/chat?runId=${encodeURIComponent(chatTask.id)}`,
       }
     : null;
 
-  return jsonResponse({
-    ok: true,
-    stage: 'history',
+  return {
+    ok: true as const,
+    stage: 'history' as const,
     conversation_id: conversationId,
     messages,
     activityHistory,
     activeTask,
     hasProject,
     hasPreview,
-    // Client should call stage=workspace when true.
     needsWorkspace: hasProject,
-  });
+  };
+}
+
+export async function runProjectResumeHistoryPipeline(context: any): Promise<Response> {
+  const { conversationId } = resolveConversationId(context, { allowQuery: true });
+  if (!conversationId) {
+    return jsonResponse({ ok: false, error: 'missing conversation_id' }, 400);
+  }
+  return jsonResponse(await loadProjectResumeHistory(context, conversationId));
 }
 
 async function probeSandboxHasFiles(context: any, state: ProjectState) {
@@ -454,7 +458,65 @@ export async function runProjectResumePreviewPipeline(context: any): Promise<Res
   }
 }
 
-// Router kept for the thin agents/resume.ts entry.
+/**
+ * One progressive resume request replaces the former history → workspace chain.
+ * History is emitted immediately; sandbox restore and preview restart follow on
+ * the same SSE connection only when a durable project exists.
+ */
+export async function createProjectResumeStreamResponse(context: any): Promise<Response> {
+  const { conversationId } = resolveConversationId(context, { allowQuery: true });
+  if (!conversationId) {
+    return jsonResponse({ ok: false, error: 'missing conversation_id' }, 400);
+  }
+
+  return createSSEResponse(async function* (signal) {
+    const history = await loadProjectResumeHistory(context, conversationId);
+    yield sseEvent({ type: 'resume_history', data: history });
+
+    if (signal?.aborted || !history.needsWorkspace) return;
+
+    try {
+      const workspace = await withTimeout(
+        runWorkspaceRestoreBody(context, conversationId),
+        WORKSPACE_RESUME_BUDGET_MS,
+        'workspace resume',
+      );
+      if (!signal?.aborted) {
+        yield sseEvent({ type: 'resume_workspace', data: workspace });
+      }
+
+      // Warm the browser's source cache over this same resume connection. The
+      // workspace event is sent first so the UI remains progressive; each file
+      // then becomes immediately browseable without a /file route call.
+      const fileItems = workspace.files?.items || [];
+      if (!signal?.aborted && fileItems.length > 0) {
+        const contents = await loadResumeFileContents(context, conversationId, fileItems);
+        for (const file of contents) {
+          if (signal?.aborted) return;
+          yield sseEvent({ type: 'resume_file_content', data: file });
+        }
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Workspace resume failed.';
+      console.warn('[resume:stream]', message);
+      if (!signal?.aborted) {
+        yield sseEvent({
+          type: 'resume_workspace',
+          data: {
+            ok: true,
+            stage: 'workspace',
+            conversation_id: conversationId,
+            hasProject: false,
+            preview: { error: message },
+            files: { root: '', items: [] },
+          },
+        });
+      }
+    }
+  }, context?.request?.signal);
+}
+
+// Compatibility router for explicit preview refresh and older clients.
 // `stage=workspace` → slow restore; `stage=preview` → re-mint preview URL;
 // anything else (including `{}`) → fast history path.
 export async function runProjectResumePipeline(context: any): Promise<Response> {

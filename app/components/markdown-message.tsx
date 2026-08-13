@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { sanitizeAssistantText } from '../../agents/utils/_text';
+import { sanitizeAssistantText } from '../../shared/sanitize-assistant-text';
 import {
   NARRATION_TYPEWRITER_CHARS_PER_TICK,
   NARRATION_TYPEWRITER_INTERVAL_MS,

@@ -73,9 +73,7 @@ web-dev-agent/
 │   ├── page.tsx            # 对话、进度、预览和文件浏览界面
 │   └── globals.css         # 全局样式
 ├── agents/                 # EdgeOne Makers Agent 路由和流水线
-│   ├── chat/               # /chat 和 /chat/stream 路由
-│   │   ├── index.ts        # POST /chat：提交任务
-│   │   └── stream/index.ts  # GET /chat/stream：SSE 订阅
+│   ├── chat.ts             # POST /chat：创建并流式返回；GET /chat：重连
 │   ├── file.ts             # /file 路由
 │   ├── _agent.ts           # Claude Agent SDK 集成
 │   ├── _constants.ts       # 运行时常量
@@ -97,13 +95,13 @@ web-dev-agent/
 
 Agent 在 `agents/` 下以会话模式运行。带有相同 `conversation_id` 的请求会路由到同一个运行时实例，并在沙箱生命周期内复用同一个临时项目工作区。
 
-1. **提交任务** — 前端携带消息和 `Makers-Conversation-Id` 请求头调用 `POST /chat`。接口先持久化本轮任务并返回 `runId` 和 `/chat/stream` 地址；从首页发起的新请求也可以设置 `resetProject: true` 来重建项目工作区。
+1. **提交并流式返回** — 前端携带消息和 `Makers-Conversation-Id` 请求头调用 `POST /chat`。接口持久化任务后在同一个 SSE 响应中持续返回事件，因此正常一轮只调用一次 Agent 路由；从首页发起的新请求也可以设置 `resetProject: true` 来重建项目工作区。
 2. **状态恢复** — Chat pipeline 从 `context.store` 读取对话历史，并加载当前临时沙箱项目的元数据。
 3. **LLM 与工具循环** — Claude Agent SDK 使用 `edgeone-sandbox` MCP 服务、`permissionMode: 'dontAsk'` 和仅限沙箱的工具运行。Agent 必须先调用 `ensure_project_scaffold`，再读取或写入项目文件。
 4. **项目编辑** — 生成的源码通过 `write_project_file` 按文件逐个写入，让进度持续反馈到界面。命令执行和依赖安装都在沙箱内完成。
 5. **发布预览** — `publish_preview` 在内部 `3000` 端口启动应用，等待预览入口就绪，并返回仅在当前临时沙箱生命周期内可用的预览 URL。
 6. **验证检查** — Node 项目包含 build 脚本时运行 `npm run build`；存在 Python 文件时运行 `python -m compileall .`。如果 Agent 成功运行后验证失败，流水线会尝试一轮自动修复。
-7. **SSE 订阅** — 前端携带同一个 `Makers-Conversation-Id` 调用 `GET /chat/stream?runId=...`，以 SSE 接收状态事件、日志、工具调用、工具结果、文件树更新、预览 URL、构建状态和最终回复。任务状态和最终事件写入会话元数据，短期事件只在运行实例内做重连回放。
+7. **SSE 与重连** — 正常生成直接通过 `POST /chat` 的 SSE 接收状态、日志、工具、文件、预览、构建状态和最终回复；页面刷新后使用 `GET /chat?runId=...` 重连同一个后台任务。`GET /resume` 还会在原有 SSE 连接中预热最多 48 个、总计 2 MiB 的文本文件，因此典型项目恢复后浏览源码不再逐文件请求 Agent 路由；超限或未缓存文件仅在点击时回退到 `/file`。任务状态和最终事件写入会话元数据，短期事件只在运行实例内做重连回放。
 
 文件路由为 `/file?path=<relative-path>`，并使用同一会话上下文从临时沙箱项目读取文本文件。沙箱凭证由运行时提供，本地无需配置沙箱凭证。沙箱和其中生成的代码都是临时的，生命周期由 `edgeone.json` 中的 `agents.sandbox.timeout` 控制，当前为 `1800` 秒。
 

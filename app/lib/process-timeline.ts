@@ -11,7 +11,7 @@ import {
   isInstallCommand as sharedIsInstallCommand,
   isPreviewCommand as sharedIsPreviewCommand,
   shortenToolName as sharedShortenToolName,
-} from '../../agents/utils/_tool-phase';
+} from '../../shared/tool-phase.ts';
 
 export const PROCESS_STEP_REVEAL_DELAY_MS = 420;
 export const TYPEWRITER_INTERVAL_MS = 18;

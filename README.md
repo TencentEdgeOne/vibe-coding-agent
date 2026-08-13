@@ -73,9 +73,7 @@ web-dev-agent/
 │   ├── page.tsx            # Chat, progress, preview, and file browser UI
 │   └── globals.css         # Global styles
 ├── agents/                 # EdgeOne Makers agent routes and pipeline
-│   ├── chat/               # /chat and /chat/stream routes
-│   │   ├── index.ts        # POST /chat: submit a task
-│   │   └── stream/index.ts  # GET /chat/stream: SSE subscription
+│   ├── chat.ts             # POST /chat: create + stream; GET /chat: reconnect
 │   ├── file.ts             # /file route
 │   ├── _agent.ts           # Claude Agent SDK integration
 │   ├── _constants.ts       # Runtime constants
@@ -97,13 +95,13 @@ Files prefixed with `_` are private modules — not exposed as public routes by 
 
 The agent runs in session mode under `agents/`. Requests with the same `conversation_id` are routed to the same runtime instance and reuse the same temporary project workspace for the sandbox lifetime.
 
-1. **Submit** — the frontend calls `POST /chat` with a message and the `Makers-Conversation-Id` header. The endpoint persists the task and returns a `runId` plus a `/chat/stream` URL. A new request from the home view can also set `resetProject: true` to recreate the project workspace.
+1. **Submit and stream** — the frontend calls `POST /chat` with a message and the `Makers-Conversation-Id` header. The endpoint persists the task and streams it over the same SSE response, so a normal turn uses one Agent request. A new request from the home view can also set `resetProject: true` to recreate the project workspace.
 2. **State restore** — the chat pipeline reads conversation history from `context.store` and loads metadata for the current temporary sandbox project.
 3. **LLM and tool loop** — the Claude Agent SDK runs with the `edgeone-sandbox` MCP server, `permissionMode: 'dontAsk'`, and sandbox-only tools. The agent must call `ensure_project_scaffold` before reading or writing project files.
 4. **Project editing** — generated source files are written incrementally through one `write_project_file` call per file, so progress reaches the UI continuously. Commands and dependency installation run inside the sandbox.
 5. **Preview publish** — `publish_preview` starts the app on internal port `3000`, waits for the preview entry to become ready, and returns a preview URL that is valid only for the current temporary sandbox lifetime.
 6. **Verification** — the runtime runs `npm run build` when a Node project has a build script, or `python -m compileall .` when Python files are present. If verification fails after a successful agent run, the pipeline attempts one auto-fix pass.
-7. **SSE subscription** — the frontend calls `GET /chat/stream?runId=...` with the same `Makers-Conversation-Id` header and receives status events, logs, tool calls, tool results, file tree updates, the preview URL, build status, and the final assistant reply as SSE frames. Task state and the final event are persisted in conversation metadata; the live process keeps a short in-memory replay buffer for reconnects.
+7. **SSE and reconnect** — `POST /chat` receives status events, logs, tool calls, tool results, file updates, preview state, build status, and the final reply. After a refresh, `GET /chat?runId=...` reconnects to the same detached task. `GET /resume` also hydrates up to 48 text files / 2 MiB over its existing SSE connection, so browsing a typical restored project does not issue per-file Agent requests. Larger or uncached files fall back to `/file` on click. Task state and the final event are persisted in conversation metadata; the live process keeps a short in-memory replay buffer.
 
 The file route is `/file?path=<relative-path>` and uses the same conversation context to read text files from the temporary sandbox project. Sandbox credentials are provided by the runtime; no local sandbox credentials are required. The sandbox and generated code are temporary, and their lifetime is controlled by `agents.sandbox.timeout` in `edgeone.json`, currently set to `1800` seconds.
 

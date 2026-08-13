@@ -159,7 +159,7 @@ function isTaskActive(task: ChatTask | null) {
   return task?.status === 'queued' || task?.status === 'running';
 }
 
-export async function createChatTask(
+async function createChatTask(
   context: any,
   message: string,
   options: { resetProject?: boolean; turnId?: string } = {},
@@ -275,7 +275,7 @@ async function executeLiveTask(context: any, liveTask: LiveChatTask) {
   }, 5 * 60 * 1_000);
 }
 
-export function ensureChatTaskStarted(context: any, conversationId: string, task: ChatTask) {
+function ensureChatTaskStarted(context: any, conversationId: string, task: ChatTask) {
   const liveTask = getOrCreateLiveTask(conversationId, task);
   if (!liveTask.runPromise && isTaskActive(liveTask.task)) {
     liveTask.runPromise = executeLiveTask(context, liveTask).catch((error) => {
@@ -316,28 +316,22 @@ function parseTaskId(context: any) {
   }
 }
 
-export async function createChatTaskStreamResponse(context: any) {
-  const conversationId = getConversationId(context);
-  const runId = parseTaskId(context);
-  if (!conversationId || !runId) {
-    return new Response(JSON.stringify({ ok: false, error: 'conversationId and runId are required.' }), {
-      status: 400,
-      headers: { 'content-type': 'application/json; charset=utf-8' },
-    });
-  }
-
-  const task = await getChatTask(context, conversationId);
-  if (!task || task.id !== runId) {
-    return new Response(JSON.stringify({ ok: false, error: 'Chat task not found.' }), {
-      status: 404,
-      headers: { 'content-type': 'application/json; charset=utf-8' },
-    });
-  }
-
-  ensureChatTaskStarted(context, conversationId, task);
-  const liveTask = getOrCreateLiveTask(conversationId, task);
+function createLiveTaskStreamResponse(
+  context: any,
+  conversationId: string,
+  task: ChatTask,
+) {
+  const liveTask = ensureChatTaskStarted(context, conversationId, task);
 
   return createSSEResponse(async function* (signal) {
+    yield sseEvent({
+      type: 'task_started',
+      data: {
+        runId: task.id,
+        conversation_id: conversationId,
+        status: task.status,
+      },
+    });
     const queue = new AsyncEventQueue<SequencedEvent>();
     const afterSequence = liveTask.nextSequence;
     const listener: TaskListener = (record) => {
@@ -353,6 +347,11 @@ export async function createChatTaskStreamResponse(context: any) {
       }
 
       if (!isTaskActive(liveTask.task)) {
+        // The task may have completed after `afterSequence` was captured but
+        // before replay finished. Drain that race window before closing.
+        for (const record of liveTask.events) {
+          if (record.sequence > afterSequence) yield sseEvent(record.event);
+        }
         return;
       }
 
@@ -375,6 +374,44 @@ export async function createChatTaskStreamResponse(context: any) {
       liveTask.listeners.delete(listener);
     }
   }, context?.request?.signal);
+}
+
+/** Create a durable task and subscribe the same POST request to its event stream. */
+export async function createChatTaskAndStreamResponse(
+  context: any,
+  message: string,
+  options: { resetProject?: boolean; turnId?: string } = {},
+) {
+  const result = await createChatTask(context, message, options);
+  if (!result.ok) {
+    return new Response(JSON.stringify(result), {
+      status: result.status,
+      headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+    });
+  }
+  return createLiveTaskStreamResponse(context, result.conversationId, result.task);
+}
+
+/** Reconnect to a running or completed task without creating a second run. */
+export async function createChatTaskStreamResponse(context: any) {
+  const conversationId = getConversationId(context);
+  const runId = parseTaskId(context);
+  if (!conversationId || !runId) {
+    return new Response(JSON.stringify({ ok: false, error: 'conversationId and runId are required.' }), {
+      status: 400,
+      headers: { 'content-type': 'application/json; charset=utf-8' },
+    });
+  }
+
+  const task = await getChatTask(context, conversationId);
+  if (!task || task.id !== runId) {
+    return new Response(JSON.stringify({ ok: false, error: 'Chat task not found.' }), {
+      status: 404,
+      headers: { 'content-type': 'application/json; charset=utf-8' },
+    });
+  }
+
+  return createLiveTaskStreamResponse(context, conversationId, task);
 }
 
 const ABORTED = Symbol('aborted');

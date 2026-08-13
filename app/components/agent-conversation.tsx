@@ -23,21 +23,12 @@ import {
   presentToolActivity,
   type ToolAction,
 } from '../lib/tool-activity';
+import type {
+  ActivityStatus,
+  AssistantActivity,
+} from '../../shared/protocol';
 
-export type ActivityStatus = 'running' | 'completed' | 'failed' | 'stopped';
-
-export type AssistantActivity =
-  | { kind: 'text'; content: string }
-  | {
-      kind: 'tool';
-      toolUseId: string;
-      name: string;
-      status: ActivityStatus;
-      inputSummary?: string;
-      outputSummary?: string;
-      startedAt?: number;
-      endedAt?: number;
-    };
+export type { ActivityStatus, AssistantActivity } from '../../shared/protocol';
 
 export type ConversationMessage = {
   id: string;

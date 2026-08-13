@@ -1,65 +1,6 @@
-import type { ChatMessage, ResumeData } from '../types/workspace';
+import type { ChatMessage } from '../types/workspace';
 
 export const CONVERSATION_STORAGE_KEY = 'web-dev-agent-conversation-id';
-
-function resumeHeaders(conversationId: string): HeadersInit {
-  return {
-    'content-type': 'application/json',
-    conversationId,
-    'makers-conversation-id': conversationId,
-  };
-}
-
-// Fast store-only resume: chat history without touching the sandbox.
-export function fetchResumeHistory(conversationId: string) {
-  return fetch('/resume?stage=history', {
-    method: 'POST',
-    headers: resumeHeaders(conversationId),
-    body: JSON.stringify({ stage: 'history' }),
-  }).then((response) => response.json().catch(() => null) as Promise<ResumeData | null>);
-}
-
-// Slow resume: restore snapshot into the sandbox, return the file tree, and
-// restart live preview when the project was previously publishable.
-const RESUME_WORKSPACE_CLIENT_TIMEOUT_MS = 130_000;
-
-export function fetchResumeWorkspace(conversationId: string) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), RESUME_WORKSPACE_CLIENT_TIMEOUT_MS);
-  return fetch('/resume?stage=workspace', {
-    method: 'POST',
-    headers: resumeHeaders(conversationId),
-    body: JSON.stringify({ stage: 'workspace' }),
-    signal: controller.signal,
-  })
-    .then((response) => response.json().catch(() => null) as Promise<ResumeData | null>)
-    .catch(() => null)
-    .finally(() => clearTimeout(timer));
-}
-
-// Light resume: re-mint the public preview URL with a fresh sandbox
-// envdAccessToken. May escalate to full workspace restore when the sandbox
-// has gone cold, so use the same client ceiling as fetchResumeWorkspace.
-const RESUME_PREVIEW_CLIENT_TIMEOUT_MS = 130_000;
-
-export function fetchResumePreview(conversationId: string) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), RESUME_PREVIEW_CLIENT_TIMEOUT_MS);
-  return fetch('/resume?stage=preview', {
-    method: 'POST',
-    headers: resumeHeaders(conversationId),
-    body: JSON.stringify({ stage: 'preview' }),
-    signal: controller.signal,
-  })
-    .then((response) => response.json().catch(() => null) as Promise<ResumeData | null>)
-    .catch(() => null)
-    .finally(() => clearTimeout(timer));
-}
-
-/** @deprecated Prefer fetchResumeHistory + fetchResumeWorkspace. */
-export function fetchResume(conversationId: string) {
-  return fetchResumeHistory(conversationId);
-}
 
 export function createConversationId() {
   return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'

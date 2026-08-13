@@ -1,6 +1,10 @@
 import type { SdkMcpToolDefinition } from '@anthropic-ai/claude-agent-sdk';
+import type {
+  ActivityStatus,
+  BuildStatus,
+} from '../shared/protocol.ts';
 
-export type BuildStatus = 'success' | 'failed' | 'skipped';
+export type { ActivityStatus, BuildStatus, FileTreeItem } from '../shared/protocol.ts';
 
 export type ProjectState = {
   created: boolean;
@@ -41,8 +45,6 @@ export type ChatTask = {
   finalEvent?: Record<string, unknown>;
   error?: string;
 };
-
-export type ActivityStatus = 'running' | 'completed' | 'failed' | 'stopped';
 
 export type PersistedActivity =
   | {
@@ -94,19 +96,6 @@ export type BuildResult = {
   autoFixAttempts?: number;
   autoFixApplied?: boolean;
   fatal?: boolean;
-};
-
-export type FileTreeItem = {
-  path: string;
-  name: string;
-  type: 'file' | 'directory';
-  depth: number;
-  // Modification time in epoch milliseconds, and byte size. Both are the cache
-  // key the frontend uses to decide whether its copy of a file is still current,
-  // so a click can skip the /file round trip. Absent when the sandbox `find` does
-  // not support -printf (see getFileTree's fallback).
-  mtime?: number;
-  size?: number;
 };
 
 // Progress events streamed to the frontend. tool_use is the model's tool request,

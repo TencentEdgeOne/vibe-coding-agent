@@ -370,10 +370,10 @@ export async function runCodingAgent(
     }
     const edgeoneMcp = context.tools.toClaudeMcpServer(mcpServerName, { alwaysLoad: true });
     const sandboxTools = wrapSandboxToolsForVerification(
-      edgeoneMcp.tools.filter((tool) =>
+      edgeoneMcp.tools.filter((tool: { name: string }) =>
         !isBrowserSandboxToolName(tool.name) && !isGenericProjectWriteToolName(tool.name)),
     );
-    const sandboxAllowedTools = edgeoneMcp.allowedTools.filter((toolName) =>
+    const sandboxAllowedTools = edgeoneMcp.allowedTools.filter((toolName: string) =>
       !isBrowserSandboxToolName(toolName) && !isGenericProjectWriteToolName(toolName));
     let projectTouched = false;
     let previewTouched = false;

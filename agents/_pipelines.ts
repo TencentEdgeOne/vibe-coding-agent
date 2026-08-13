@@ -1,4 +1,7 @@
-export { runFileReadPipeline } from './pipelines/file-read';
-export { runProjectDownloadPipeline } from './pipelines/download';
-export { runProjectResumePipeline } from './pipelines/resume';
-export { runChatPipeline } from './pipelines/chat';
+export { runFileReadPipeline } from './pipelines/_file-read';
+export { runProjectDownloadPipeline } from './pipelines/_download';
+export {
+  createProjectResumeStreamResponse,
+  runProjectResumePipeline,
+} from './pipelines/_resume';
+export { runChatPipeline } from './pipelines/_chat';
