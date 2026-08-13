@@ -4,6 +4,8 @@ export type ToolAction =
   | 'Read file'
   | 'Write file'
   | 'Edit file'
+  | 'Create folder'
+  | 'Delete file'
   | 'Create preview'
   | 'Run command';
 
@@ -29,7 +31,7 @@ function readStructuredTarget(summary = '') {
   if (!trimmed.startsWith('{')) return '';
   try {
     const input = JSON.parse(trimmed) as Record<string, unknown>;
-    for (const key of ['path', 'file_path', 'pattern', 'glob', 'query']) {
+    for (const key of ['path', 'file_path', 'pattern', 'glob', 'query', 'command', 'cmd']) {
       if (typeof input[key] === 'string') return cleanSummaryTarget(input[key]);
     }
   } catch {
@@ -52,7 +54,13 @@ export function presentToolActivity(
   if (name.includes('glob') || name.includes('files list') || name.includes('folder search')) {
     return { action: 'Glob', target: target || '**/*' };
   }
-  if (name.includes('read')) {
+  if (name.includes('make dir') || name.includes('mkdir')) {
+    return { action: 'Create folder', target };
+  }
+  if (name.includes('files remove') || name.includes('files delete')) {
+    return { action: 'Delete file', target };
+  }
+  if (name.includes('read') || name.includes('files exists')) {
     return { action: 'Read file', target };
   }
   if (name.includes('write project file') || name.includes('files write') || name.includes('write files')) {

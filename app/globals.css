@@ -1822,7 +1822,8 @@ input::placeholder {
   background: #f7f8fa;
 }
 
-.contact-dialog-footer a:last-child {
+.contact-dialog-footer a:last-child,
+.contact-dialog-footer button:last-child {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1831,7 +1832,8 @@ input::placeholder {
   font-weight: 600;
 }
 
-.contact-dialog-footer a:last-child:hover {
+.contact-dialog-footer a:last-child:hover,
+.contact-dialog-footer button:last-child:hover {
   background: #1f57e0;
 }
 

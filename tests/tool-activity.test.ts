@@ -26,6 +26,15 @@ test('npm run dev is a run command, not create preview', () => {
   assert.equal(dev.action, 'Run command');
 });
 
+test('files_make_dir is create folder, not a command', () => {
+  const mkdir = presentToolActivity({
+    name: 'mcp__edgeone-sandbox__files_make_dir',
+    inputSummary: JSON.stringify({ path: 'src/lib' }, null, 2),
+  });
+  assert.equal(mkdir.action, 'Create folder');
+  assert.equal(mkdir.target, 'src/lib');
+});
+
 test('zh and en tool action labels cover every action', () => {
   const actions = [
     'Environment Preparing',
@@ -33,6 +42,8 @@ test('zh and en tool action labels cover every action', () => {
     'Read file',
     'Write file',
     'Edit file',
+    'Create folder',
+    'Delete file',
     'Create preview',
     'Run command',
   ] as const;

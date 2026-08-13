@@ -51,6 +51,10 @@ test('a streamed single-file call stays blank until its path arrives', () => {
   assert.equal(summarizeToolInput('write_project_file', {}), '');
 });
 
+test('directory tools summarize as a path, not JSON', () => {
+  assert.equal(summarizeToolInput('mcp__edgeone-sandbox__files_make_dir', { path: 'src/lib' }), 'src/lib');
+});
+
 test('tool output is capped at two kilobytes', () => {
   const summary = summarizeToolOutput('x'.repeat(3_000));
   assert.ok(summary.length < 2_100);

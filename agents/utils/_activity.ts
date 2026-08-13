@@ -68,6 +68,20 @@ export function summarizeToolInput(name: string, input: unknown, projectDir = ''
         : '';
     return truncate(redactInlineSecrets(projectDir ? command.split(projectDir).join('<project>') : command));
   }
+  if (
+    shortName === 'files_make_dir'
+    || shortName === 'files_remove'
+    || shortName === 'files_exists'
+    || shortName === 'files_read'
+    || shortName === 'files_list'
+  ) {
+    const path = typeof record.path === 'string'
+      ? record.path
+      : typeof record.file_path === 'string'
+        ? record.file_path
+        : '';
+    return path ? truncate(projectDir ? path.split(projectDir).join('<project>') : path) : '';
+  }
 
   return truncate(JSON.stringify(safeValue(record, projectDir), null, 2));
 }

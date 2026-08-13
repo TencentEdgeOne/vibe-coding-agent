@@ -137,6 +137,7 @@ export default function Home() {
   const [resultPanelOpen, setResultPanelOpen] = useState(false);
   // Slow resume stage: snapshot restore + npm install + preview restart.
   const [workspaceRestoring, setWorkspaceRestoring] = useState(false);
+  const [newProjectConfirmOpen, setNewProjectConfirmOpen] = useState(false);
   const fileCache = useFileContentCache();
   const [activePreviewUrl, setActivePreviewUrl] = useState('');
   const [activePreviewRevision, setActivePreviewRevision] = useState(0);
@@ -1491,10 +1492,7 @@ export default function Home() {
   // Start a fresh project. Needed because resume-on-load means a refresh no longer
   // clears the workspace, so this is the explicit way back to an empty home screen
   // with a brand-new conversation.
-  function handleNewProject() {
-    if (loading) {
-      return;
-    }
+  function startNewProject() {
     const next = createConversationId();
     cacheConversationId(next);
     setConversationId(next);
@@ -1519,6 +1517,22 @@ export default function Home() {
     setPendingPreviewRevision(0);
     setPreviewCopied(false);
     setInput('');
+  }
+
+  function handleNewProject() {
+    if (loadingRef.current) {
+      setNewProjectConfirmOpen(true);
+      return;
+    }
+    startNewProject();
+  }
+
+  async function confirmNewProject() {
+    setNewProjectConfirmOpen(false);
+    if (loadingRef.current) {
+      await handleStop();
+    }
+    startNewProject();
   }
 
   // Hold the first paint until the resume check resolves, so a returning user does
@@ -1565,7 +1579,7 @@ export default function Home() {
             </button>
           )}
           {hasWorkspace && (
-            <button type="button" onClick={handleNewProject} disabled={loading} className="site-secondary-button">
+            <button type="button" onClick={handleNewProject} className="site-secondary-button">
               {t.workspace.newProject}
             </button>
           )}
@@ -1610,6 +1624,26 @@ export default function Home() {
           </Dialog>
         </div>
       </header>
+      <Dialog open={newProjectConfirmOpen} onOpenChange={setNewProjectConfirmOpen}>
+        <DialogContent
+          className="contact-dialog"
+          overlayClassName="contact-dialog-overlay"
+          showCloseButton={false}
+        >
+          <DialogHeader>
+            <DialogTitle>{t.workspace.newProjectConfirmTitle}</DialogTitle>
+            <DialogDescription>{t.workspace.newProjectConfirmDescription}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="contact-dialog-footer">
+            <DialogClose asChild>
+              <Button variant="outline">{t.workspace.newProjectConfirmCancel}</Button>
+            </DialogClose>
+            <Button onClick={() => void confirmNewProject()}>
+              {t.workspace.newProjectConfirmContinue}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       {!hasWorkspace && (
         <section className="home-stage flex flex-1 flex-col items-center justify-center px-6 py-12 text-center">
           <div className="w-full max-w-[820px]">

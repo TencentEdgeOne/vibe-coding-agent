@@ -8,11 +8,13 @@ import {
   CircleAlert,
   FilePenLine,
   FilePlus2,
+  FolderPlus,
   FolderSearch,
   Monitor,
   Search,
   Square,
   SquareTerminal,
+  Trash2,
   X,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
@@ -74,6 +76,8 @@ function ActionIcon({ action }: { action: ToolAction }) {
   if (action === 'Read file') return <Search {...props} />;
   if (action === 'Write file') return <FilePlus2 {...props} />;
   if (action === 'Edit file') return <FilePenLine {...props} />;
+  if (action === 'Create folder') return <FolderPlus {...props} />;
+  if (action === 'Delete file') return <Trash2 {...props} />;
   if (action === 'Create preview') return <AppWindow {...props} />;
   return <SquareTerminal {...props} />;
 }
