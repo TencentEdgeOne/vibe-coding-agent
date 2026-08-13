@@ -141,6 +141,10 @@ export default function Home() {
   const [activePreviewUrl, setActivePreviewUrl] = useState('');
   const [activePreviewRevision, setActivePreviewRevision] = useState(0);
   const [activePreviewLoaded, setActivePreviewLoaded] = useState(false);
+  // Covers the remint window before the iframe remounts. Independent of
+  // activePreviewLoaded so the 3s onLoad fallback cannot uncover an expired
+  // token's AUTHENTICATION_FAILED response mid-refresh.
+  const [previewRefreshing, setPreviewRefreshing] = useState(false);
   const [previewCopied, setPreviewCopied] = useState(false);
   const [pendingPreviewUrl, setPendingPreviewUrl] = useState('');
   const [pendingPreviewRevision, setPendingPreviewRevision] = useState(0);
@@ -475,7 +479,7 @@ export default function Home() {
       url: string,
       sandboxDebugUrl?: string,
       options?: { remountIframe?: boolean },
-    ) => {
+    ): boolean => {
       setPreview({ url, sandboxDebugUrl });
       previewRefreshedAtRef.current = Date.now();
 
@@ -487,7 +491,7 @@ export default function Home() {
         && activePreviewUrlRef.current
         && isSamePreviewTarget(activePreviewUrlRef.current, url)
       ) {
-        return;
+        return false;
       }
 
       const revision = previewRevisionRef.current + 1;
@@ -499,6 +503,7 @@ export default function Home() {
       setActivePreviewLoaded(false);
       setPendingPreviewUrl('');
       setPendingPreviewRevision(0);
+      return true;
     };
 
     const refreshPreviewLink = async (options?: {
@@ -521,8 +526,23 @@ export default function Home() {
       // Stamp the attempt, not just the success, so a dead sandbox is not probed
       // again on every tab switch.
       previewRefreshedAtRef.current = Date.now();
+
+      const willRemount = options?.remountIframe !== false;
+      const previousActiveUrl = activePreviewUrlRef.current;
+      let remounted = false;
+
       if (options?.showLoading) {
+        setPreviewRefreshing(true);
         setActivePreviewLoaded(false);
+        // Drop the live frame immediately so an expired envdAccessToken cannot
+        // paint AUTHENTICATION_FAILED under (or ahead of) the loading overlay
+        // while /resume?stage=preview is in flight.
+        if (willRemount && previousActiveUrl) {
+          activePreviewUrlRef.current = '';
+          setActivePreviewUrl('');
+          setPendingPreviewUrl('');
+          setPendingPreviewRevision(0);
+        }
       }
 
       try {
@@ -530,10 +550,10 @@ export default function Home() {
         // escalates to full workspace restore when the sandbox has gone cold.
         const data = await fetchResumePreview(id);
         if (data?.ok && data.preview?.url) {
-          applyFreshPreviewUrl(data.preview.url, data.preview.sandboxDebugUrl, {
+          remounted = applyFreshPreviewUrl(data.preview.url, data.preview.sandboxDebugUrl, {
             // A restarted dev server invalidates whatever the frame is showing,
             // so that case always reloads even when the caller asked not to.
-            remountIframe: options?.remountIframe !== false || data.preview.restarted === true,
+            remountIframe: willRemount || data.preview.restarted === true,
           });
           if (data.files?.items?.length) {
             setFileTree(data.files);
@@ -546,7 +566,7 @@ export default function Home() {
         if (options?.allowWorkspaceFallback) {
           const workspaceData = await fetchResumeWorkspace(id);
           if (workspaceData?.ok && workspaceData.preview?.url) {
-            applyFreshPreviewUrl(
+            remounted = applyFreshPreviewUrl(
               workspaceData.preview.url,
               workspaceData.preview.sandboxDebugUrl,
             );
@@ -562,6 +582,18 @@ export default function Home() {
         return false;
       } finally {
         previewRefreshInFlightRef.current = false;
+        if (options?.showLoading) {
+          setPreviewRefreshing(false);
+          // Remint failed (or token-only update): put the previous frame back so
+          // the panel is not left blank after the overlay drops.
+          if (!remounted && previousActiveUrl && !activePreviewUrlRef.current) {
+            activePreviewUrlRef.current = previousActiveUrl;
+            setActivePreviewUrl(previousActiveUrl);
+            setActivePreviewLoaded(true);
+          } else if (!remounted) {
+            setActivePreviewLoaded(true);
+          }
+        }
       }
     };
 
@@ -582,7 +614,13 @@ export default function Home() {
       if (!wentStale && sinceLastRefresh < PREVIEW_REFRESH_MIN_INTERVAL_MS) {
         return;
       }
-      void refreshPreviewLink({ remountIframe: wentStale });
+      // Long-hidden tabs almost always have an expired access token. Cover the
+      // frame and remount once the remint returns so users never stare at
+      // AUTHENTICATION_FAILED for the duration of /resume.
+      void refreshPreviewLink({
+        remountIframe: wentStale,
+        showLoading: wentStale,
+      });
     };
 
     document.addEventListener('visibilitychange', onVisibility);
@@ -636,13 +674,15 @@ export default function Home() {
 
   // Cross-origin iframe onLoad may not fire in some environments. Hide the
   // overlay after 3 seconds as a fallback to avoid a permanently blank preview.
+  // Skip while a token remint is in flight — uncovering early would flash
+  // AUTHENTICATION_FAILED from the expired frame.
   useEffect(() => {
-    if (!activePreviewUrl || activePreviewLoaded) {
+    if (!activePreviewUrl || activePreviewLoaded || previewRefreshing) {
       return;
     }
     const timer = window.setTimeout(() => setActivePreviewLoaded(true), 3000);
     return () => window.clearTimeout(timer);
-  }, [activePreviewUrl, activePreviewLoaded, activePreviewRevision]);
+  }, [activePreviewUrl, activePreviewLoaded, activePreviewRevision, previewRefreshing]);
 
   // Keep the same fallback for the background iframe so the old preview is not
   // kept forever when onLoad does not fire.
@@ -1688,11 +1728,11 @@ export default function Home() {
             </Tabs>
 
             <div className="workspace-topbar-center">
-              {sandboxTab === 'preview' && activePreviewUrl && (
+              {sandboxTab === 'preview' && shareablePreviewUrl && (
                 <button
                   type="button"
                   onClick={handleCopyPreviewUrl}
-                  className={`workspace-url-chip ${activePreviewLoaded ? 'is-ready' : ''}`}
+                  className={`workspace-url-chip ${activePreviewLoaded && !previewRefreshing ? 'is-ready' : ''}`}
                   title={previewCopied ? t.workspace.previewUrlCopied : t.workspace.copyPreviewUrl}
                 >
                   <span className="workspace-panel-status-dot" aria-hidden="true" />
@@ -1703,7 +1743,7 @@ export default function Home() {
             </div>
 
             <div className="workspace-topbar-actions">
-              {sandboxTab === 'preview' && activePreviewUrl && (
+              {sandboxTab === 'preview' && shareablePreviewUrl && (
                 <>
                   <div className="workspace-viewport-switch" role="group" aria-label="Viewport">
                     <button
@@ -1755,7 +1795,7 @@ export default function Home() {
                 <div className={`workspace-preview-shell is-${previewViewport}`}>
                   <div className="workspace-preview-stage">
                   <div className="workspace-preview-frame">
-                    {!activePreviewLoaded && (
+                    {(!activePreviewLoaded || previewRefreshing) && (
                       <div className="workspace-preview-loading">
                         {t.workspace.loadingPreview}
                       </div>
@@ -1765,7 +1805,11 @@ export default function Home() {
                         key={`${activePreviewUrl}:${activePreviewRevision}`}
                         title="sandbox-preview"
                         src={activePreviewUrl}
-                        onLoad={() => setActivePreviewLoaded(true)}
+                        onLoad={() => {
+                          if (!previewRefreshInFlightRef.current) {
+                            setActivePreviewLoaded(true);
+                          }
+                        }}
                         className="h-full w-full border-0"
                       />
                     )}
