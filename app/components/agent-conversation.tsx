@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useRef, useState } from 'react';
 import {
+  AppWindow,
   ArrowUp,
   ChevronRight,
   CircleAlert,
@@ -9,7 +10,6 @@ import {
   FilePlus2,
   FolderSearch,
   Monitor,
-  RefreshCw,
   Search,
   Square,
   SquareTerminal,
@@ -17,6 +17,10 @@ import {
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import {
+  presentToolActivity,
+  type ToolAction,
+} from '../lib/tool-activity';
 
 export type ActivityStatus = 'running' | 'completed' | 'failed' | 'stopped';
 
@@ -54,83 +58,27 @@ type ConversationCopy = {
   send: string;
   stop: string;
   workedFor: (duration: string) => string;
+  toolActions: Record<ToolAction, string>;
 };
 
-function shortToolName(name: string) {
-  return name.replace(/^mcp__[^_]+__/, '').replaceAll('_', ' ');
+export { presentToolActivity };
+
+function actionLabel(action: ToolAction, copy: ConversationCopy) {
+  return copy.toolActions[action];
 }
 
-type ToolPresentation = {
-  action: 'Environment Preparing' | 'Glob' | 'Read file' | 'Write file' | 'Edit file' | 'Rebuild preview' | 'Run command';
-  target?: string;
-};
-
-function cleanSummaryTarget(summary = '') {
-  const firstLine = summary.trim().split('\n')[0] || '';
-  return firstLine
-    .replace(/^<project>\/?/, '')
-    .replace(/\s+\([\d,.]+ chars\)$/, '')
-    .trim();
-}
-
-function readStructuredTarget(summary = '') {
-  const trimmed = summary.trim();
-  if (!trimmed.startsWith('{')) return '';
-  try {
-    const input = JSON.parse(trimmed) as Record<string, unknown>;
-    for (const key of ['path', 'file_path', 'pattern', 'glob', 'query']) {
-      if (typeof input[key] === 'string') return cleanSummaryTarget(input[key]);
-    }
-  } catch {
-    return '';
-  }
-  return '';
-}
-
-export function presentToolActivity(
-  activity: Extract<AssistantActivity, { kind: 'tool' }>,
-  previouslyReadPaths: ReadonlySet<string> = new Set(),
-): ToolPresentation {
-  const name = shortToolName(activity.name).toLowerCase();
-  const structuredTarget = readStructuredTarget(activity.inputSummary);
-  const target = structuredTarget || cleanSummaryTarget(activity.inputSummary);
-
-  if (name.includes('ensure project scaffold') || name.includes('environment')) {
-    return { action: 'Environment Preparing' };
-  }
-  if (name.includes('glob') || name.includes('files list') || name.includes('folder search')) {
-    return { action: 'Glob', target: target || '**/*' };
-  }
-  if (name.includes('read')) {
-    return { action: 'Read file', target };
-  }
-  if (name.includes('write project file') || name.includes('files write') || name.includes('write files')) {
-    return { action: previouslyReadPaths.has(target) ? 'Edit file' : 'Write file', target };
-  }
-  if (name.includes('publish preview') || name.includes('preview link')) {
-    return { action: 'Rebuild preview' };
-  }
-  if (name === 'commands' || name.includes('command')) {
-    const isPreviewCommand = /(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:dev|start|build)|\b(?:vite|next)\s+(?:dev|build)|preview/i.test(target);
-    return isPreviewCommand
-      ? { action: 'Rebuild preview' }
-      : { action: 'Run command', target };
-  }
-  return { action: 'Run command', target: target || shortToolName(activity.name) };
-}
-
-function ActionIcon({ action }: { action: ToolPresentation['action'] }) {
+function ActionIcon({ action }: { action: ToolAction }) {
   const props = { className: 'tool-activity-action-icon', 'aria-hidden': true } as const;
   if (action === 'Environment Preparing') return <Monitor {...props} />;
   if (action === 'Glob') return <FolderSearch {...props} />;
   if (action === 'Read file') return <Search {...props} />;
   if (action === 'Write file') return <FilePlus2 {...props} />;
   if (action === 'Edit file') return <FilePenLine {...props} />;
-  if (action === 'Rebuild preview') return <RefreshCw {...props} />;
+  if (action === 'Create preview') return <AppWindow {...props} />;
   return <SquareTerminal {...props} />;
 }
 
-function ActivityIcon({ status, action }: { status: ActivityStatus; action: ToolPresentation['action'] }) {
+function ActivityIcon({ status, action }: { status: ActivityStatus; action: ToolAction }) {
   if (status === 'running') {
     return <span className="tool-activity-spinner" />;
   }
@@ -164,7 +112,7 @@ function ToolActivityRow({ activity, copy, previouslyReadPaths }: {
       >
         <span className="tool-activity-status"><ActivityIcon status={activity.status} action={presentation.action} /></span>
         <span className="tool-activity-copy">
-          <span>{presentation.action}{presentation.target ? ' ' : ''}</span>
+          <span>{actionLabel(presentation.action, copy)}{presentation.target ? ' ' : ''}</span>
           {presentation.target && <strong>{presentation.target}</strong>}
         </span>
         {(activity.inputSummary || activity.outputSummary) && (

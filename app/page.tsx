@@ -1700,6 +1700,7 @@ export default function Home() {
             placeholder: t.workspace.changePlaceholder,
             send: t.workspace.send,
             stop: t.workspace.stop,
+            toolActions: t.workspace.toolActions,
           }}
           onInputChange={setInput}
           onSubmit={() => void sendMessage(input)}

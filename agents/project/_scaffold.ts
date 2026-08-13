@@ -1,7 +1,7 @@
 import type { BuildResult, BuildStatus, ProjectState, ScaffoldLog } from '../_types';
 import { debugLog } from '../utils/_debug';
 import { detectFatalToolError } from '../utils/_text';
-import { runSandboxCommand } from './_commands';
+import { runCommandCapturingExit, runSandboxCommand } from './_commands';
 
 function shellQuote(value: string) {
   return `'${value.replace(/'/g, `'\\''`)}'`;
@@ -125,7 +125,7 @@ export async function runVerification(context: any, state: ProjectState): Promis
       );
 
       if (hasBuildScript.exitCode === 0) {
-        const result = await runSandboxCommand(context, 'npm run build', {
+        const result = await runCommandCapturingExit(context, 'npm run build', {
           cwd: state.appDir,
           timeout: 600,
         });
@@ -168,7 +168,7 @@ export async function runVerification(context: any, state: ProjectState): Promis
     }
 
     if (pythonFiles.stdout.trim()) {
-      const result = await runSandboxCommand(context, 'python -m compileall .', {
+      const result = await runCommandCapturingExit(context, 'python -m compileall .', {
         cwd: state.appDir,
         timeout: 300,
       });

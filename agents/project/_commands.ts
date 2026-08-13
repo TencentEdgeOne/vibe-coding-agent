@@ -1,3 +1,5 @@
+import { parseEchoedExitCode, stripEchoedExit, withExitCodeEcho } from '../utils/_tool-phase';
+
 type SandboxCommandOptions = {
   cwd?: string;
   timeout?: number;
@@ -35,6 +37,25 @@ export async function runSandboxCommand(
   } catch (error) {
     throw new Error(formatSandboxCommandError(error, command, options));
   }
+}
+
+export async function runCommandCapturingExit(
+  context: any,
+  command: string,
+  options: SandboxCommandOptions = {},
+): Promise<SandboxCommandResult> {
+  const wrapped = withExitCodeEcho(command);
+  const result = await runSandboxCommand(context, wrapped, options);
+  const echoed = parseEchoedExitCode([result.stdout, result.stderr].join('\n'));
+  if (typeof echoed !== 'number') {
+    return result;
+  }
+  return {
+    ...result,
+    exitCode: echoed,
+    stdout: stripEchoedExit(result.stdout),
+    stderr: stripEchoedExit(result.stderr),
+  };
 }
 
 function formatSandboxCommandExit(

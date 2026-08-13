@@ -1,4 +1,4 @@
-export { runSandboxCommand } from './project/_commands';
+export { runCommandCapturingExit, runSandboxCommand } from './project/_commands';
 export { createProjectState, resetProjectWorkspace } from './project/_state';
 export {
   ensureProjectScaffold,

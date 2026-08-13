@@ -15,6 +15,7 @@ import {
   PREVIEW_SERVER_PORT,
   SANDBOX_MCP_SERVER_NAME,
 } from './_constants';
+import { wrapSandboxToolsForVerification } from './tools/_commands-wrap';
 import {
   buildPreviewLinkTool,
   buildProjectScaffoldTool,
@@ -40,7 +41,7 @@ import {
   sanitizeNarrationText,
   type NarrationEmitState,
 } from './utils/_narration';
-import { isInstallCommand, isPreviewCommand, shortenToolName } from './utils/_tool-phase';
+import { isInstallCommand, isPreviewCommand, parseEchoedExitCode, shortenToolName } from './utils/_tool-phase';
 
 function pickEnvValue(context: any, key: string) {
   const value = context?.env?.[key];
@@ -253,6 +254,7 @@ export function buildPrompt(
     'Only create binary assets when the user explicitly requests them, the feature truly depends on them, and there is no lightweight alternative. In that case, use the sandbox commands tool inside the project directory to generate, download, or decode assets. Do not write them directly with file-writing tools.',
     'Do not hand-write lockfiles, node_modules, .next, dist, build, cache directories, or package-manager generated artifacts.',
     'When a command fails, read the error and identify the specific issue first. Fix only the specific file, dependency, or configuration. Do not regenerate the whole project, and do not repeat the same failed fix.',
+    'When running verification commands such as npm run build, npx tsc, tsc -b, or python -m compileall, always append `; echo EXIT:$?`. The sandbox treats a non-zero exit as SANDBOX_UNKNOWN_ERROR and drops compiler output unless the overall shell exits 0. Read the EXIT:N line: N=0 means success; otherwise fix the reported files. Do not retry the same verification command with only `2>&1` added. Do not append this echo to npm install, long-running, background, or preview-server commands.',
     'Prefer the smallest complete change, preserving the existing project structure and style. Do not refactor anything unrelated to the user request.',
     'Next.js projects must use the standard App Router structure. Use next.config.js or next.config.mjs for configuration; do not generate next.config.ts.',
     "Next.js projects must support basePath: process.env.EDGEONE_PREVIEW_BASE_PATH || '' in next.config.js or next.config.mjs. Do not hard-code /preview into business routes.",
@@ -367,8 +369,10 @@ export async function runCodingAgent(
       throw new Error('The current Pages Agent Runtime is missing context.tools.toClaudeMcpServer. Please upgrade to a runtime that supports the new pages-agent-toolkit Tools API.');
     }
     const edgeoneMcp = context.tools.toClaudeMcpServer(mcpServerName, { alwaysLoad: true });
-    const sandboxTools = edgeoneMcp.tools.filter((tool) =>
-      !isBrowserSandboxToolName(tool.name) && !isGenericProjectWriteToolName(tool.name));
+    const sandboxTools = wrapSandboxToolsForVerification(
+      edgeoneMcp.tools.filter((tool) =>
+        !isBrowserSandboxToolName(tool.name) && !isGenericProjectWriteToolName(tool.name)),
+    );
     const sandboxAllowedTools = edgeoneMcp.allowedTools.filter((toolName) =>
       !isBrowserSandboxToolName(toolName) && !isGenericProjectWriteToolName(toolName));
     let projectTouched = false;
@@ -649,16 +653,19 @@ export async function runCodingAgent(
                 : (typeof b.content === 'string' ? b.content : '');
               const toolContext = toolContextById.get(b.tool_use_id);
               const toolName = toolContext?.name || '<unknown>';
+              const echoedExit = parseEchoedExitCode(text);
+              const commandFailed = typeof echoedExit === 'number' && echoedExit !== 0;
+              const toolFailed = b.is_error === true || commandFailed;
               onProgress?.({
                 type: 'tool_result',
                 data: {
                   tool_use_id: typeof b.tool_use_id === 'string' ? b.tool_use_id : '',
                   toolName,
                   ...(toolContext?.command ? { command: toolContext.command } : {}),
-                  ok: b.is_error !== true,
+                  ok: !toolFailed,
                   preview: truncateForStream(text, 500),
                   outputSummary: summarizeToolOutput(text, state.appDir),
-                  status: b.is_error === true ? 'failed' : 'completed',
+                  status: toolFailed ? 'failed' : 'completed',
                   endedAt: Date.now(),
                 },
               });
