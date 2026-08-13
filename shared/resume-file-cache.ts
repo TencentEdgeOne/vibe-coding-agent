@@ -2,7 +2,7 @@ import type { FileTreeItem } from './protocol.ts';
 
 export const RESUME_FILE_CACHE_MAX_FILES = 48;
 export const RESUME_FILE_CACHE_MAX_BYTES = 2 * 1024 * 1024;
-export const RESUME_FILE_CACHE_MAX_SINGLE_BYTES = 256 * 1024;
+const RESUME_FILE_CACHE_MAX_SINGLE_BYTES = 256 * 1024;
 const UNKNOWN_FILE_ESTIMATE_BYTES = 32 * 1024;
 
 const BINARY_EXTENSIONS = new Set([

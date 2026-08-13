@@ -1,6 +1,6 @@
 import type { ChatMessage } from '../types/workspace';
 
-export const CONVERSATION_STORAGE_KEY = 'web-dev-agent-conversation-id';
+const CONVERSATION_STORAGE_KEY = 'web-dev-agent-conversation-id';
 
 export function createConversationId() {
   return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
@@ -45,14 +45,6 @@ export function createMessageId(role: ChatMessage['role']) {
   return `${role}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-export function createWorkspaceTitle(messages: ChatMessage[], fallback: string) {
-  const firstRequest = messages.find((message) => message.role === 'user')?.content
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (!firstRequest) return fallback;
-  return firstRequest.length > 48 ? `${firstRequest.slice(0, 48).trimEnd()}…` : firstRequest;
-}
-
 export function sanitizeThinkingContent(value: string) {
   return value
     .replace(/\x1b\[[0-9;?]*[~A-Za-z]/g, '')
@@ -63,21 +55,6 @@ export function sanitizeThinkingContent(value: string) {
     .replace(/<\/think>/gi, '')
     .replace(/\n{4,}/g, '\n\n\n')
     .replace(/<t(?:h(?:i(?:n(?:k(?:\b[^>]*)?)?)?)?)?$/i, '');
-}
-
-export function getAssistantScrollSignature(message: ChatMessage) {
-  const events = message.processEvents ?? [];
-  const processSignature = events.map((event) =>
-    event.kind === 'thinking'
-      ? `thinking:${event.content}`
-      : `step:${event.phase}:${event.step.status}:${event.step.summary}`,
-  ).join('\u001e');
-  return [
-    message.status || '',
-    message.content,
-    events.length,
-    processSignature,
-  ].join('\u001f');
 }
 
 export function extractProjectName() {
@@ -98,9 +75,9 @@ export function extractProjectName() {
   };
 }
 
-export const EDGEONE_AI_DEPLOY_URL = 'https://edgeone.ai/makers/new?template=vibe-coding-agent&from=within&fromAgent=1&agentLang=typescript';
+const EDGEONE_AI_DEPLOY_URL = 'https://edgeone.ai/makers/new?template=vibe-coding-agent&from=within&fromAgent=1&agentLang=typescript';
 export const TENCENT_CLOUD_DEPLOY_URL = 'https://console.cloud.tencent.com/edgeone/makers/new?template=vibe-coding-agent&from=within&fromAgent=1&agentLang=typescript';
-export const EDGEONE_AI_CONTACT_URL = 'https://pages.edgeone.ai/contact?source=pages-home';
+const EDGEONE_AI_CONTACT_URL = 'https://pages.edgeone.ai/contact?source=pages-home';
 export const TENCENT_CLOUD_CONTACT_URL = 'https://cloud.tencent.com/online-service?from=connect-us';
 // 认领部署（EdgeOne）功能暂不上线，先隐藏入口。上线时改回 true 即可。
 export const CLAIM_DEPLOY_ENABLED = false;

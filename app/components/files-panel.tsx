@@ -7,9 +7,9 @@ import type { FileCopy } from '../i18n';
 import type { FileTree } from '../types/workspace';
 import type { FileContentCache } from '../hooks/use-file-content-cache';
 import { getOrCreateCachedConversationId } from '../lib/conversation';
-import { Spinner } from './markdown-message';
+import { Spinner } from './spinner';
 
-export type FilePreviewState =
+type FilePreviewState =
   | { status: 'idle' }
   | { status: 'loading'; path: string }
   | {
@@ -21,7 +21,7 @@ export type FilePreviewState =
     }
   | { status: 'error'; path: string; error: string };
 
-export type FileReadResult = {
+type FileReadResult = {
   ok?: boolean;
   path?: string;
   content?: string;
@@ -293,7 +293,7 @@ export function FilesPanel({
 }
 
 // GitHub Light-inspired syntax theme for the code workspace.
-export const CODE_THEME: PrismTheme = {
+const CODE_THEME: PrismTheme = {
   plain: { color: '#24292f', backgroundColor: 'transparent' },
   styles: [
     { types: ['comment', 'prolog', 'doctype', 'cdata'], style: { color: '#8b949e', fontStyle: 'italic' } },
@@ -313,7 +313,7 @@ export const CODE_THEME: PrismTheme = {
 
 // Map a file path to a Prism language. Unknown extensions fall back to plain text
 // (Prism renders a single token, so the file still shows uncolored but intact).
-export function prismLanguage(path: string): string {
+function prismLanguage(path: string): string {
   const ext = path.split('.').pop()?.toLowerCase() ?? '';
   switch (ext) {
     case 'ts':
@@ -361,7 +361,7 @@ export function prismLanguage(path: string): string {
   }
 }
 
-export function FileContentView({ preview, copy }: { preview: FilePreviewState; copy: FileCopy }) {
+function FileContentView({ preview, copy }: { preview: FilePreviewState; copy: FileCopy }) {
   if (preview.status === 'idle') {
     return (
       <div className="flex h-full min-h-0 items-center justify-center px-6 text-center text-muted-foreground">
@@ -441,7 +441,7 @@ export function FileContentView({ preview, copy }: { preview: FilePreviewState; 
   );
 }
 
-export function formatFileSize(bytes: number): string {
+function formatFileSize(bytes: number): string {
   if (!bytes || bytes < 1024) return `${bytes || 0} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`;

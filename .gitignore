@@ -1,14 +1,11 @@
 node_modules
 .edgeone
 .next
+*.tsbuildinfo
 .DS_Store
 .env
 .agents
 skills-lock.json
 plan*
 .codegraph
-# Tencent Cloud EdgeOne
-.env
-.edgeone/*
 .tef_dist/*
-  

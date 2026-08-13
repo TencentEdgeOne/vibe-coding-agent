@@ -27,16 +27,6 @@ export function isPreviewCommand(cmd: string) {
   );
 }
 
-export function isInstallText(text: string) {
-  const normalized = text.toLowerCase();
-  return (
-    /\bnpm\s+(install|i)\b/.test(normalized)
-    || /\binstalling\b/.test(normalized)
-    || /\badded\s+\d+\s+packages?\b/.test(normalized)
-    || /\bpip3?\s+install\b/.test(normalized)
-  );
-}
-
 export function isVerificationCommand(cmd: string) {
   const normalized = cmd.toLowerCase();
   return (
@@ -50,7 +40,7 @@ export function isVerificationCommand(cmd: string) {
   );
 }
 
-export function hasExitCodeEcho(cmd: string) {
+function hasExitCodeEcho(cmd: string) {
   return /echo\s+["']?EXIT:\$\?/.test(cmd);
 }
 

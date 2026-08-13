@@ -28,8 +28,6 @@ import type {
   AssistantActivity,
 } from '../../shared/protocol';
 
-export type { ActivityStatus, AssistantActivity } from '../../shared/protocol';
-
 export type ConversationMessage = {
   id: string;
   role: 'user' | 'assistant';
@@ -39,8 +37,6 @@ export type ConversationMessage = {
 };
 
 type ConversationCopy = {
-  agentName: string;
-  you: string;
   running: string;
   completed: string;
   failed: string;
@@ -53,8 +49,6 @@ type ConversationCopy = {
   workedFor: (duration: string) => string;
   toolActions: Record<ToolAction, string>;
 };
-
-export { presentToolActivity };
 
 function actionLabel(action: ToolAction, copy: ConversationCopy) {
   return copy.toolActions[action];

@@ -64,7 +64,7 @@ export type FileTree = {
   items: FileTreeItem[];
 };
 
-export type ActiveChatTask = {
+type ActiveChatTask = {
   id: string;
   message: string;
   status: 'queued' | 'running';
@@ -102,7 +102,7 @@ export type ChatResponse = {
   stopped?: boolean;
 };
 
-export type ProgressPhase = 'scaffold' | 'modify' | 'code' | 'install' | 'preview' | 'link';
+type ProgressPhase = 'scaffold' | 'modify' | 'code' | 'install' | 'preview' | 'link';
 
 export type ChatStreamEvent =
   | {

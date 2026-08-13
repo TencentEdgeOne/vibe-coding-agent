@@ -11,7 +11,6 @@ import {
   RefreshCw,
   Smartphone,
 } from 'lucide-react';
-import { sanitizeAssistantText } from '../../../shared/sanitize-assistant-text.ts';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -23,10 +22,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import {
-  AgentConversation,
-  type AssistantActivity,
-} from '@/app/components/agent-conversation';
+import { AgentConversation } from '@/app/components/agent-conversation';
 import { FilesPanel } from '@/app/components/files-panel';
 import { useFileContentCache } from '@/app/hooks/use-file-content-cache';
 import { useTypewriterPlaceholder } from '@/app/hooks/use-typewriter-placeholder';
@@ -39,27 +35,15 @@ import {
   createConversationId,
   createMessageId,
   extractProjectName,
-  getAssistantScrollSignature,
   getContactUrl,
   getDeployUrl,
   getOrCreateCachedConversationId,
   getStoredConversationId,
   sanitizeThinkingContent,
 } from '@/app/lib/conversation';
-import {
-  PROCESS_STEP_REVEAL_DELAY_MS,
-  appendOrUpdateProcessStep,
-  appendOrUpdateProcessThinking,
-  appendOrUpdateTimelineStep,
-  appendPendingProcessSteps,
-  classifyToolUse,
-  countProcessSteps,
-  getProcessStepForTimelineStep,
-  relocalizeProcessEvents,
-  shouldDelayProcessStepReveal,
-} from '@/app/lib/process-timeline';
 import { LANGUAGE_STORAGE_KEY, TRANSLATIONS, type Locale } from '@/app/i18n';
 import type {
+  AssistantActivity,
   AssistantStatus,
   BuildInfo,
   ChatMessage,
@@ -69,7 +53,6 @@ import type {
   LinkInfo,
   ResumeData,
   ResumeStreamEvent,
-  TimelineStep,
 } from '@/app/types/workspace';
 import { HomeStage } from './components/home-stage';
 import { SiteHeader } from './components/site-header';
@@ -119,10 +102,6 @@ export function WorkspaceScreen() {
   const [downloadBusy, setDownloadBusy] = useState(false);
   const [build, setBuild] = useState<BuildInfo | null>(null);
   const [loading, setLoading] = useState(false);
-  // Per-assistant-message progress expansion state. The running message is
-  // expanded while active, then collapsed by default.
-  const [openSteps, setOpenSteps] = useState<Record<string, boolean>>({});
-  const [showProcessThinking, setShowProcessThinking] = useState(true);
   const [sandboxTab, setSandboxTab] = useState<'preview' | 'files'>('preview');
   const [previewViewport, setPreviewViewport] = useState<'desktop' | 'mobile'>('desktop');
   const [fileTree, setFileTree] = useState<FileTree | null>(null);
@@ -145,7 +124,6 @@ export function WorkspaceScreen() {
   const [previewCopied, setPreviewCopied] = useState(false);
   const [pendingPreviewUrl, setPendingPreviewUrl] = useState('');
   const [pendingPreviewRevision, setPendingPreviewRevision] = useState(0);
-  const conversationScrollRef = useRef<HTMLDivElement | null>(null);
   const activePreviewUrlRef = useRef('');
   const activePreviewRevisionRef = useRef(0);
   const previewRevisionRef = useRef(0);
@@ -156,8 +134,6 @@ export function WorkspaceScreen() {
   const loadingRef = useRef(false);
   const workspaceRestoringRef = useRef(false);
   const hasLivePreviewRef = useRef(false);
-  const processStepRevealTimersRef = useRef<Record<string, number>>({});
-  const showProcessThinkingRef = useRef(true);
   const chatAbortControllerRef = useRef<AbortController | null>(null);
   const activeTurnIdRef = useRef('');
   const stoppingRef = useRef(false);
@@ -169,7 +145,6 @@ export function WorkspaceScreen() {
   const attachChatStreamRef = useRef<(options: {
     requestConversationId: string;
     assistantMessageId: string;
-    isStartingFromHome: boolean;
     streamUrl?: string;
     response?: Response;
     abortController?: AbortController;
@@ -195,10 +170,6 @@ export function WorkspaceScreen() {
     placeholderPhrases,
     !hasWorkspace && input.length === 0,
   );
-  const latestAssistantMessage = messages.findLast((message) => message.role === 'assistant');
-  const latestAssistantScrollSignature = latestAssistantMessage
-    ? getAssistantScrollSignature(latestAssistantMessage)
-    : '';
   const clearFileCache = fileCache.clear;
   useEffect(() => {
     clearFileCache();
@@ -318,11 +289,8 @@ export function WorkspaceScreen() {
                   id: assistantId,
                   role: 'assistant',
                   content: '',
-                  thinkingContent: '',
-                  processEvents: [],
                   activities: [],
                   status: 'running',
-                  steps: [],
                 },
               ];
             } else if (!hasUserForTurn && !(last?.role === 'assistant' && last.id === assistantId)) {
@@ -338,16 +306,12 @@ export function WorkspaceScreen() {
                   id: assistantId,
                   role: 'assistant',
                   content: '',
-                  thinkingContent: '',
-                  processEvents: [],
                   activities: [],
                   status: 'running',
-                  steps: [],
                 },
               ];
             }
           }
-          setOpenSteps((current) => ({ ...current, [assistantId]: true }));
           activeTurnIdRef.current = assistantId;
           setLoading(true);
           setFilesRefreshing(true);
@@ -442,7 +406,6 @@ export function WorkspaceScreen() {
               void attachChatStreamRef.current({
                 requestConversationId: conversationForRun,
                 assistantMessageId: activeTask.id,
-                isStartingFromHome: false,
                 streamUrl: activeTask.streamUrl
                   || `/chat?runId=${encodeURIComponent(activeTask.id)}`,
               });
@@ -630,31 +593,7 @@ export function WorkspaceScreen() {
   useEffect(() => {
     document.documentElement.lang = language === 'zh' ? 'zh-CN' : 'en';
     window.localStorage.setItem(LANGUAGE_STORAGE_KEY, language);
-    // 语言切换后，用每条消息保留的原始 steps 重刷已渲染的过程卡片文案。
-    const copy = TRANSLATIONS[language].timeline;
-    setMessages((current) =>
-      current.map((item) =>
-        item.steps && item.steps.length > 0
-          ? {
-              ...item,
-              processEvents: relocalizeProcessEvents(item.processEvents ?? [], item.steps, copy),
-            }
-          : item,
-      ),
-    );
   }, [language]);
-
-  useEffect(() => {
-    showProcessThinkingRef.current = showProcessThinking;
-  }, [showProcessThinking]);
-
-  useEffect(() => {
-    const container = conversationScrollRef.current;
-    if (!container) {
-      return;
-    }
-    container.scrollTop = container.scrollHeight;
-  }, [messages.length, latestAssistantScrollSignature]);
 
   const promotePendingPreview = () => {
     if (!pendingPreviewUrl) {
@@ -702,7 +641,6 @@ export function WorkspaceScreen() {
   async function attachChatStream(options: {
     requestConversationId: string;
     assistantMessageId: string;
-    isStartingFromHome: boolean;
     streamUrl?: string;
     response?: Response;
     abortController?: AbortController;
@@ -710,14 +648,12 @@ export function WorkspaceScreen() {
     const {
       requestConversationId,
       assistantMessageId,
-      isStartingFromHome,
       streamUrl,
     } = options;
     const workspaceEpoch = workspaceEpochRef.current;
     const requestAbortController = options.abortController || new AbortController();
     const activatedPreviewRevisions = new Map<string, number>();
     let sawProjectActivity = false;
-    let insertedModifyMarker = false;
     // Expand the right panel and open a file only after the first real file arrives.
     // file_content seeds the path; the following file_tree mounts the panel so the
     // Files list is not empty. Do not open on tool_use — that fires before any bytes.
@@ -737,69 +673,6 @@ export function WorkspaceScreen() {
       setMessages((current) =>
         current.map((item) =>
           item.id === assistantMessageId ? { ...item, ...patch } : item,
-        ),
-      );
-    };
-
-    const clearProcessStepRevealTimer = () => {
-      const timer = processStepRevealTimersRef.current[assistantMessageId];
-      if (timer) {
-        window.clearTimeout(timer);
-        delete processStepRevealTimersRef.current[assistantMessageId];
-      }
-    };
-
-    const scheduleProcessStepReveal = () => {
-      clearProcessStepRevealTimer();
-      processStepRevealTimersRef.current[assistantMessageId] = window.setTimeout(() => {
-        delete processStepRevealTimersRef.current[assistantMessageId];
-        setMessages((current) =>
-          current.map((item) =>
-            item.id === assistantMessageId
-              ? {
-                  ...item,
-                  thinkingContent: '',
-                  processEvents: appendPendingProcessSteps(
-                    item.processEvents ?? [],
-                    item.steps ?? [],
-                    t.timeline,
-                  ),
-                }
-              : item,
-          ),
-        );
-      }, PROCESS_STEP_REVEAL_DELAY_MS);
-    };
-
-    const appendStep = (step: TimelineStep) => {
-      setMessages((current) =>
-        current.map((item) =>
-          item.id === assistantMessageId
-            ? (() => {
-                const nextSteps = appendOrUpdateTimelineStep(item.steps ?? [], step);
-                const previousProcessEvents = item.processEvents ?? [];
-                const nextProcessEvents = appendOrUpdateProcessStep(
-                  previousProcessEvents,
-                  nextSteps,
-                  step,
-                  t.timeline,
-                );
-                const didAppendProcessStep = countProcessSteps(nextProcessEvents) > countProcessSteps(previousProcessEvents);
-                if (showProcessThinkingRef.current && shouldDelayProcessStepReveal(previousProcessEvents, nextProcessEvents)) {
-                  scheduleProcessStepReveal();
-                  return {
-                    ...item,
-                    steps: nextSteps,
-                  };
-                }
-                return {
-                  ...item,
-                  steps: nextSteps,
-                  thinkingContent: didAppendProcessStep && !showProcessThinkingRef.current ? '' : item.thinkingContent,
-                  processEvents: nextProcessEvents,
-                };
-              })()
-            : item,
         ),
       );
     };
@@ -874,32 +747,30 @@ export function WorkspaceScreen() {
       finalContent: string,
       finalStatus: AssistantStatus,
     ) => {
-      clearProcessStepRevealTimer();
       setMessages((current) =>
         current.map((item) =>
           item.id === assistantMessageId
-              ? {
-                  ...item,
-                  content: finalContent,
-                  activities: (item.activities ?? []).map((activity) =>
-                    activity.kind === 'tool' && activity.status === 'running'
-                      ? {
-                          ...activity,
-                          status: finalStatus === 'stopped' ? 'stopped' as const : finalStatus === 'error' ? 'failed' as const : 'completed' as const,
-                          endedAt: Date.now(),
-                        }
-                      : activity,
-                  ),
-                  thinkingContent: '',
-                processEvents: appendPendingProcessSteps(item.processEvents ?? [], item.steps ?? [], t.timeline),
+            ? {
+                ...item,
+                content: finalContent,
+                activities: (item.activities ?? []).map((activity) =>
+                  activity.kind === 'tool' && activity.status === 'running'
+                    ? {
+                        ...activity,
+                        status: finalStatus === 'stopped'
+                          ? 'stopped' as const
+                          : finalStatus === 'error'
+                            ? 'failed' as const
+                            : 'completed' as const,
+                        endedAt: Date.now(),
+                      }
+                    : activity,
+                ),
                 status: finalStatus,
               }
             : item,
         ),
       );
-      // Collapse progress by default when the stream ends. The running-phase
-      // forced expansion is temporary.
-      setOpenSteps((current) => ({ ...current, [assistantMessageId]: false }));
     };
 
     const activatePreview = (nextPreview: LinkInfo) => {
@@ -1017,21 +888,10 @@ export function WorkspaceScreen() {
       }
       if (event.type === 'tool_use' && event.data) {
         sawProjectActivity = true;
-        const toolUseStep: TimelineStep = {
-          kind: 'tool_use',
-          id: event.data.id || '',
-          name: event.data.name || '<unknown>',
-          command: event.data.command,
-          phaseHint: event.data.phaseHint,
-          fileCount: event.data.fileCount,
-        };
-        const classification = classifyToolUse(toolUseStep, t.timeline);
-        if (!isStartingFromHome && !insertedModifyMarker && classification?.phase === 'code') {
-          appendStep({ kind: 'modify_marker' });
-          insertedModifyMarker = true;
-        }
-        upsertToolActivity(toolUseStep.id, {
-          name: toolUseStep.name,
+        const toolUseId = event.data.id || '';
+        const toolName = event.data.name || '<unknown>';
+        upsertToolActivity(toolUseId, {
+          name: toolName,
           status: 'running',
           inputSummary: event.data.inputSummary || event.data.command,
           startedAt: event.data.startedAt,
@@ -1120,10 +980,8 @@ export function WorkspaceScreen() {
         return;
       }
       const msg = `${t.response.requestFailedPrefix}${error instanceof Error ? error.message : t.response.unknownError}`;
-      appendStep({ kind: 'error', text: msg });
       finalizeAssistant(msg, 'error');
     } finally {
-      clearProcessStepRevealTimer();
       const ownsActiveWorkspace = workspaceEpoch === workspaceEpochRef.current
         && chatAbortControllerRef.current === requestAbortController;
       // An old aborted stream may unwind after the user has already submitted the
@@ -1140,17 +998,11 @@ export function WorkspaceScreen() {
                     ...item,
                     status: 'done',
                     content: item.content || t.response.agentFlowEnded,
-                    thinkingContent: '',
-                    processEvents: appendPendingProcessSteps(item.processEvents ?? [], item.steps ?? [], t.timeline),
                   }
                 : item,
             ),
           );
         }
-        setOpenSteps((current) => {
-          if (current[assistantMessageId] === false) return current;
-          return { ...current, [assistantMessageId]: false };
-        });
         setLoading(false);
         setFilesRefreshing(false);
         chatAbortControllerRef.current = null;
@@ -1210,15 +1062,10 @@ export function WorkspaceScreen() {
         id: assistantMessageId,
         role: 'assistant',
         content: '',
-        thinkingContent: '',
-        processEvents: [],
         activities: [],
         status: 'running',
-        steps: [],
       },
     ]);
-    // Expand the running message by default while preserving older turn states.
-    setOpenSteps((current) => ({ ...current, [assistantMessageId]: true }));
     setFilesRefreshing(true);
     setInput('');
     setLoading(true);
@@ -1239,7 +1086,6 @@ export function WorkspaceScreen() {
       await attachChatStream({
         requestConversationId,
         assistantMessageId,
-        isStartingFromHome,
         response,
         abortController: requestAbortController,
       });
@@ -1423,7 +1269,6 @@ export function WorkspaceScreen() {
     cacheConversationId(next);
     setConversationId(next);
     setMessages([]);
-    setOpenSteps({});
     setLoading(false);
     setPreview(null);
     setDownload(null);
@@ -1546,8 +1391,6 @@ export function WorkspaceScreen() {
           canSend={canSend}
           compact
           copy={{
-            agentName: t.workspace.agentName,
-            you: t.workspace.you,
             running: t.workspace.activityRunning,
             completed: t.workspace.activityCompleted,
             failed: t.workspace.activityFailed,

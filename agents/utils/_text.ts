@@ -8,15 +8,6 @@ export function stringifyToolResult(result: unknown) {
   return typeof json === 'string' ? json : String(result);
 }
 
-export function safeJsonString(input: unknown): string {
-  try {
-    const s = JSON.stringify(input);
-    return typeof s === 'string' ? s : String(input);
-  } catch {
-    return String(input);
-  }
-}
-
 // Detect whether tool_result text indicates a sandbox infrastructure failure:
 // - "Not Found": LazySandbox's characteristic response when some routes are not initialized.
 // - "Sandbox is not initialized": LazySandbox initialization failure.

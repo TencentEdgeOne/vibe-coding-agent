@@ -1,7 +1,5 @@
 export {
-  hasExitCodeEcho,
   isInstallCommand,
-  isInstallText,
   isPreviewCommand,
   isVerificationCommand,
   parseEchoedExitCode,
