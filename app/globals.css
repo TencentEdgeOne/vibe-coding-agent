@@ -749,11 +749,17 @@ input::placeholder {
   z-index: 10;
   display: grid;
   place-items: center;
+  align-content: center;
+  gap: 12px;
   background: rgba(255, 255, 255, 0.9);
   padding: 24px;
   color: #858d98;
   font-size: 12px;
   pointer-events: none;
+}
+
+.workspace-preview-loading.is-actionable {
+  pointer-events: auto;
 }
 
 .workspace-empty-state {

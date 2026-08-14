@@ -32,3 +32,21 @@ test('vite preview config injects a path tracker and exposes the track env flag'
   assert.match(preview, /edgeone-preview-path-tracker/);
   assert.match(preview, /__edgeonePreviewPath/);
 });
+
+test('expired preview credentials never fall back to the stale iframe URL', async () => {
+  const screen = await readFile('app/features/workspace/workspace-screen.tsx', 'utf8');
+
+  assert.match(screen, /PREVIEW_CREDENTIAL_REFRESH_MS/);
+  assert.match(screen, /setPreviewRefreshFailed\(true\)/);
+  assert.match(screen, /previewUnavailable/);
+  assert.doesNotMatch(
+    screen,
+    /setActivePreviewUrl\(previousActiveUrl\)/,
+    'a failed credential remint must not reveal the gateway auth response',
+  );
+  assert.doesNotMatch(
+    screen,
+    /reload the current iframe src \(same token\)/,
+    'manual refresh must not retry an expired access token',
+  );
+});

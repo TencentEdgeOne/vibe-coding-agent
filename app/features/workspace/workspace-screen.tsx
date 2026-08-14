@@ -67,10 +67,11 @@ import {
   stopChatTask,
 } from './workspace-api';
 
-// Below this hidden duration the loaded iframe keeps its session, so a fresh URL
-// is stored for copy / open only and the frame is left untouched (no reload).
-// Beyond it the token is likely dead, so reloading with a new one is the lesser evil.
-const PREVIEW_STALE_AFTER_HIDDEN_MS = 10 * 60_000;
+// Refresh before the sandbox credential is likely to expire. A gateway auth
+// response is a JSON document, so it must never be allowed to replace the user
+// preview inside the iframe.
+const PREVIEW_CREDENTIAL_REFRESH_MS = 8 * 60_000;
+const PREVIEW_REFRESH_POLL_MS = 60_000;
 
 // Mirror of the sandbox preview base path (agents/_constants.ts). Defined
 // locally so the frontend does not cross the app -> agents boundary.
@@ -137,6 +138,10 @@ export function WorkspaceScreen() {
   // activePreviewLoaded so the 3s onLoad fallback cannot uncover an expired
   // token's AUTHENTICATION_FAILED response mid-refresh.
   const [previewRefreshing, setPreviewRefreshing] = useState(false);
+  // When credential renewal fails, keep the iframe detached and show our own
+  // retry state instead of restoring an expired URL that can render the sandbox
+  // gateway's AUTHENTICATION_FAILED JSON.
+  const [previewRefreshFailed, setPreviewRefreshFailed] = useState(false);
   const [previewCopied, setPreviewCopied] = useState(false);
   // Mirror of the preview iframe's current route (pathname + search + hash),
   // posted back by an injected script. Empty until the first message arrives.
@@ -378,6 +383,7 @@ export function WorkspaceScreen() {
       }
       if (data.preview?.url) {
         setPreview(data.preview);
+        setPreviewRefreshFailed(false);
         setSandboxTab('preview');
         previewRefreshedAtRef.current = Date.now();
         const revision = previewRevisionRef.current + 1;
@@ -391,6 +397,7 @@ export function WorkspaceScreen() {
         // No live preview on this resume — clear stale iframe state. Only then
         // fall back to the Files tab (do not steal the tab when preview is ready).
         setPreview(null);
+        setPreviewRefreshFailed(false);
         activePreviewUrlRef.current = '';
         activePreviewRevisionRef.current = 0;
         setActivePreviewUrl('');
@@ -492,6 +499,7 @@ export function WorkspaceScreen() {
       options?: { remountIframe?: boolean },
     ): boolean => {
       setPreview({ url, sandboxDebugUrl });
+      setPreviewRefreshFailed(false);
       previewRefreshedAtRef.current = Date.now();
 
       // Same host and path means only the token rotated. Reloading would throw
@@ -533,16 +541,13 @@ export function WorkspaceScreen() {
       }
 
       previewRefreshInFlightRef.current = true;
-      // Stamp the attempt, not just the success, so a dead sandbox is not probed
-      // again on every tab switch.
-      previewRefreshedAtRef.current = Date.now();
 
       const willRemount = options?.remountIframe !== false;
       const previousActiveUrl = activePreviewUrlRef.current;
-      let remounted = false;
 
       if (options?.showLoading) {
         setPreviewRefreshing(true);
+        setPreviewRefreshFailed(false);
         setActivePreviewLoaded(false);
         // Drop the live frame immediately so an expired envdAccessToken cannot
         // paint AUTHENTICATION_FAILED under (or ahead of) the loading overlay
@@ -560,7 +565,7 @@ export function WorkspaceScreen() {
         // escalates to full workspace restore when the sandbox has gone cold.
         const data = await fetchResumePreview(id);
         if (data?.ok && data.preview?.url) {
-          remounted = applyFreshPreviewUrl(data.preview.url, data.preview.sandboxDebugUrl, {
+          applyFreshPreviewUrl(data.preview.url, data.preview.sandboxDebugUrl, {
             // A restarted dev server invalidates whatever the frame is showing,
             // so that case always reloads even when the caller asked not to.
             remountIframe: willRemount || data.preview.restarted === true,
@@ -575,20 +580,17 @@ export function WorkspaceScreen() {
         }
         // The preview stage already escalates to full workspace restore on the
         // backend, so a second frontend fallback request would only duplicate work.
+        // Never restore `previousActiveUrl` here: it may contain the expired token
+        // that caused the refresh, and displaying it leaks the gateway JSON into
+        // the product UI.
+        if (options?.showLoading) {
+          setPreviewRefreshFailed(true);
+        }
         return false;
       } finally {
         previewRefreshInFlightRef.current = false;
         if (options?.showLoading) {
           setPreviewRefreshing(false);
-          // Remint failed (or token-only update): put the previous frame back so
-          // the panel is not left blank after the overlay drops.
-          if (!remounted && previousActiveUrl && !activePreviewUrlRef.current) {
-            activePreviewUrlRef.current = previousActiveUrl;
-            setActivePreviewUrl(previousActiveUrl);
-            setActivePreviewLoaded(true);
-          } else if (!remounted) {
-            setActivePreviewLoaded(true);
-          }
         }
       }
     };
@@ -605,7 +607,9 @@ export function WorkspaceScreen() {
         ? Date.now() - previewHiddenAtRef.current
         : 0;
       previewHiddenAtRef.current = 0;
-      const wentStale = hiddenFor >= PREVIEW_STALE_AFTER_HIDDEN_MS;
+      const credentialAge = Date.now() - previewRefreshedAtRef.current;
+      const wentStale = hiddenFor >= PREVIEW_CREDENTIAL_REFRESH_MS
+        || credentialAge >= PREVIEW_CREDENTIAL_REFRESH_MS;
       // Short tab switches keep the current iframe and token. Refresh only after
       // a genuinely stale interval or an explicit toolbar action.
       if (!wentStale) return;
@@ -616,8 +620,22 @@ export function WorkspaceScreen() {
       });
     };
 
+    const refreshTimer = window.setInterval(() => {
+      if (
+        document.visibilityState === 'visible'
+        && hasLivePreviewRef.current
+        && Date.now() - previewRefreshedAtRef.current >= PREVIEW_CREDENTIAL_REFRESH_MS
+      ) {
+        void refreshPreviewLink({
+          remountIframe: true,
+          showLoading: true,
+        });
+      }
+    }, PREVIEW_REFRESH_POLL_MS);
+
     document.addEventListener('visibilitychange', onVisibility);
     return () => {
+      window.clearInterval(refreshTimer);
       document.removeEventListener('visibilitychange', onVisibility);
       refreshPreviewLinkRef.current = async () => false;
     };
@@ -842,6 +860,7 @@ export function WorkspaceScreen() {
       }
 
       setPreview(nextPreview);
+      setPreviewRefreshFailed(false);
       setSandboxTab('preview');
       setResultPanelOpen(true);
       previewRefreshedAtRef.current = Date.now();
@@ -1097,6 +1116,7 @@ export function WorkspaceScreen() {
       setActivePreviewUrl('');
       setActivePreviewRevision(0);
       setActivePreviewLoaded(false);
+      setPreviewRefreshFailed(false);
       setPendingPreviewUrl('');
       setPendingPreviewRevision(0);
       previewPathRef.current = '';
@@ -1270,24 +1290,15 @@ export function WorkspaceScreen() {
   }
 
   function handleRefreshPreview() {
-    if (!activePreviewUrlRef.current) {
+    if (!shareablePreviewUrl) {
       return;
     }
-    void (async () => {
-      const refreshed = await refreshPreviewLinkRef.current({
-        showLoading: true,
-      });
-      if (refreshed) {
-        return;
-      }
-      // Last resort: reload the current iframe src (same token). Prefer the
-      // resume paths above — they mint a fresh envdAccessToken.
-      const revision = previewRevisionRef.current + 1;
-      previewRevisionRef.current = revision;
-      activePreviewRevisionRef.current = revision;
-      setActivePreviewRevision(revision);
-      setActivePreviewLoaded(false);
-    })();
+    // A failed remint deliberately leaves the iframe detached. Reloading the
+    // existing URL as a fallback would expose the sandbox gateway's raw auth
+    // response to the user.
+    void refreshPreviewLinkRef.current({
+      showLoading: true,
+    });
   }
 
   function handleOpenPreview() {
@@ -1353,6 +1364,7 @@ export function WorkspaceScreen() {
     setActivePreviewUrl('');
     setActivePreviewRevision(0);
     setActivePreviewLoaded(false);
+    setPreviewRefreshFailed(false);
     setPendingPreviewUrl('');
     setPendingPreviewRevision(0);
     setPreviewCopied(false);
@@ -1499,7 +1511,7 @@ export function WorkspaceScreen() {
             </Tabs>
 
             <div className="workspace-topbar-center">
-              {sandboxTab === 'preview' && shareablePreviewUrl && (
+              {sandboxTab === 'preview' && shareablePreviewUrl && !previewRefreshing && !previewRefreshFailed && (
                 <button
                   type="button"
                   onClick={handleCopyPreviewUrl}
@@ -1513,7 +1525,7 @@ export function WorkspaceScreen() {
             </div>
 
             <div className="workspace-topbar-actions">
-              {sandboxTab === 'preview' && shareablePreviewUrl && (
+              {sandboxTab === 'preview' && shareablePreviewUrl && !previewRefreshing && !previewRefreshFailed && (
                 <>
                   <div className="workspace-viewport-switch" role="group" aria-label="Viewport">
                     <button
@@ -1565,9 +1577,18 @@ export function WorkspaceScreen() {
                 <div className={`workspace-preview-shell is-${previewViewport}`}>
                   <div className="workspace-preview-stage">
                   <div className="workspace-preview-frame">
-                    {(!activePreviewLoaded || previewRefreshing) && (
-                      <div className="workspace-preview-loading">
-                        {t.workspace.loadingPreview}
+                    {(!activePreviewLoaded || previewRefreshing || previewRefreshFailed) && (
+                      <div className={`workspace-preview-loading${previewRefreshFailed ? ' is-actionable' : ''}`}>
+                        <span>
+                          {previewRefreshFailed
+                            ? t.workspace.previewUnavailable
+                            : t.workspace.loadingPreview}
+                        </span>
+                        {previewRefreshFailed && (
+                          <Button size="sm" variant="outline" onClick={handleRefreshPreview}>
+                            {t.workspace.retryPreview}
+                          </Button>
+                        )}
                       </div>
                     )}
                     {activePreviewUrl && (
