@@ -35,6 +35,7 @@ import {
   clearCachedConversationId,
   createConversationId,
   createMessageId,
+  downloadTextFile,
   extractProjectName,
   getContactUrl,
   getDeployUrl,
@@ -43,6 +44,7 @@ import {
   sanitizeThinkingContent,
 } from '@/app/lib/conversation';
 import { LANGUAGE_STORAGE_KEY, TRANSLATIONS, type Locale } from '@/app/i18n';
+import { conversationExportFilename, conversationToJsonl } from '../../../shared/conversation-export';
 import type {
   AssistantActivity,
   AssistantStatus,
@@ -1245,6 +1247,23 @@ export function WorkspaceScreen() {
     await stopCurrentTask();
   }
 
+  function handleExportTranscript() {
+    if (process.env.NODE_ENV !== 'development' || messages.length === 0) {
+      return;
+    }
+    const jsonl = conversationToJsonl({
+      conversationId,
+      messages: messages.map((message) => ({
+        id: message.id,
+        role: message.role,
+        content: message.content,
+        status: message.status,
+        activities: message.activities,
+      })),
+    });
+    downloadTextFile(conversationExportFilename(conversationId), jsonl);
+  }
+
   async function handleDownload() {
     if (!download?.url || downloadBusy) {
       return;
@@ -1419,10 +1438,13 @@ export function WorkspaceScreen() {
         downloadBusy={downloadBusy}
         contactUrl={contactUrl}
         showDeploy={CLAIM_DEPLOY_ENABLED}
+        showExportTranscript={process.env.NODE_ENV === 'development'}
+        canExportTranscript={messages.length > 0}
         onLanguageChange={setLanguage}
         onDownload={() => void handleDownload()}
         onNewProject={handleNewProject}
         onDeploy={handleClaimDeploy}
+        onExportTranscript={handleExportTranscript}
       />
       <Dialog open={newProjectConfirmOpen} onOpenChange={setNewProjectConfirmOpen}>
         <DialogContent

@@ -27,6 +27,9 @@ type SiteHeaderProps = {
   onDownload: () => void;
   onNewProject: () => void;
   onDeploy: () => void;
+  showExportTranscript?: boolean;
+  canExportTranscript?: boolean;
+  onExportTranscript?: () => void;
 };
 
 export function SiteHeader({
@@ -41,12 +44,28 @@ export function SiteHeader({
   onDownload,
   onNewProject,
   onDeploy,
+  showExportTranscript = false,
+  canExportTranscript = false,
+  onExportTranscript,
 }: SiteHeaderProps) {
   const isZh = language === 'zh';
 
   return (
     <header className="site-topbar">
-      <div className="site-brand" aria-label="MAKERS VIBE CODING">MAKERS VIBE CODING</div>
+      <div className="site-brand-cluster">
+        <div className="site-brand" aria-label="MAKERS VIBE CODING">MAKERS VIBE CODING</div>
+        {showExportTranscript && (
+          <button
+            type="button"
+            onClick={onExportTranscript}
+            disabled={!canExportTranscript}
+            className="site-secondary-button"
+            title={canExportTranscript ? copy.workspace.exportTranscript : copy.workspace.exportTranscriptEmpty}
+          >
+            {copy.workspace.exportTranscript}
+          </button>
+        )}
+      </div>
       <div className="site-topbar-actions">
         {!hasWorkspace && (
           <LanguageSwitch

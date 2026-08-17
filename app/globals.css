@@ -882,6 +882,13 @@ input::placeholder {
   white-space: nowrap;
 }
 
+.site-brand-cluster {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
 .site-topbar-actions {
   display: flex;
   min-width: 0;
@@ -951,6 +958,12 @@ input::placeholder {
 .site-icon-button svg {
   width: 14px;
   height: 14px;
+}
+
+.site-icon-button:disabled,
+.site-secondary-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
 }
 
 .site-icon-button:hover:not(:disabled),
