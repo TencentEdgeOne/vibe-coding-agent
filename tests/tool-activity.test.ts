@@ -3,10 +3,10 @@ import test from 'node:test';
 import { TRANSLATIONS } from '../app/i18n.ts';
 import { presentToolActivity } from '../app/lib/tool-activity.ts';
 
-test('publish_preview is create preview, not a command', () => {
-  const preview = presentToolActivity({ name: 'mcp__edgeone-sandbox__publish_preview' });
-  assert.equal(preview.action, 'Create preview');
-  assert.equal(preview.target, undefined);
+test('deploy_to_makers is create preview, not a command', () => {
+  const deploy = presentToolActivity({ name: 'mcp__edgeone-sandbox__deploy_to_makers' });
+  assert.equal(deploy.action, 'Create preview');
+  assert.equal(deploy.target, undefined);
 });
 
 test('npm run build is a run command', () => {
@@ -35,6 +35,30 @@ test('files_make_dir is create folder, not a command', () => {
   assert.equal(mkdir.target, 'src/lib');
 });
 
+test('Skill names the skill it loads instead of falling back to run command', () => {
+  const skill = presentToolActivity({ name: 'Skill', inputSummary: 'edgeone-makers-tools' });
+  assert.equal(skill.action, 'Load skill');
+  assert.equal(skill.target, 'edgeone-makers-tools');
+});
+
+test('a persisted Skill activity summarized as JSON still names the skill', () => {
+  const skill = presentToolActivity({
+    name: 'Skill',
+    inputSummary: JSON.stringify({ skill: 'edgeone-makers-tools' }, null, 2),
+  });
+  assert.equal(skill.action, 'Load skill');
+  assert.equal(skill.target, 'edgeone-makers-tools');
+});
+
+test('specific Makers reference loader displays the reference name', () => {
+  const skill = presentToolActivity({
+    name: 'mcp__edgeone-sandbox__load_makers_skill',
+    inputSummary: 'makers-agents',
+  });
+  assert.equal(skill.action, 'Load skill');
+  assert.equal(skill.target, 'makers-agents');
+});
+
 test('zh and en tool action labels cover every action', () => {
   const actions = [
     'Environment Preparing',
@@ -45,6 +69,7 @@ test('zh and en tool action labels cover every action', () => {
     'Create folder',
     'Delete file',
     'Create preview',
+    'Load skill',
     'Run command',
   ] as const;
   for (const action of actions) {

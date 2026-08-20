@@ -2,6 +2,7 @@ export { runCommandCapturingExit, runSandboxCommand } from './project/_commands'
 export { createProjectState, resetProjectWorkspace } from './project/_state';
 export {
   ensureProjectScaffold,
+  prewarmEdgeoneCli,
   repairNestedAppDirLayout,
   runVerification,
 } from './project/_scaffold';
@@ -18,3 +19,4 @@ export {
   assertPreviewServerReady,
 } from './project/_preview';
 export { createProjectArchive, restoreProjectArchive } from './project/_archive';
+export { deployProjectToMakers, resolveMakersDeployConfig } from './project/_makers-deploy';

@@ -165,3 +165,15 @@ export function resolveConversationId(
 
   return { conversationId: '', source: 'none' };
 }
+
+/** Query `conversationId` wins so curl loops are not pinned to a sticky header. */
+export function resolveConversationIdPreferQuery(context: any): {
+  conversationId: string;
+  source: string;
+} {
+  const queryId = getRequestQueryParam(context, 'conversationId').value.trim();
+  if (queryId) {
+    return { conversationId: queryId, source: 'query.conversationId' };
+  }
+  return resolveConversationId(context, { allowQuery: true });
+}

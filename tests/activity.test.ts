@@ -55,6 +55,19 @@ test('directory tools summarize as a path, not JSON', () => {
   assert.equal(summarizeToolInput('mcp__edgeone-sandbox__files_make_dir', { path: 'src/lib' }), 'src/lib');
 });
 
+test('Skill activity shows the skill name and drops the echoed launch line', () => {
+  assert.equal(summarizeToolInput('Skill', { skill: 'edgeone-makers-tools' }), 'edgeone-makers-tools');
+  assert.equal(summarizeToolOutput('Launching skill: edgeone-makers-tools', '', 'Skill'), '');
+  assert.match(summarizeToolOutput('Skill not found: nope', '', 'Skill'), /Skill not found/);
+});
+
+test('specific Makers skill activity shows its reference and hides the document body', () => {
+  const name = 'mcp__edgeone-sandbox__load_makers_skill';
+  assert.equal(summarizeToolInput(name, { skill: 'makers-agents' }), 'makers-agents');
+  assert.equal(summarizeToolOutput('---\nname: edgeone-makers-agents\n---\nGuide', '', name), '');
+  assert.match(summarizeToolOutput('Unable to load Makers skill: missing', '', name), /Unable to load/);
+});
+
 test('tool output is capped at two kilobytes', () => {
   const summary = summarizeToolOutput('x'.repeat(3_000));
   assert.ok(summary.length < 2_100);

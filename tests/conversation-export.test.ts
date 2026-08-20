@@ -2,9 +2,14 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import {
+  buildTranscriptJsonl,
   conversationExportFilename,
   conversationToJsonl,
+  isExportTaskDone,
+  mergeInFlightExportTask,
   redactExportText,
+  resolveExportTaskStatus,
+  turnsToExportMessages,
 } from '../shared/conversation-export.ts';
 
 test('conversationToJsonl flattens UI messages into one event per line', () => {
@@ -43,6 +48,7 @@ test('conversationToJsonl flattens UI messages into one event per line', () => {
       conversation_id: 'conv-abc',
       exported_at: '2026-08-17T12:00:00.000Z',
       event_count: 4,
+      task_status: 'idle',
     },
     { type: 'user', content: 'Build a landing page' },
     { type: 'assistant', content: 'Writing files' },
@@ -120,6 +126,68 @@ test('conversationToJsonl redacts secrets inside tool payloads', () => {
   assert.match(jsonl, /\[REDACTED\]/);
 });
 
+test('turnsToExportMessages maps persisted activity turns the same way as the UI', () => {
+  const messages = turnsToExportMessages([{
+    id: 'turn-1',
+    user: 'Build a landing page',
+    assistant: 'Done.',
+    status: 'completed',
+    activities: [{ kind: 'text', content: 'Done.' }],
+  }]);
+  assert.deepEqual(messages.map((message) => ({ id: message.id, role: message.role, status: message.status })), [
+    { id: 'turn-1-user', role: 'user', status: undefined },
+    { id: 'turn-1-assistant', role: 'assistant', status: 'done' },
+  ]);
+});
+
+test('buildTranscriptJsonl prefers activity turns over plain history', () => {
+  const jsonl = buildTranscriptJsonl({
+    conversationId: 'conv-abc',
+    exportedAt: '2026-08-17T12:00:00.000Z',
+    turns: [{
+      id: 'turn-1',
+      user: 'Build a landing page',
+      assistant: 'Done.',
+      status: 'completed',
+      activities: [{ kind: 'text', content: 'Done.' }],
+    }],
+    history: [{ role: 'user', content: 'stale history' }],
+  });
+  assert.match(jsonl, /Build a landing page/);
+  assert.doesNotMatch(jsonl, /stale history/);
+  assert.equal(JSON.parse(jsonl.trimEnd().split('\n')[0]).event_count, 2);
+  assert.equal(JSON.parse(jsonl.trimEnd().split('\n')[0]).task_status, 'idle');
+});
+
+test('buildTranscriptJsonl copies chat task status onto the session line', () => {
+  const jsonl = buildTranscriptJsonl({
+    conversationId: 'conv-abc',
+    exportedAt: '2026-08-17T12:00:00.000Z',
+    task: { id: 'task-9', message: 'Build a landing page', status: 'running' },
+  });
+  assert.equal(JSON.parse(jsonl.trimEnd().split('\n')[0]).task_status, 'running');
+});
+
+test('resolveExportTaskStatus treats missing tasks as idle and terminal statuses as done', () => {
+  assert.equal(resolveExportTaskStatus(null), 'idle');
+  assert.equal(resolveExportTaskStatus({ status: 'running' }), 'running');
+  assert.equal(isExportTaskDone('running'), false);
+  assert.equal(isExportTaskDone('idle'), false);
+  assert.equal(isExportTaskDone('completed'), true);
+  assert.equal(isExportTaskDone('failed'), true);
+  assert.equal(isExportTaskDone('stopped'), true);
+});
+
+test('mergeInFlightExportTask appends a running turn that is not persisted yet', () => {
+  const merged = mergeInFlightExportTask([], {
+    id: 'task-9',
+    message: 'Fix the header',
+    status: 'running',
+  });
+  assert.equal(merged[0].content, 'Fix the header');
+  assert.equal(merged[1].status, 'running');
+});
+
 test('conversationExportFilename includes a short conversation id and timestamp', () => {
   const filename = conversationExportFilename(
     'abcdefghijklmnop',
@@ -132,7 +200,7 @@ test('dev-only export button is wired next to the logo and gated by NODE_ENV', a
   const workspace = await readFile('app/features/workspace/workspace-screen.tsx', 'utf8');
   const header = await readFile('app/features/workspace/components/site-header.tsx', 'utf8');
   assert.match(workspace, /showExportTranscript=\{process\.env\.NODE_ENV === 'development'\}/);
-  assert.match(workspace, /conversationToJsonl/);
+  assert.match(workspace, /fetchConversationTranscript\(conversationId\)/);
   assert.match(header, /showExportTranscript/);
   assert.match(header, /copy\.workspace\.exportTranscript/);
   assert.doesNotMatch(header, /FileJson/);

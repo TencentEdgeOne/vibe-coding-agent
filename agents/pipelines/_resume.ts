@@ -9,6 +9,7 @@ import {
 import {
   assertPreviewServerReady,
   getFileTree,
+  prewarmEdgeoneCli,
   resolvePublicLinks,
   restoreProjectArchive,
   rewritePreviewAccessToken,
@@ -17,15 +18,21 @@ import {
 } from '../_project';
 import type { FileTreeItem, PersistedActivity, PersistedActivityTurn, ProjectState } from '../_types';
 import { createSSEResponse, sseEvent } from '../_shared';
+import { isMakersDeployUrl } from '../../shared/makers-deploy';
 import { getRequestQueryParam, resolveConversationId } from '../utils/_request';
 import { withTimeout } from './_helpers';
 import { loadResumeFileContents } from './_resume-files';
+
+function isMakersPreviewState(state: ProjectState) {
+  return state.previewKind === 'makers' || isMakersDeployUrl(state.previewUrl);
+}
 
 function toolNameImpliesProject(name: string) {
   return name.includes('write_project_file')
     || name.includes('ensure_project_scaffold')
     || name.includes('publish_preview')
     || name.includes('get_preview_link')
+    || name.includes('deploy_to_makers')
     || name.includes('write_files')
     || /__files_write$/.test(name);
 }
@@ -46,6 +53,7 @@ function activityHistoryImpliesPreview(activityHistory: PersistedActivityTurn[])
       && (
         (activity.name || '').includes('publish_preview')
         || (activity.name || '').includes('get_preview_link')
+        || (activity.name || '').includes('deploy_to_makers')
       ),
     ),
   );
@@ -61,12 +69,13 @@ type ResumeStage = 'history' | 'workspace' | 'preview';
 
 // Hard ceiling for the whole workspace stage so a stuck sandbox call cannot
 // leave the browser spinner pending indefinitely after stop/refresh.
-// Preview restart may need npm install + dev-server boot; keep this under the
-// client abort in app/lib/conversation.ts (130s).
-const WORKSPACE_RESUME_BUDGET_MS = 120_000;
+// A recycled sandbox may need both project dependencies and a cold EdgeOne CLI
+// install. Those are overlapped below, but the stage budget must still cover
+// the CLI's 420s install ceiling plus makers-dev startup.
+const WORKSPACE_RESUME_BUDGET_MS = 600_000;
 const SANDBOX_PROBE_MS = 15_000;
 const RESTORE_BUDGET_MS = 45_000;
-const PREVIEW_RESTART_BUDGET_MS = 75_000;
+const PREVIEW_RESTART_BUDGET_MS = 540_000;
 
 function jsonResponse(obj: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(obj), {
@@ -175,7 +184,15 @@ async function ensureProjectDependencies(context: any, state: ProjectState) {
 }
 
 // Warm sandboxes may still be serving /preview/; otherwise install + restart.
+// Makers deploy URLs are durable and must not be rewritten with envdAccessToken.
 async function republishPreviewOnResume(context: any, state: ProjectState) {
+  if (isMakersPreviewState(state) && state.previewUrl) {
+    return {
+      url: state.previewUrl,
+      kind: 'makers' as const,
+      restarted: false,
+    };
+  }
   try {
     await assertPreviewServerReady(context);
     const accessToken = typeof context.sandbox?.envdAccessToken === 'string'
@@ -213,7 +230,11 @@ async function republishPreviewOnResume(context: any, state: ProjectState) {
     // Server is not ready — fall through to a full restart.
   }
 
-  const depsReady = await ensureProjectDependencies(context, state);
+  // Start the global CLI install while project-local dependencies restore.
+  const [depsReady] = await Promise.all([
+    ensureProjectDependencies(context, state),
+    prewarmEdgeoneCli(context),
+  ]);
   if (!depsReady) {
     throw new Error('Project dependencies are not available for preview resume.');
   }
@@ -312,7 +333,7 @@ async function runWorkspaceRestoreBody(context: any, conversationId: string) {
   // project often has a scaffold but is not previewable yet.
   const shouldRestartPreview = !generationActive && hasFileItems && hadPreview;
 
-  let preview: { url?: string; sandboxDebugUrl?: string; error?: string; restarted?: boolean } = {};
+  let preview: { url?: string; sandboxDebugUrl?: string; error?: string; restarted?: boolean; kind?: 'sandbox' | 'makers' } = {};
   if (shouldRestartPreview) {
     try {
       preview = await withTimeout(
@@ -336,6 +357,7 @@ async function runWorkspaceRestoreBody(context: any, conversationId: string) {
     // Never-published / interrupted projects stay files-only.
     state.previewUrl = undefined;
     state.sandboxDebugUrl = undefined;
+    state.previewKind = undefined;
   }
 
   try {

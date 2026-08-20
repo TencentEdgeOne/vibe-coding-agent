@@ -1,6 +1,6 @@
 import {
   FILE_TREE_IGNORED_DIRECTORIES,
-  FILE_TREE_IGNORED_FILENAMES,
+  isIgnoredFileTreePath,
   PREVIEW_BINARY_EXTENSIONS,
   PREVIEW_BATCH_MAX_BYTES,
   PREVIEW_MAX_BYTES,
@@ -67,10 +67,7 @@ export async function getFileTree(context: any, state: ProjectState): Promise<Fi
       // 'l' (symlink) is listed as a file so a linked source file stays visible.
       && (item.kind === 'f' || item.kind === 'l' || item.kind === 'd')
     ))
-    .filter((item) => {
-      const name = item.rawPath.replace(/^\.\//, '').split('/').pop() || '';
-      return !FILE_TREE_IGNORED_FILENAMES.has(name);
-    })
+    .filter((item) => !isIgnoredFileTreePath(item.rawPath))
     .slice(0, 220)
     .map((item) => {
       const path = item.rawPath.replace(/^\.\//, '');

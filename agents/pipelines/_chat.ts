@@ -1,11 +1,12 @@
 import { runCodingAgent } from '../_agent';
 import { AUTO_FIX_MAX_ATTEMPTS } from '../_constants';
 import { getHistory, saveProjectState } from '../_memory';
-import { getFileTree, runVerification } from '../_project';
+import { getFileTree, prewarmEdgeoneCli, runVerification } from '../_project';
 import type {
   AgentProgressEvent,
   BuildStatus,
   FileTreeItem,
+  ProjectState,
   ScaffoldLog,
   StreamSend,
 } from '../_types';
@@ -17,6 +18,7 @@ import {
   FILE_PUSH_MAX_BYTES,
   FILE_PUSH_TURN_BUDGET_BYTES,
   buildRequirementConclusionFallback,
+  compactUserFacingReply,
   createProjectCheckpointController,
   extendExistingSandboxTimeout,
   isGenericCompletionReply,
@@ -25,6 +27,17 @@ import {
 } from './_helpers';
 import { createTurnLifecycle } from './_turn-lifecycle';
 import { prepareProjectWorkspace } from './_workspace';
+
+function previewLinkFromState(state: ProjectState) {
+  if (!state.previewUrl) {
+    return {};
+  }
+  return {
+    url: state.previewUrl,
+    sandboxDebugUrl: state.sandboxDebugUrl,
+    kind: state.previewKind,
+  };
+}
 
 export async function runChatPipeline(
   context: any,
@@ -71,12 +84,19 @@ export async function runChatPipeline(
   });
 
   const shouldResetProject = options.resetProject === true;
+  // Begin the slow first-sandbox CLI download as soon as environment
+  // preparation starts. The prewarm command backgrounds the install, so
+  // workspace restore/reset continues concurrently.
+  const cliPrewarm = isLikelyProjectRequest(message)
+    ? prewarmEdgeoneCli(context)
+    : Promise.resolve();
   const state = await prepareProjectWorkspace(
     context,
     conversationId,
     shouldResetProject,
     send,
   );
+  await cliPrewarm;
   const history = shouldResetProject
     ? []
     : await getHistory(context, conversationId, {
@@ -127,20 +147,17 @@ export async function runChatPipeline(
       return;
     }
     if (event.type === 'text_segment') {
+      // Keep the model's step-by-step narration visible; only the final summary
+      // is compacted. Preview links stay out of the chat.
       const text = state.previewUrl
         ? stripReturnedPreviewLinks(event.data.text, state.previewUrl)
         : event.data.text;
       if (text.length === 0) {
         return;
       }
-      recordProgress({ ...event, data: { ...event.data, text } });
-      send({
-        ...event,
-        data: {
-          ...event.data,
-          text,
-        },
-      } as unknown as Record<string, unknown>);
+      const narration = { ...event, data: { ...event.data, text } };
+      recordProgress(narration);
+      send(narration as unknown as Record<string, unknown>);
       return;
     }
     recordProgress(event);
@@ -197,14 +214,15 @@ export async function runChatPipeline(
     checkpoint.schedule();
   };
 
-  // Switch the iframe the moment publish_preview returns — do not wait for
+  // Switch the iframe the moment publish_preview (or an explicit deploy) returns.
   // verification / finalizeTurn, which can take several more seconds.
-  const handlePreviewReady = (preview: { url?: string; sandboxDebugUrl?: string }) => {
+  const handlePreviewReady = (preview: { url?: string; sandboxDebugUrl?: string; kind?: 'sandbox' | 'makers' }) => {
     if (!preview.url) {
       return;
     }
     state.previewUrl = preview.url;
     state.sandboxDebugUrl = preview.sandboxDebugUrl;
+    state.previewKind = preview.kind || (preview.url.includes('/preview/') ? 'sandbox' : 'makers');
     state.previewPublished = true;
     // Persist before the turn finishes so a refresh during verification still
     // resumes into the preview pane and restarts the live server.
@@ -215,6 +233,7 @@ export async function runChatPipeline(
         preview: {
           url: preview.url,
           sandboxDebugUrl: preview.sandboxDebugUrl,
+          kind: state.previewKind,
         },
         download: { url: '/download', filename: 'source.zip' },
       },
@@ -251,7 +270,7 @@ export async function runChatPipeline(
         reply: stoppedReply,
         conversation_id: conversationId,
         build: { status: 'skipped' as BuildStatus },
-        preview: state.previewUrl ? { url: state.previewUrl, sandboxDebugUrl: state.sandboxDebugUrl } : {},
+        preview: previewLinkFromState(state),
       },
     });
     return;
@@ -265,9 +284,12 @@ export async function runChatPipeline(
   const fallbackReply = modelResult.success
     ? buildRequirementConclusionFallback(message, state.previewUrl ? 'ready' : 'pending')
     : (modelResult.error || 'An error occurred during processing. Please try again.');
-  const assistantReply = stripReturnedPreviewLinks(sanitizeAssistantText(
+  const rawAssistantReply = stripReturnedPreviewLinks(sanitizeAssistantText(
     modelOutput || fallbackReply
   ) || fallbackReply, state.previewUrl);
+  const assistantReply = modelResult.projectTouched
+    ? compactUserFacingReply(rawAssistantReply, fallbackReply)
+    : rawAssistantReply;
 
   send({
     type: 'agent',
@@ -307,6 +329,7 @@ export async function runChatPipeline(
           preview: {
             url: state.previewUrl,
             sandboxDebugUrl: state.sandboxDebugUrl,
+            kind: state.previewKind,
           },
         },
       });
@@ -324,6 +347,7 @@ export async function runChatPipeline(
         preview: {
           url: state.previewUrl,
           sandboxDebugUrl: state.sandboxDebugUrl,
+          kind: state.previewKind,
           ...(!state.previewUrl ? { error: 'The agent did not complete publish_preview.' } : {}),
         },
       },
@@ -435,16 +459,22 @@ export async function runChatPipeline(
           reply: stoppedReply,
           conversation_id: conversationId,
           build: { status: 'skipped' as BuildStatus },
-          preview: state.previewUrl ? { url: state.previewUrl, sandboxDebugUrl: state.sandboxDebugUrl } : {},
+          preview: previewLinkFromState(state),
         },
       });
       return;
     }
-    autoFixReply = stripReturnedPreviewLinks(sanitizeAssistantText(
+    const rawAutoFixReply = stripReturnedPreviewLinks(sanitizeAssistantText(
       autoFixResult.success && autoFixResult.output
         ? autoFixResult.output
         : autoFixResult.error || ''
     ), state.previewUrl);
+    autoFixReply = autoFixResult.success
+      ? compactUserFacingReply(
+        rawAutoFixReply,
+        buildRequirementConclusionFallback(message, state.previewUrl ? 'ready' : 'generated'),
+      )
+      : rawAutoFixReply;
 
     if (autoFixReply) {
       send({
@@ -491,8 +521,7 @@ export async function runChatPipeline(
     ...(autoFixAttempts > 0 ? { autoFixAttempts, autoFixApplied } : {}),
   };
 
-  // Preview startup, HTTP readiness checks, and link generation are handled by publish_preview.
-  // publish_preview, or the legacy get_preview_link alias, writes state.previewUrl / state.sandboxDebugUrl.
+  // publish_preview (makers-dev) writes state.previewUrl.
   if (state.previewUrl) {
     send({
       type: 'preview_ready',
@@ -500,31 +529,27 @@ export async function runChatPipeline(
         preview: {
           url: state.previewUrl,
           sandboxDebugUrl: state.sandboxDebugUrl,
+          kind: state.previewKind,
         },
       },
     });
   }
 
-  const autoFixSuffix = autoFixAttempts > 0
-    ? build.status === 'success'
-      ? ` Auto-fix ran ${autoFixAttempts} time(s) based on the verification error, and verification now passes.`
-      : ` Auto-fix ran ${autoFixAttempts} time(s), but verification still fails. The final logs are preserved for further debugging.`
-    : '';
-  const buildFailedSuffix = build.status === 'failed' && autoFixAttempts === 0
-    ? ' Verification currently fails, so I did not describe the update as successful. Please continue debugging from the logs.'
-    : '';
-  const missingPreviewSuffix = state.previewUrl
-    ? ''
-    : ' No preview link was obtained. Please continue by asking the agent to call publish_preview.';
   const finalFallbackReply = buildRequirementConclusionFallback(
     message,
     build.status !== 'failed' && state.previewUrl ? 'ready' : 'generated',
   );
   const baseReply = autoFixReply || (modelOutput ? assistantReply : finalFallbackReply);
-  const reply = stripReturnedPreviewLinks(
-    `${baseReply}${autoFixSuffix}${buildFailedSuffix}${missingPreviewSuffix}`,
-    state.previewUrl,
-  );
+  const isChinese = /[\u3400-\u9fff]/.test(message);
+  const failureReply = build.status === 'failed'
+    ? (isChinese ? '项目已生成，但检查未通过，我还需要继续修复。' : 'The project was generated, but checks still fail and need another fix.')
+    : (isChinese ? '项目已生成，但预览暂时不可用，请重试。' : 'The project was generated, but the preview is temporarily unavailable. Please retry.');
+  const reply = build.status !== 'failed' && state.previewUrl
+    ? compactUserFacingReply(
+      stripReturnedPreviewLinks(baseReply, state.previewUrl),
+      finalFallbackReply,
+    )
+    : failureReply;
 
   // Code first, then state, then conversation — so a crash mid-finalize still
   // leaves a restorable projectSnapshot for resume after sandbox recycle.
@@ -553,8 +578,13 @@ export async function runChatPipeline(
       preview: {
         url: state.previewUrl,
         sandboxDebugUrl: state.sandboxDebugUrl,
+        kind: state.previewKind,
         ...(!state.previewUrl ? { error: 'The agent did not complete publish_preview.' } : {}),
       },
     },
   });
+}
+
+function isLikelyProjectRequest(message: string) {
+  return /(?:网站|网页|页面|应用|工具|组件|界面|功能|创建|搭建|开发|修改|修复|报错|错误|聊天|助手|site|website|web\s*app|page|component|build|create|implement|fix|bug|chat)/i.test(message);
 }

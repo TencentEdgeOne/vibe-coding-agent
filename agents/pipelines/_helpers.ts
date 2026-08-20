@@ -2,6 +2,7 @@ import { createProjectArchive } from '../_project';
 import { saveProjectSnapshot } from '../_memory';
 import type { ProjectState } from '../_types';
 import { debugLog } from '../utils/_debug';
+export { compactUserFacingReply } from '../../shared/user-facing-reply.ts';
 
 const SANDBOX_EXTENSION_SECONDS = 1800;
 
@@ -72,12 +73,12 @@ export function buildRequirementConclusionFallback(
   }
 
   if (status === 'ready') {
-    return `Built this for your request: ${summary}. The preview is ready in the right preview panel.`;
+    return `已按你的需求完成：${summary}。右侧预览已就绪。`;
   }
   if (status === 'generated') {
-    return `Generated the project for your request: ${summary}.`;
+    return `已按你的需求生成项目：${summary}。`;
   }
-  return `Handled your request: ${summary}. Verification and preview results are being prepared.`;
+  return `正在完成你的需求：${summary}。预览准备中。`;
 }
 
 function summarizeUserRequest(request: string) {

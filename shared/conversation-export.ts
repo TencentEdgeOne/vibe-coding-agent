@@ -29,8 +29,101 @@ export type ConversationExportMessage = {
 export type ConversationExportInput = {
   conversationId?: string | null;
   exportedAt?: string;
+  taskStatus?: string | null;
   messages: ConversationExportMessage[];
 };
+
+export type ExportTaskStatus = 'idle' | 'queued' | 'running' | 'completed' | 'failed' | 'stopped';
+
+export function resolveExportTaskStatus(task?: { status?: string } | null): ExportTaskStatus {
+  const status = task?.status;
+  if (
+    status === 'queued'
+    || status === 'running'
+    || status === 'completed'
+    || status === 'failed'
+    || status === 'stopped'
+  ) {
+    return status;
+  }
+  return 'idle';
+}
+
+export function isExportTaskDone(status: ExportTaskStatus): boolean {
+  return status === 'completed' || status === 'failed' || status === 'stopped';
+}
+
+export type ConversationExportTurn = {
+  id?: string;
+  user: string;
+  assistant: string;
+  status?: string;
+  activities?: ConversationExportActivity[];
+};
+
+export function mapExportTurnStatus(status?: string) {
+  if (!status) return undefined;
+  if (status === 'completed' || status === 'done') return 'done';
+  if (status === 'failed' || status === 'error') return 'error';
+  if (status === 'stopped' || status === 'running') return status;
+  return status;
+}
+
+export function turnsToExportMessages(turns: ConversationExportTurn[]): ConversationExportMessage[] {
+  return turns.flatMap((turn) => [
+    {
+      ...(turn.id ? { id: `${turn.id}-user` } : {}),
+      role: 'user' as const,
+      content: turn.user,
+    },
+    {
+      ...(turn.id ? { id: `${turn.id}-assistant` } : {}),
+      role: 'assistant' as const,
+      content: turn.assistant,
+      status: mapExportTurnStatus(turn.status),
+      activities: turn.activities,
+    },
+  ]);
+}
+
+export function mergeInFlightExportTask(
+  messages: ConversationExportMessage[],
+  task?: { id?: string; message?: string; status?: string } | null,
+): ConversationExportMessage[] {
+  if (!task?.id || !task.message?.trim()) return messages;
+  if (task.status === 'completed' || task.status === 'failed' || task.status === 'stopped') {
+    return messages;
+  }
+  if (messages.some((message) => message.id === `${task.id}-user` || message.id === task.id)) {
+    return messages;
+  }
+  return [
+    ...messages,
+    { id: `${task.id}-user`, role: 'user', content: task.message },
+    { id: `${task.id}-assistant`, role: 'assistant', content: '', status: 'running' },
+  ];
+}
+
+export function buildTranscriptJsonl(options: {
+  conversationId: string;
+  exportedAt?: string;
+  turns?: ConversationExportTurn[];
+  history?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  task?: { id?: string; message?: string; status?: string } | null;
+}): string {
+  const messages = mergeInFlightExportTask(
+    (options.turns?.length ?? 0) > 0
+      ? turnsToExportMessages(options.turns!)
+      : (options.history || []),
+    options.task,
+  );
+  return conversationToJsonl({
+    conversationId: options.conversationId,
+    exportedAt: options.exportedAt,
+    taskStatus: options.task?.status,
+    messages,
+  });
+}
 
 export function redactExportText(value: string): string {
   return value
@@ -106,6 +199,9 @@ export function conversationToJsonl(input: ConversationExportInput): string {
       conversation_id: conversationId,
       exported_at: exportedAt,
       event_count: events.length,
+      task_status: resolveExportTaskStatus(
+        input.taskStatus ? { status: input.taskStatus } : null,
+      ),
     }),
     ...events.map((event) => JSON.stringify(event)),
   ];

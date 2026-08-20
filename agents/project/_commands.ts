@@ -1,8 +1,12 @@
+import { resolveSandboxCommandOptions } from '../../shared/sandbox-command';
 import { parseEchoedExitCode, stripEchoedExit, withExitCodeEcho } from '../utils/_tool-phase';
+
+export { resolveSandboxCommandOptions };
 
 type SandboxCommandOptions = {
   cwd?: string;
   timeout?: number;
+  timeoutMs?: number;
   [key: string]: unknown;
 };
 
@@ -18,8 +22,9 @@ export async function runSandboxCommand(
   command: string,
   options: SandboxCommandOptions = {},
 ): Promise<SandboxCommandResult> {
+  const resolved = resolveSandboxCommandOptions(options);
   try {
-    const result = await context.sandbox.commands.run(command, options) as SandboxCommandResult;
+    const result = await context.sandbox.commands.run(command, resolved) as SandboxCommandResult;
     const stdout = typeof result.stdout === 'string' ? result.stdout : '';
     const stderr = typeof result.stderr === 'string' ? result.stderr : '';
     if (result.exitCode !== 0 && !stdout.trim() && !stderr.trim()) {

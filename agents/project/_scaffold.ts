@@ -1,4 +1,5 @@
 import type { BuildResult, BuildStatus, ProjectState, ScaffoldLog } from '../_types';
+import { buildEdgeoneCliPrewarmScript } from '../../shared/makers-deploy';
 import { debugLog } from '../utils/_debug';
 import { detectFatalToolError } from '../utils/_text';
 import { runCommandCapturingExit, runSandboxCommand } from './_commands';
@@ -80,6 +81,11 @@ export async function ensureProjectScaffold(
   await sandbox.files.makeDir(state.sessionDir);
   await sandbox.files.makeDir(state.appDir);
 
+  // CLI installation dominates first preview latency in a fresh sandbox. Start
+  // it in the background while the model writes project files; publish_preview
+  // will join this same install instead of launching a duplicate.
+  await prewarmEdgeoneCli(context);
+
   await repairNestedAppDirLayout(context, state, onLog);
 
   const existing = await runSandboxCommand(
@@ -111,20 +117,43 @@ export async function ensureProjectScaffold(
   return true;
 }
 
+export async function prewarmEdgeoneCli(context: any) {
+  await runSandboxCommand(context, buildEdgeoneCliPrewarmScript(), {
+    timeout: 10,
+  });
+}
+
 export async function runVerification(context: any, state: ProjectState): Promise<BuildResult> {
   try {
     const packageExists = await context.sandbox.files.exists(`${state.appDir}/package.json`);
     if (packageExists) {
       const hasBuildScript = await runSandboxCommand(
         context,
-        'node -e "const p=require(\'./package.json\'); process.exit(p.scripts && p.scripts.build ? 0 : 2)"',
+        'node -e "try { const p=require(\'./package.json\'); process.stdout.write((p.scripts && p.scripts.build) ? \'yes\' : \'no\'); } catch (e) { process.stdout.write(\'error\'); }"',
         {
           cwd: state.appDir,
           timeout: 30,
         },
       );
 
-      if (hasBuildScript.exitCode === 0) {
+      if (hasBuildScript.exitCode !== 0) {
+        return {
+          status: 'failed',
+          stdout: hasBuildScript.stdout,
+          stderr: hasBuildScript.stderr || 'Failed to read package.json; unable to determine whether a build script exists.',
+        };
+      }
+
+      const buildFlag = hasBuildScript.stdout.trim();
+      if (buildFlag === 'error') {
+        return {
+          status: 'failed',
+          stdout: hasBuildScript.stdout,
+          stderr: 'Failed to parse package.json; unable to determine whether a build script exists.',
+        };
+      }
+
+      if (buildFlag === 'yes') {
         const result = await runCommandCapturingExit(context, 'npm run build', {
           cwd: state.appDir,
           timeout: 600,
@@ -137,7 +166,7 @@ export async function runVerification(context: any, state: ProjectState): Promis
         };
       }
 
-      if (hasBuildScript.exitCode !== 2) {
+      if (buildFlag !== 'no') {
         return {
           status: 'failed',
           stdout: hasBuildScript.stdout,

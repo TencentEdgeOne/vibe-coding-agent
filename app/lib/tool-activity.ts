@@ -7,6 +7,7 @@ export type ToolAction =
   | 'Create folder'
   | 'Delete file'
   | 'Create preview'
+  | 'Load skill'
   | 'Run command';
 
 export type ToolPresentation = {
@@ -31,7 +32,7 @@ function readStructuredTarget(summary = '') {
   if (!trimmed.startsWith('{')) return '';
   try {
     const input = JSON.parse(trimmed) as Record<string, unknown>;
-    for (const key of ['path', 'file_path', 'pattern', 'glob', 'query', 'command', 'cmd']) {
+    for (const key of ['path', 'file_path', 'pattern', 'glob', 'query', 'command', 'cmd', 'skill']) {
       if (typeof input[key] === 'string') return cleanSummaryTarget(input[key]);
     }
   } catch {
@@ -51,6 +52,9 @@ export function presentToolActivity(
   if (name.includes('ensure project scaffold') || name.includes('environment')) {
     return { action: 'Environment Preparing' };
   }
+  if (name === 'skill' || name === 'load makers skill') {
+    return { action: 'Load skill', target };
+  }
   if (name.includes('glob') || name.includes('files list') || name.includes('folder search')) {
     return { action: 'Glob', target: target || '**/*' };
   }
@@ -66,7 +70,7 @@ export function presentToolActivity(
   if (name.includes('write project file') || name.includes('files write') || name.includes('write files')) {
     return { action: previouslyReadPaths.has(target) ? 'Edit file' : 'Write file', target };
   }
-  if (name.includes('publish preview') || name.includes('preview link')) {
+  if (name.includes('publish preview') || name.includes('preview link') || name.includes('deploy to makers')) {
     return { action: 'Create preview' };
   }
   if (name === 'commands' || name.includes('command')) {

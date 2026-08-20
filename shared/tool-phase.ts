@@ -22,9 +22,39 @@ export function isPreviewCommand(cmd: string) {
   return (
     /\b(npm|pnpm|yarn|bun)\s+(run\s+)?(dev|start)\b/.test(normalized)
     || /\b(next|vite|astro|nuxt)\s+dev\b/.test(normalized)
-    || /\bpython\s+-m\s+http\.server\b/.test(normalized)
+    || /\b(python\s+-m\s+http\.server|edgeone\s+makers\s+dev)\b/.test(normalized)
     || /\b(3000|8080)\b/.test(normalized) && /\b(dev|serve|server|preview|proxy)\b/.test(normalized)
   );
+}
+
+function looksLikeEdgeoneCli(command: string) {
+  // Match the `edgeone` binary, not npm scopes like `@edgeone/pages-blob`.
+  return /(?:^|[\s;&|`(/])edgeone(?:\s|$)/i.test(command)
+    || /\bnpx\s+edgeone\b/i.test(command);
+}
+
+export function forbiddenSandboxCommandReason(command: string): string | null {
+  const text = command.trim();
+  if (!text) return null;
+  if (looksLikeEdgeoneCli(text)) {
+    return 'Do not run the edgeone CLI or pass tokens. Call publish_preview. If that tool failed, read its error and tell the user — do not debug the CLI.';
+  }
+  if (/https?:\/\/ai-gateway\.edgeone\.(?:link|ai)/i.test(text)) {
+    return 'Do not probe the AI Gateway or enumerate models. Use context.env.AI_GATEWAY_MODEL with the documented @makers/hy3-preview fallback, then verify through the generated project endpoint once.';
+  }
+  if (/(?:^|[\s"'`/])[.]edgeone(?:\/|$)/i.test(text)) {
+    return 'Do not inspect or modify generated .edgeone runtime artifacts. Fix project source files only, then call publish_preview.';
+  }
+  if (
+    /pages-api\.(?:edgeone\.ai|cloud\.tencent\.com)/i.test(text)
+    || /\b(?:Describe|Create|Delete|Modify)PagesProject/i.test(text)
+  ) {
+    return 'Do not call Makers/Pages APIs or delete other projects. If preview or deploy failed with a quota or environment error, tell the user.';
+  }
+  if (/[.]curlrc\b/.test(text)) {
+    return 'Do not change curl defaults. Call publish_preview.';
+  }
+  return null;
 }
 
 export function isVerificationCommand(cmd: string) {

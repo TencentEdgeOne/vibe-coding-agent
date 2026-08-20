@@ -41,6 +41,8 @@ export type BuildInfo = {
   autoFixApplied?: boolean;
 };
 
+export type PreviewKind = 'sandbox' | 'makers';
+
 export type LinkInfo = {
   url?: string;
   sandboxDebugUrl?: string;
@@ -48,6 +50,8 @@ export type LinkInfo = {
   error?: string;
   /** Preview resume restarted the server, invalidating an already loaded iframe. */
   restarted?: boolean;
+  /** Makers deploy URLs skip sandbox envdAccessToken refresh. */
+  kind?: PreviewKind;
 };
 
 export type FileTreeItem = {

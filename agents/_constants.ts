@@ -1,7 +1,10 @@
-// The app dev server listens on internal port 3000; public previews are exposed
-// through the sandbox nginx reverse proxy on port 9000 under /preview/.
+// Preview topology inside the sandbox:
+//   edgeone makers dev  → :8088 (app at /)
+//   strip-proxy         → :3000 (/preview/* → :8088/*)
+//   sandbox nginx       → :9000 public host, pathname /preview/
 export const PREVIEW_SERVER_PORT = 3000;
 export const PREVIEW_PUBLIC_PORT = 9000;
+export const MAKERS_DEV_PORT = 8088;
 export const PREVIEW_PATH_PREFIX = '/preview/';
 export const HISTORY_FETCH_LIMIT = 50;
 export const AUTO_FIX_MAX_ATTEMPTS = 1;
@@ -12,6 +15,10 @@ export const DEFAULT_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/
 export const GATEWAY_QUOTA_BYPASS_HEADER = 'X-Gateway-Quota-Bypass: true';
 export const GATEWAY_QUOTA_PROMPT_HEADER = 'X-Prompt-Log: true';
 export const GATEWAY_CONVERSATION_ID_HEADER_NAME = 'Makers-Conversation-Id';
+
+export const MAKERS_SKILL_NAMES = [
+  'edgeone-makers-tools',
+] as const;
 
 export const SANDBOX_MCP_SERVER_NAME = 'edgeone-sandbox';
 
@@ -36,8 +43,10 @@ export const ARCHIVE_EXCLUDED_DIRECTORIES = [
   '__pycache__',
   '.venv',
   'venv',
-  // Created by static-http preview (ln -sfn . preview) so /preview/ is served.
+  // Created by static-http preview (legacy) or unused; keep hidden.
   'preview',
+  // Created by `edgeone makers deploy` / `makers dev`; contains platform metadata, not app source.
+  '.edgeone',
 ];
 
 
@@ -70,6 +79,8 @@ export const FILE_TREE_IGNORED_DIRECTORIES = [
   'venv',
   // Runtime symlink for static preview hosting — not project source.
   'preview',
+  // Created by `edgeone makers deploy` / `makers dev`; hide it from the Files panel.
+  '.edgeone',
 ];
 
 export const FILE_TREE_IGNORED_FILENAMES = new Set([
@@ -79,6 +90,12 @@ export const FILE_TREE_IGNORED_FILENAMES = new Set([
   // entry; hide it so the Files panel does not try to open a directory.
   'preview',
 ]);
+
+export function isIgnoredFileTreePath(rawPath: string) {
+  const segments = rawPath.replace(/^\.\//, '').split('/').filter(Boolean);
+  return segments.some((segment) => FILE_TREE_IGNORED_DIRECTORIES.includes(segment))
+    || FILE_TREE_IGNORED_FILENAMES.has(segments.at(-1) || '');
+}
 
 export const BLOCKED_PROJECT_WRITE_SEGMENTS = new Set([
   'node_modules',
@@ -91,6 +108,7 @@ export const BLOCKED_PROJECT_WRITE_SEGMENTS = new Set([
 ]);
 
 export const BLOCKED_PROJECT_WRITE_FILENAMES = new Set([
+  '.env',
   'package-lock.json',
   'pnpm-lock.yaml',
   'yarn.lock',

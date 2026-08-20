@@ -11,9 +11,9 @@
 Web Dev Agent turns natural-language requests into runnable web projects. For each conversation, it prepares an isolated temporary sandbox workspace where it creates or edits project files, installs dependencies, publishes a live preview, and feeds verification results back into the agent loop. Use it for coding-style Makers templates where users need a generated app, a visible preview, and a file browser in one workflow.
 
 - **Temporary sandbox workspace** — creates and edits project code inside the current conversation's temporary sandbox
-- **Multi-stack generation** — creates or updates Next.js, Vite/React, static, Node service, Flask/FastAPI, and similar lightweight web apps
-- **Claude Agent SDK loop** — runs the model with EdgeOne sandbox MCP tools and a restricted tool set
-- **Live preview** — starts the app inside the temporary sandbox and returns a runtime-generated preview URL
+- **Makers-compatible generation** — static sites, Cloud Functions, Edge Functions, AI agent endpoints under `agents/`, and similar layouts that Makers can preview locally
+- **Claude Agent SDK loop** — runs the model with EdgeOne sandbox MCP tools, vendored Makers skills, and a restricted tool set
+- **Live preview** — starts `edgeone makers dev` in the sandbox and shows that URL in the right panel (not a cloud `makers deploy`)
 - **Verification feedback** — runs build or Python compile checks and attempts one automatic repair pass when verification fails
 
 ## Environment Variables
@@ -24,6 +24,8 @@ Web Dev Agent turns natural-language requests into runnable web projects. For ea
 | `AI_GATEWAY_BASE_URL` | Yes | Gateway base URL. For Makers Models, use `https://ai-gateway.edgeone.link/v1`. |
 | `AI_GATEWAY_MODEL` | No | Model ID. Defaults to `@makers/deepseek-v4-flash` (a built-in Makers model). |
 | `WEB_DEV_AGENT_DEBUG` | No | Set to `true` or `1` to enable redacted server-side debug logs. Defaults to off. |
+| `EDGEONE_PAGES_API_TOKEN` | No | Optional. Used only if the user asks to live-deploy via `deploy_to_makers`. Preview does not need it. Do not commit it. |
+| `MAKERS_DEPLOY_PROJECT_NAME` | No | Shared mock project name. Defaults to `vibe-coding-playground`. |
 
 This template follows the OpenAI-compatible standard — point these at Makers Models or any compatible provider.
 
@@ -81,8 +83,9 @@ web-dev-agent/
 │   ├── _pipelines.ts       # Chat and file-read pipelines
 │   ├── _project.ts         # Sandbox project, preview, and verification helpers
 │   ├── _types.ts           # Shared TypeScript types
-│   ├── tools/              # Custom sandbox MCP tools
+│   ├── tools/              # Custom sandbox MCP tools (scaffold, write, preview, deploy)
 │   └── utils/              # Path, text, and build-error helpers
+├── .claude/skills/         # Vendored, sandbox-adapted Makers skills
 ├── edgeone.json            # Agent runtime configuration
 ├── next.config.ts          # Next.js configuration for the template app
 ├── package.json            # Scripts and dependencies
@@ -99,7 +102,7 @@ The agent runs in session mode under `agents/`. Requests with the same `conversa
 2. **State restore** — the chat pipeline reads conversation history from `context.store` and loads metadata for the current temporary sandbox project.
 3. **LLM and tool loop** — the Claude Agent SDK runs with the `edgeone-sandbox` MCP server, `permissionMode: 'dontAsk'`, and sandbox-only tools. The agent must call `ensure_project_scaffold` before reading or writing project files.
 4. **Project editing** — generated source files are written incrementally through one `write_project_file` call per file, so progress reaches the UI continuously. Commands and dependency installation run inside the sandbox.
-5. **Preview publish** — `publish_preview` starts the app on internal port `3000`, waits for the preview entry to become ready, and returns a preview URL that is valid only for the current temporary sandbox lifetime.
+5. **Preview publish** — `publish_preview` runs `edgeone makers dev` inside the sandbox, proxies it under `/preview/`, and shows that URL in the right panel. `deploy_to_makers` remains available only when the user explicitly asks to publish a live Makers URL.
 6. **Verification** — the runtime runs `npm run build` when a Node project has a build script, or `python -m compileall .` when Python files are present. If verification fails after a successful agent run, the pipeline attempts one auto-fix pass.
 7. **SSE and reconnect** — `POST /chat` receives status events, logs, tool calls, tool results, file updates, preview state, build status, and the final reply. After a refresh, `GET /chat?runId=...` reconnects to the same detached task. `GET /resume` also hydrates up to 48 text files / 2 MiB over its existing SSE connection, so browsing a typical restored project does not issue per-file Agent requests. Larger or uncached files fall back to `/file` on click. Task state and the final event are persisted in conversation metadata; the live process keeps a short in-memory replay buffer.
 

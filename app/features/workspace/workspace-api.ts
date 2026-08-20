@@ -36,7 +36,9 @@ export function openResumeStream(conversationId: string, signal?: AbortSignal) {
   });
 }
 
-const RESUME_CLIENT_TIMEOUT_MS = 130_000;
+// Cold resume can reinstall the EdgeOne CLI (420s ceiling) and project
+// dependencies before makers-dev starts.
+const RESUME_CLIENT_TIMEOUT_MS = 620_000;
 
 function fetchTimedResumeStage(conversationId: string, stage: 'preview') {
   const controller = new AbortController();
@@ -114,5 +116,25 @@ export function fetchProjectArchive(url: string, conversationId: string) {
           'makers-conversation-id': conversationId,
         }
       : {},
+  });
+}
+
+export function fetchConversationTranscript(conversationId: string) {
+  return fetch(`/transcript?conversationId=${encodeURIComponent(conversationId)}`, {
+    method: 'GET',
+    headers: {
+      conversationId,
+      'makers-conversation-id': conversationId,
+    },
+  });
+}
+
+export function fetchChatTaskStatus(conversationId: string) {
+  return fetch(`/status?conversationId=${encodeURIComponent(conversationId)}`, {
+    method: 'GET',
+    headers: {
+      conversationId,
+      'makers-conversation-id': conversationId,
+    },
   });
 }

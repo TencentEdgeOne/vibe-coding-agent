@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useRef, useState } from 'react';
 import {
   AppWindow,
   ArrowUp,
+  BookOpen,
   ChevronRight,
   CircleAlert,
   FilePenLine,
@@ -19,6 +20,11 @@ import {
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import {
+  buildAssistantTimeline,
+  lastTimelineText,
+  trailingTimelineContent,
+} from '../lib/assistant-timeline';
 import {
   presentToolActivity,
   type ToolAction,
@@ -46,7 +52,6 @@ type ConversationCopy = {
   placeholder: string;
   send: string;
   stop: string;
-  workedFor: (duration: string) => string;
   toolActions: Record<ToolAction, string>;
 };
 
@@ -64,6 +69,7 @@ function ActionIcon({ action }: { action: ToolAction }) {
   if (action === 'Create folder') return <FolderPlus {...props} />;
   if (action === 'Delete file') return <Trash2 {...props} />;
   if (action === 'Create preview') return <AppWindow {...props} />;
+  if (action === 'Load skill') return <BookOpen {...props} />;
   return <SquareTerminal {...props} />;
 }
 
@@ -145,95 +151,56 @@ function AssistantTurn({ message, copy }: {
   copy: ConversationCopy;
 }) {
   const activities = message.activities ?? [];
-  const toolActivities = activities.filter(
-    (activity): activity is Extract<AssistantActivity, { kind: 'tool' }> => activity.kind === 'tool',
-  );
+  const blocks = buildAssistantTimeline(activities);
   const readPaths = new Set<string>();
-  const previouslyReadPaths = toolActivities.map((activity) => {
+  const previouslyReadPaths = activities.map((activity) => {
     const snapshot = new Set(readPaths);
-    const presentation = presentToolActivity(activity);
-    if (presentation.action === 'Read file' && presentation.target) readPaths.add(presentation.target);
+    if (activity.kind === 'tool') {
+      const presentation = presentToolActivity(activity);
+      if (presentation.action === 'Read file' && presentation.target) {
+        readPaths.add(presentation.target);
+      }
+    }
     return snapshot;
   });
-  const [traceOpen, setTraceOpen] = useState(true);
-  const normalizedFinal = message.content.replace(/\s+/g, ' ').trim();
-  const isFinalTextDuplicate = (content: string) => {
-    if (message.status === 'running' || !normalizedFinal) return false;
-    const normalizedActivity = content.replace(/\s+/g, ' ').trim();
-    return normalizedActivity.length > 24
-      && (normalizedActivity.includes(normalizedFinal) || normalizedFinal.includes(normalizedActivity));
-  };
-
-  useEffect(() => {
-    if (message.status === 'running') setTraceOpen(true);
-  }, [message.status]);
-
-  const startedAt = toolActivities.reduce(
-    (earliest, activity) => activity.startedAt ? Math.min(earliest, activity.startedAt) : earliest,
-    Number.POSITIVE_INFINITY,
+  const lastText = lastTimelineText(blocks);
+  const trailing = trailingTimelineContent(lastText?.content, message.content, message.status);
+  const hasRunningTool = activities.some(
+    (activity) => activity.kind === 'tool' && activity.status === 'running',
   );
-  const endedAt = toolActivities.reduce(
-    (latest, activity) => activity.endedAt ? Math.max(latest, activity.endedAt) : latest,
-    0,
-  );
-  const elapsedSeconds = Number.isFinite(startedAt)
-    ? Math.max(1, Math.round(((endedAt || startedAt) - startedAt) / 1000))
-    : 0;
-  const duration = elapsedSeconds >= 60
-    ? `${Math.floor(elapsedSeconds / 60)}m ${elapsedSeconds % 60}s`
-    : `${elapsedSeconds}s`;
 
   return (
     <section className="conversation-turn conversation-assistant-turn">
       <div className="conversation-body">
-        {activities.map((activity, index) => activity.kind === 'text' ? (
-          isFinalTextDuplicate(activity.content)
-            ? null
-            : <Markdown key={`text-${index}`} content={activity.content} />
-        ) : null)}
-        {toolActivities.length > 0 && (
-          <div className="assistant-trace">
-            <button
-              type="button"
-              className="assistant-trace-trigger"
-              aria-expanded={traceOpen}
-              onClick={() => setTraceOpen((current) => !current)}
-            >
-              {message.status === 'running' ? (
-                <span className="assistant-trace-spinner" aria-hidden="true" />
-              ) : (
-                <ChevronRight className="assistant-trace-chevron" aria-hidden="true" />
-              )}
-              <span>{message.status === 'running' ? copy.running : copy.workedFor(duration)}</span>
-              {message.status === 'error' && <CircleAlert aria-hidden="true" />}
-            </button>
-            {traceOpen && (
-              <div className="assistant-trace-list">
-                {toolActivities.map((activity, index) => (
-                  <ToolActivityRow
-                    key={activity.toolUseId || `tool-${index}`}
-                    activity={activity}
-                    copy={copy}
-                    previouslyReadPaths={previouslyReadPaths[index]}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-        {/* While running, streamed text activities are the source of truth. Showing
-            message.content at the same time repeats the trailing sentence. */}
-        {message.content && message.status !== 'running' && (
+        {blocks.map((block) => {
+          if (block.kind === 'text') {
+            return <Markdown key={`text-${block.index}`} content={block.content} />;
+          }
+
+          return (
+            <div key={`tools-${block.items[0]?.index ?? 0}`} className="conversation-tool-chain">
+              {block.items.map(({ activity, index }) => (
+                <ToolActivityRow
+                  key={activity.toolUseId || `tool-${index}`}
+                  activity={activity}
+                  copy={copy}
+                  previouslyReadPaths={previouslyReadPaths[index] ?? new Set()}
+                />
+              ))}
+            </div>
+          );
+        })}
+        {trailing && (
           message.status === 'error' ? (
             <div className="assistant-error-message" role="status">
               <CircleAlert aria-hidden="true" />
-              <span>{message.content}</span>
+              <span>{trailing}</span>
             </div>
           ) : (
-            <Markdown content={message.content} />
+            <Markdown content={trailing} />
           )
         )}
-        {message.status === 'running' && activities.length === 0 && (
+        {message.status === 'running' && !hasRunningTool && (
           <div className="agent-waiting" aria-label={copy.running}>
             <span />
             <span />

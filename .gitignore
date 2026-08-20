@@ -9,3 +9,4 @@ skills-lock.json
 plan*
 .codegraph
 .tef_dist/*
+logs/

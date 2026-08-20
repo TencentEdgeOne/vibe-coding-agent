@@ -1,4 +1,5 @@
 export {
+  forbiddenSandboxCommandReason,
   isInstallCommand,
   isPreviewCommand,
   isVerificationCommand,

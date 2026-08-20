@@ -11,9 +11,9 @@
 Web Dev Agent 可以把自然语言需求转换为可运行的 Web 项目。每个会话会准备一个隔离的临时沙箱工作区，在其中创建或修改项目文件、安装依赖、发布实时预览，并把验证结果反馈回 Agent 循环。它适合需要生成应用、查看预览、浏览文件的一体化 Coding 类 Makers 模板。
 
 - **临时沙箱工作区** — 在当前会话对应的临时沙箱中创建和修改项目代码
-- **多技术栈生成** — 创建或更新 Next.js、Vite/React、静态页面、Node 服务、Flask/FastAPI 等轻量 Web 应用
-- **Claude Agent SDK 循环** — 使用 EdgeOne 沙箱 MCP 工具和受限工具集运行模型
-- **实时预览** — 在临时沙箱内启动应用，并返回运行时生成的预览 URL
+- **适配 Makers 的生成** — 静态站、Cloud Functions、Edge Functions、`agents/` AI 接口等可在 Makers 本地预览的布局
+- **Claude Agent SDK 循环** — 使用 EdgeOne 沙箱 MCP 工具、内置 Makers skills 和受限工具集运行模型
+- **实时预览** — 在沙箱内启动 `edgeone makers dev`，并把该 URL 展示在右侧面板（不是云端 `makers deploy`）
 - **验证反馈** — 执行构建或 Python 编译检查，验证失败时尝试一轮自动修复
 
 ## 环境变量
@@ -24,6 +24,8 @@ Web Dev Agent 可以把自然语言需求转换为可运行的 Web 项目。每�
 | `AI_GATEWAY_BASE_URL` | 是 | 网关 Base URL。使用 Makers Models 时填写 `https://ai-gateway.edgeone.link/v1`。 |
 | `AI_GATEWAY_MODEL` | 否 | 模型 ID。默认值为 `@makers/deepseek-v4-flash`（Makers 内置模型）。 |
 | `WEB_DEV_AGENT_DEBUG` | 否 | 设置为 `true` 或 `1` 时启用脱敏的服务端调试日志。默认关闭。 |
+| `EDGEONE_PAGES_API_TOKEN` | 否 | 可选。仅当用户明确要求线上发布时，`deploy_to_makers` 才会用到。预览不需要。不要提交到仓库。 |
+| `MAKERS_DEPLOY_PROJECT_NAME` | 否 | 共享 mock 项目名。默认 `vibe-coding-playground`。 |
 
 本模板遵循 OpenAI 兼容标准，可以将这些变量指向 Makers Models 或任意兼容供应商。
 
@@ -81,8 +83,9 @@ web-dev-agent/
 │   ├── _pipelines.ts       # 对话和文件读取流水线
 │   ├── _project.ts         # 沙箱项目、预览和验证辅助逻辑
 │   ├── _types.ts           # 共享 TypeScript 类型
-│   ├── tools/              # 自定义沙箱 MCP 工具
+│   ├── tools/              # 自定义沙箱 MCP 工具（scaffold / write / preview / deploy）
 │   └── utils/              # 路径、文本和构建错误辅助逻辑
+├── .claude/skills/         # 适配沙箱后的 Makers skills
 ├── edgeone.json            # Agent 运行时配置
 ├── next.config.ts          # 模板应用的 Next.js 配置
 ├── package.json            # 脚本和依赖
@@ -99,7 +102,7 @@ Agent 在 `agents/` 下以会话模式运行。带有相同 `conversation_id` �
 2. **状态恢复** — Chat pipeline 从 `context.store` 读取对话历史，并加载当前临时沙箱项目的元数据。
 3. **LLM 与工具循环** — Claude Agent SDK 使用 `edgeone-sandbox` MCP 服务、`permissionMode: 'dontAsk'` 和仅限沙箱的工具运行。Agent 必须先调用 `ensure_project_scaffold`，再读取或写入项目文件。
 4. **项目编辑** — 生成的源码通过 `write_project_file` 按文件逐个写入，让进度持续反馈到界面。命令执行和依赖安装都在沙箱内完成。
-5. **发布预览** — `publish_preview` 在内部 `3000` 端口启动应用，等待预览入口就绪，并返回仅在当前临时沙箱生命周期内可用的预览 URL。
+5. **发布预览** — `publish_preview` 在沙箱内执行 `edgeone makers dev`，经 `/preview/` 反代后展示在右侧面板。`deploy_to_makers` 仅在用户明确要求发布线上 Makers URL 时使用。
 6. **验证检查** — Node 项目包含 build 脚本时运行 `npm run build`；存在 Python 文件时运行 `python -m compileall .`。如果 Agent 成功运行后验证失败，流水线会尝试一轮自动修复。
 7. **SSE 与重连** — 正常生成直接通过 `POST /chat` 的 SSE 接收状态、日志、工具、文件、预览、构建状态和最终回复；页面刷新后使用 `GET /chat?runId=...` 重连同一个后台任务。`GET /resume` 还会在原有 SSE 连接中预热最多 48 个、总计 2 MiB 的文本文件，因此典型项目恢复后浏览源码不再逐文件请求 Agent 路由；超限或未缓存文件仅在点击时回退到 `/file`。任务状态和最终事件写入会话元数据，短期事件只在运行实例内做重连回放。
 

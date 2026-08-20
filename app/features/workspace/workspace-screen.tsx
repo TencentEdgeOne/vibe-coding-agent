@@ -44,7 +44,8 @@ import {
   sanitizeThinkingContent,
 } from '@/app/lib/conversation';
 import { LANGUAGE_STORAGE_KEY, TRANSLATIONS, type Locale } from '@/app/i18n';
-import { conversationExportFilename, conversationToJsonl } from '../../../shared/conversation-export';
+import { isMakersDeployUrl } from '../../../shared/makers-deploy';
+import { conversationExportFilename } from '../../../shared/conversation-export';
 import type {
   AssistantActivity,
   AssistantStatus,
@@ -62,6 +63,7 @@ import { SiteHeader } from './components/site-header';
 import { consumeEventStream } from './sse';
 import {
   fetchChatTaskStream,
+  fetchConversationTranscript,
   fetchProjectArchive,
   fetchResumePreview,
   openResumeStream,
@@ -161,6 +163,7 @@ export function WorkspaceScreen() {
   const loadingRef = useRef(false);
   const workspaceRestoringRef = useRef(false);
   const hasLivePreviewRef = useRef(false);
+  const isMakersPreviewRef = useRef(false);
   const chatAbortControllerRef = useRef<AbortController | null>(null);
   const activeTurnIdRef = useRef('');
   const stoppingRef = useRef(false);
@@ -185,6 +188,12 @@ export function WorkspaceScreen() {
 
   const t = TRANSLATIONS[language];
   const canSend = input.trim().length > 0 && !loading;
+  // Do not leave a streaming /chat socket attached to makers-dev after this
+  // workspace unmounts (navigation, HMR, or closing the app shell).
+  useEffect(() => () => {
+    chatAbortControllerRef.current?.abort();
+    chatAbortControllerRef.current = null;
+  }, []);
   // `preview.url` always carries the freshest access_token, while `activePreviewUrl`
   // is only what the iframe happens to be showing (deliberately left stale so a
   // token rotation does not reload the running app).
@@ -221,7 +230,8 @@ export function WorkspaceScreen() {
 
   useEffect(() => {
     hasLivePreviewRef.current = Boolean(preview?.url);
-  }, [preview?.url]);
+    isMakersPreviewRef.current = preview?.kind === 'makers' || isMakersDeployUrl(preview?.url);
+  }, [preview?.url, preview?.kind]);
 
   // Every new file listing is the authoritative view of what is on disk, so use it
   // to stamp or drop cached file contents. Covers all three sources of a tree
@@ -535,6 +545,7 @@ export function WorkspaceScreen() {
       if (
         !id
         || !hasLivePreviewRef.current
+        || isMakersPreviewRef.current
         || loadingRef.current
         || workspaceRestoringRef.current
         || previewRefreshInFlightRef.current
@@ -614,7 +625,8 @@ export function WorkspaceScreen() {
         || credentialAge >= PREVIEW_CREDENTIAL_REFRESH_MS;
       // Short tab switches keep the current iframe and token. Refresh only after
       // a genuinely stale interval or an explicit toolbar action.
-      if (!wentStale) return;
+      // Makers deploy URLs do not use sandbox envdAccessToken — skip remint.
+      if (!wentStale || isMakersPreviewRef.current) return;
 
       void refreshPreviewLink({
         remountIframe: true,
@@ -626,6 +638,7 @@ export function WorkspaceScreen() {
       if (
         document.visibilityState === 'visible'
         && hasLivePreviewRef.current
+        && !isMakersPreviewRef.current
         && Date.now() - previewRefreshedAtRef.current >= PREVIEW_CREDENTIAL_REFRESH_MS
       ) {
         void refreshPreviewLink({
@@ -1247,21 +1260,20 @@ export function WorkspaceScreen() {
     await stopCurrentTask();
   }
 
-  function handleExportTranscript() {
-    if (process.env.NODE_ENV !== 'development' || messages.length === 0) {
+  async function handleExportTranscript() {
+    if (process.env.NODE_ENV !== 'development' || !conversationId) {
       return;
     }
-    const jsonl = conversationToJsonl({
-      conversationId,
-      messages: messages.map((message) => ({
-        id: message.id,
-        role: message.role,
-        content: message.content,
-        status: message.status,
-        activities: message.activities,
-      })),
-    });
-    downloadTextFile(conversationExportFilename(conversationId), jsonl);
+    try {
+      const response = await fetchConversationTranscript(conversationId);
+      if (!response.ok) {
+        return;
+      }
+      const jsonl = await response.text();
+      downloadTextFile(conversationExportFilename(conversationId), jsonl);
+    } catch {
+      // Dev-only export; a failed fetch should not interrupt the workspace.
+    }
   }
 
   async function handleDownload() {
@@ -1439,7 +1451,7 @@ export function WorkspaceScreen() {
         contactUrl={contactUrl}
         showDeploy={CLAIM_DEPLOY_ENABLED}
         showExportTranscript={process.env.NODE_ENV === 'development'}
-        canExportTranscript={messages.length > 0}
+        canExportTranscript={Boolean(conversationId) && messages.length > 0}
         onLanguageChange={setLanguage}
         onDownload={() => void handleDownload()}
         onNewProject={handleNewProject}
@@ -1500,7 +1512,6 @@ export function WorkspaceScreen() {
             stopped: t.workspace.activityStopped,
             input: t.workspace.activityInput,
             output: t.workspace.activityOutput,
-            workedFor: t.workspace.workedFor,
             placeholder: t.workspace.changePlaceholder,
             send: t.workspace.send,
             stop: t.workspace.stop,

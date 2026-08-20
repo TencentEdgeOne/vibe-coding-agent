@@ -64,3 +64,27 @@ test('starting a new project does not wait for the old stop request', async () =
   assert.ok(abortIndex >= 0 && snapshotIndex > abortIndex);
   assert.match(stopRoute, /if \(!discardProject\) \{[\s\S]*?persistProjectSnapshot/);
 });
+
+test('transcript export is a GET route keyed by conversationId query', async () => {
+  const route = await readFile('agents/transcript.ts', 'utf8');
+  const pipeline = await readFile('agents/pipelines/_transcript.ts', 'utf8');
+  const client = await readFile('app/features/workspace/workspace-api.ts', 'utf8');
+
+  assert.match(route, /onRequestGet/);
+  assert.match(route, /runTranscriptPipeline/);
+  assert.match(pipeline, /resolveConversationIdPreferQuery/);
+  assert.match(pipeline, /application\/x-ndjson/);
+  assert.match(client, /fetch\(`?\/transcript\?conversationId=/);
+});
+
+test('chat task status is a GET route keyed by conversationId query', async () => {
+  const route = await readFile('agents/status.ts', 'utf8');
+  const pipeline = await readFile('agents/pipelines/_status.ts', 'utf8');
+  const client = await readFile('app/features/workspace/workspace-api.ts', 'utf8');
+
+  assert.match(route, /onRequestGet/);
+  assert.match(route, /runStatusPipeline/);
+  assert.match(pipeline, /resolveConversationIdPreferQuery/);
+  assert.match(pipeline, /done: isExportTaskDone\(status\)/);
+  assert.match(client, /fetch\(`?\/status\?conversationId=/);
+});

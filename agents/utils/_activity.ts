@@ -51,6 +51,9 @@ export function summarizeToolInput(name: string, input: unknown, projectDir = ''
   const record = input && typeof input === 'object' ? input as Record<string, unknown> : {};
   const shortName = name.replace(/^mcp__[^_]+__/, '');
 
+  if (shortName === 'Skill' || shortName === 'load_makers_skill') {
+    return typeof record.skill === 'string' ? truncate(record.skill, 120) : '';
+  }
   if (shortName === 'write_project_files') {
     return truncate(summarizeFileWrites(record) || 'Project files');
   }
@@ -86,7 +89,18 @@ export function summarizeToolInput(name: string, input: unknown, projectDir = ''
   return truncate(JSON.stringify(safeValue(record, projectDir), null, 2));
 }
 
-export function summarizeToolOutput(value: string, projectDir = '') {
+export function summarizeToolOutput(value: string, projectDir = '', name = '') {
+  // The SDK answers a successful Skill call with "Launching skill: <name>",
+  // which only repeats the row header. Keep real failures.
+  if (name.replace(/^mcp__[^_]+__/, '') === 'Skill' && /^launching skill:/i.test(value.trim())) {
+    return '';
+  }
+  if (
+    name.replace(/^mcp__[^_]+__/, '') === 'load_makers_skill'
+    && /^---\s*\nname:/i.test(value.trim())
+  ) {
+    return '';
+  }
   const withoutProjectPath = projectDir ? value.split(projectDir).join('<project>') : value;
   return truncate(redactInlineSecrets(withoutProjectPath));
 }

@@ -36,3 +36,20 @@ test('SSE parser consumes an unseparated final frame', async () => {
   );
   assert.deepEqual(events, [{ type: 'error', error: 'failed' }]);
 });
+
+test('SSE parser cancels an open response after DONE', async () => {
+  const encoder = new TextEncoder();
+  let cancelled = false;
+  const response = new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+      // Deliberately leave the server side open.
+    },
+    cancel() {
+      cancelled = true;
+    },
+  }), { headers: { 'content-type': 'text/event-stream' } });
+
+  await consumeEventStream<ChatStreamEvent>(response, () => {});
+  assert.equal(cancelled, true);
+});

@@ -10,22 +10,23 @@ import {
   GATEWAY_CONVERSATION_ID_HEADER_NAME,
   GATEWAY_QUOTA_BYPASS_HEADER,
   GATEWAY_QUOTA_PROMPT_HEADER,
-  PREVIEW_PATH_PREFIX,
-  PREVIEW_PUBLIC_PORT,
-  PREVIEW_SERVER_PORT,
+  MAKERS_SKILL_NAMES,
   SANDBOX_MCP_SERVER_NAME,
 } from './_constants';
 import { wrapSandboxToolsForVerification } from './tools/_commands-wrap';
 import {
+  buildDeployToMakersTool,
   buildPreviewLinkTool,
   buildProjectScaffoldTool,
   buildPublishPreviewTool,
   buildWriteProjectFileTool,
 } from './tools/_project-tools';
+import { buildLoadMakersSkillTool } from './tools/_makers-skills';
 import type {
   AgentProgressEvent,
   CodingAgentResult,
   ConversationMessage,
+  PreviewKind,
   ProjectState,
   ScaffoldLog,
 } from './_types';
@@ -189,7 +190,7 @@ function inferToolProgress(name: string, input: unknown): {
   if (toolName === 'ensure_project_scaffold') {
     return { phaseHint: 'scaffold' };
   }
-  if (toolName === 'publish_preview' || toolName === 'get_preview_link') {
+  if (toolName === 'publish_preview' || toolName === 'get_preview_link' || toolName === 'deploy_to_makers') {
     return { phaseHint: 'preview' };
   }
   if (toolName === 'files_write' || toolName === 'write_files' || toolName === 'files_make_dir' || toolName === 'files_remove') {
@@ -225,48 +226,52 @@ export function buildPrompt(
     .join('\n');
 
   return [
-    'You are a Web Dev Agent that creates and modifies runnable web projects in a remote sandbox.',
-    'You may create Next.js, Vite/React, static frontend, Node service, Python Flask/FastAPI, or other lightweight web projects according to the user request. Do not force every project to be Next.js. For ordinary UI pages, prefer a modular Vite/React (or split HTML/CSS/JS) project instead of one self-contained HTML file.',
+    'You are a Web Dev Agent that creates and modifies EdgeOne Makers-compatible web projects in a remote sandbox.',
+    'Generated apps must be deployable to EdgeOne Makers: static frontend and/or cloud-functions/edge-functions, not a long-running npm run dev / Flask server as the deliverable. Do not force Next.js. For ordinary UI pages, prefer split HTML/CSS/JS or a Vite/React static app instead of one self-contained HTML file.',
+    [
+      'Makers platform layout and APIs come from the official edgeone-makers-tools skill family, not from this prompt. After ensure_project_scaffold, call load_makers_skill once for each specific reference the request needs before writing dependent project files. The tool returns the official vendored SKILL.md verbatim. Never invoke the edgeone-makers-tools router through Skill: its overview is already present in your skill listing, and invoking it again does not load a reference. Never load the same reference twice in one turn.',
+      'When two or more independent Makers references are needed, emit all corresponding load_makers_skill calls together in one assistant message so they execute in parallel; do not narrate and load them one by one. Do not load unrelated references. Sandbox overrides the official skills cannot know about: local project Read/Write/Edit/Bash, present_files, and direct edgeone CLI commands are unavailable here. For project operations, use the sandbox MCP tools described in this prompt. Preview is always publish_preview (local makers-dev), never the edgeone CLI and never deploy_to_makers. If Blob persistence is needed, add "@edgeone/pages-blob" without a 0.1.x pin (published versions are 0.0.x such as ^0.0.16).',
+    ].join(' '),
     `The only project directory you may modify is ${state.appDir} (relative path, no leading slash).`,
-    `All file, command, browser, and code-execution operations must be performed through the ${mcpServerName} MCP tools in the remote sandbox.`,
+    `All file, command, browser, and code-execution operations must be performed through the ${mcpServerName} MCP tools in the remote sandbox. Local Read, Write, Edit, and Bash tools are unavailable.`,
     'If the user asks who you are, what you are, or what kind of agent you are, answer directly that you are the Vibe Coding Agent示例 on EdgeOne Makers, an out-of-the-box Agent template. In Chinese, reply: 我是 EdgeOne Makers 上的 Vibe Coding Agent示例，一个开箱即用的 Agent 模板，可以帮助你创建和修改可运行的 Web 项目。 Do not call any tools, and do not use the non-project refusal for identity questions.',
     'First decide whether the user request is about a web project, page, component, interaction, styling, or code development.',
     'If the user request is not related to project development, reply exactly: I can only help create or modify web projects. Please describe the page or feature you want to build. Do not call any tools.',
-    'If the user request requires creating or modifying a project, first respond with one brief natural-language sentence that you are starting, then call ensure_project_scaffold as the first tool to prepare the workspace. Do not call any other tool before ensure_project_scaffold — including files_list, files_make_dir, files_write, commands, or write_project_file.',
+    'If the user request requires creating or modifying a project, first respond with one brief natural-language sentence that you are starting, then call ensure_project_scaffold as the first tool to prepare the workspace. Do not call any other tool before ensure_project_scaffold — including Skill, load_makers_skill, files_list, files_make_dir, files_write, commands, or write_project_file.',
     'That first sentence must be concise, user-visible progress narration, not a plan. Use the user language when obvious. Example: 我先准备项目环境，然后开始实现。 / I will prepare the workspace first, then start building.',
+    'Keep narrating as you work: before each tool call or parallel group of tool calls, write one short sentence saying what you are about to do and, when you just read an error, what you think is wrong. This narration is shown to the user, so always write it in the user language, never as internal English notes, raw logs, status codes, or command lines. Example: 我先修好前端请求地址，再刷新预览。 One sentence per step — do not restate the plan or repeat what you already said.',
     `Before calling ensure_project_scaffold, do not read, write, or execute anything under ${state.appDir}.`,
     `Never pass absolute paths (starting with /). For write_project_file, path must be relative to ${state.appDir} itself — correct: package.json, src/App.tsx, index.html. Wrong: ${state.appDir}/package.json or /${state.appDir}/src/App.tsx. Prefer write_project_file, not raw files_write/files_list.`,
     'Do not use the cloud function local filesystem as the project workspace, and do not modify business files outside the project directory.',
-    'If ensure_project_scaffold returns created=false, inspect the existing code first, then make the smallest complete change needed for the user request.',
+    'If ensure_project_scaffold returns created=false, load only the specific Makers references required by the change with load_makers_skill, inspect only the project files directly related to the request, then make the smallest complete change needed. For bug reports, do not investigate platform internals, generated .edgeone files, running processes, ports, or external AI gateway behavior. Use at most one focused reproduction command before editing; after the edit, use at most one focused verification command, then call publish_preview once.',
     [
       'If ensure_project_scaffold returns created=true, complete these steps in order:',
-      '1. Choose a modular tech stack and a small multi-file layout. Prefer Vite + React/TS (or plain HTML split into index.html + css/ + js/modules) over a single giant HTML file. Do not put styles, scripts, and markup into one large index.html unless the user explicitly asks for a single-file page.',
-      `2. Write the project incrementally with write_project_file. Each call must contain exactly one complete file: {"path":"src/App.tsx","content":"complete file contents"} — path relative to ${state.appDir}, never "${state.appDir}/src/App.tsx". Keep each file focused and reasonably small so the user sees steady progress. Typical order: package.json/config → styles → small components/modules → entry/App → thin index.html if needed. Call it once per file, in dependency order, and wait for each tool result before the next call. Never send multiple write_project_file calls in the same assistant message.`,
-      `3. Install dependencies inside ${state.appDir} (cd ${state.appDir} && npm install by default for Node/frontend projects; pnpm/yarn only when explicitly requested; python -m pip install -r requirements.txt for Python). Do not invent nested ${state.appDir}/${state.appDir} paths.`,
-      `4. Call the publish_preview tool. It starts the internal service on port ${PREVIEW_SERVER_PORT}, verifies that ${PREVIEW_PATH_PREFIX} is HTTP-ready, and generates the public preview with sandbox.getHost(${PREVIEW_PUBLIC_PORT}) + ${PREVIEW_PATH_PREFIX} + envdAccessToken. Do not hand-write background npm run dev commands.`,
+      '1. Load the matching specific reference guidance with load_makers_skill, then follow it for layout. Prefer static HTML/CSS/JS or Vite static output for ordinary UI. Put Node/Python/Go APIs in cloud-functions/ (export onRequestGet/onRequestPost; env via context.env). Put V8 Edge APIs in edge-functions/ (export onRequestGet; no Node/npm/fs; return new Response(JSON.stringify(data), { headers: { \'Content-Type\': \'application/json\' } }) — Response.json() is unavailable). File path maps to URL: edge-functions/api/whoami.js → GET /api/whoami. If the user asked for an AI agent, chatbot, or LLM/SSE endpoint, load makers-agents and put inference in agents/ (export async function onRequest(context); agents/chat.ts → POST /chat; body is context.request.body; headers are a plain object; env via context.env; return text/event-stream with a 5s ping and data: [DONE]; frontend fetch must send makers-conversation-id). Write edgeone.json with agents.framework (claude-agent-sdk, openai-agents-sdk, langgraph, crewai, or deepagents) and a .env.example that declares AI_GATEWAY_API_KEY, AI_GATEWAY_BASE_URL, and AI_GATEWAY_MODEL. Do not write a .env file. For direct OpenAI-compatible AI Gateway calls, normalize the injected AI_GATEWAY_BASE_URL to end in exactly /v1, then POST to <normalized-base>/chat/completions; the preview value may be https://ai-gateway.edgeone.link without /v1. Never probe or retry alternate gateway paths. Default AI_GATEWAY_MODEL to @makers/hy3-preview; never default to gpt-4o-mini or another unprefixed model. Do not put model calls in cloud-functions/. Auth gates, redirects, and rewrites belong in middleware.js at the project root: export function middleware(context) plus export const config = { matcher }; use context.next(), context.redirect(url), context.rewrite(url). Never export onRequest from middleware.js — that handler is only for cloud-functions/, edge-functions/, and agents/. KV uses a bound global (my_kv.get/put), never context.env.KV. Every browser call to a project API must be preview-safe: resolve the endpoint relative to window.location.href (so /preview/ is retained), copy the current access_token query parameter onto the API URL, then fetch that URL. Never use fetch(\'/chat\') or fetch(\'/api/...\') directly in generated frontend code. Do not put styles, scripts, and markup into one large index.html unless the user explicitly asks for a single-file page.',
+      `2. After the required reference guidance is loaded, write the project with write_project_file. Each call must contain exactly one complete file: {"path":"index.html","content":"complete file contents"} — path relative to ${state.appDir}, never "${state.appDir}/index.html". Keep each file focused and reasonably small so the user sees steady progress. Typical order: package.json → styles → small modules → entry HTML → cloud-functions/edge-functions/agents if needed. Call it once per file, in dependency order, and wait for each tool result before the next call. Never send multiple write_project_file calls in the same assistant message.`,
+      `3. Install dependencies inside ${state.appDir} only when the project has a package.json with dependencies (cd ${state.appDir} && npm install by default; python packages go in cloud-functions/requirements.txt and are installed by the platform). Do not invent nested ${state.appDir}/${state.appDir} paths.`,
+      '4. Call publish_preview. It starts edgeone makers dev in the sandbox, waits until the local preview is ready, and publishes that URL to the right-hand preview panel. Do not run the edgeone CLI, curl Pages APIs, grep CLI source, write ~/.curlrc, pass a token, or call deploy_to_makers for preview — cloud deploy is slow and is not the preview path. If publish_preview fails, read the tool error: fix project files when the error is about the generated code. If publish_preview returns a url, stop — do not curl/fetch/code_interpreter the preview URL, and do not start a second preview server.',
     ].join('\n'),
     'Structure code for progressive delivery: split UI, styles, and logic across multiple files/modules instead of one monolithic HTML/JS blob. Avoid thousand-line files when they can be split into components, hooks, utils, and stylesheets. Prefer several medium files over one oversized HTML/JS file so each write_project_file finishes quickly and improves streaming UX.',
-    'Do not write only placeholder pages. Generated files must be complete, internally consistent, and directly installable and runnable.',
+    'Do not write only placeholder pages. Generated files must be complete, internally consistent, and directly deployable to EdgeOne Makers.',
     'Always use write_project_file for UTF-8 project source and configuration files, including one-file edits to existing projects. Do not use files_write, write_files, or shell commands to create or replace text source files.',
     'write_project_file accepts exactly one file per call. Never pass an array, files map, entries object, or more than one path. Finish one tool call before starting the next so the user can see steady file-by-file progress.',
     'write_project_file is only for UTF-8 text source and configuration files. Do not write images, fonts, audio/video, archives, or other binary assets, and do not write large base64 blocks as text.',
     'Avoid generating images, fonts, audio/video, archives, or other binary files when possible. Prefer CSS, SVG, emoji, public remote asset URLs, or existing dependency capabilities for visual effects to save tokens and write cost.',
     'Only create binary assets when the user explicitly requests them, the feature truly depends on them, and there is no lightweight alternative. In that case, use the sandbox commands tool inside the project directory to generate, download, or decode assets. Do not write them directly with file-writing tools.',
     'Do not hand-write lockfiles, node_modules, .next, dist, build, cache directories, or package-manager generated artifacts.',
-    'When a command fails, read the error and identify the specific issue first. Fix only the specific file, dependency, or configuration. Do not regenerate the whole project, and do not repeat the same failed fix.',
-    'When running verification commands such as npm run build, npx tsc, tsc -b, or python -m compileall, always append `; echo EXIT:$?`. The sandbox treats a non-zero exit as SANDBOX_UNKNOWN_ERROR and drops compiler output unless the overall shell exits 0. Read the EXIT:N line: N=0 means success; otherwise fix the reported files. Do not retry the same verification command with only `2>&1` added. Do not append this echo to npm install, long-running, background, or preview-server commands.',
+    'Do not hard-code /preview/ as Vite base, Next.js basePath, or business routes. That path is only the old sandbox reverse-proxy prefix and will break a Makers deployment.',
+    'When a command fails, read the error and identify the specific issue first. Fix only the specific file, dependency, or configuration. Do not regenerate the whole project, and do not repeat the same failed fix. Never probe AI Gateway URLs, enumerate models, inspect .edgeone runtime output, or inspect process/port state; use the documented @makers/hy3-preview default and the preview-safe API URL rule.',
+    'When running verification commands such as npm run build, npx tsc, tsc -b, or python -m compileall, always append `; echo EXIT:$?`. The sandbox treats a non-zero exit as SANDBOX_UNKNOWN_ERROR and drops compiler output unless the overall shell exits 0. Read the EXIT:N line: N=0 means success; otherwise fix the reported files. Do not retry the same verification command with only `2>&1` added. Do not append this echo to npm install, long-running, background, preview-server, or deploy commands.',
     'Prefer the smallest complete change, preserving the existing project structure and style. Do not refactor anything unrelated to the user request.',
-    'Next.js projects must use the standard App Router structure. Use next.config.js or next.config.mjs for configuration; do not generate next.config.ts.',
-    "Next.js projects must support basePath: process.env.EDGEONE_PREVIEW_BASE_PATH || '' in next.config.js or next.config.mjs. Do not hard-code /preview into business routes.",
-    `Vite projects must support sandbox preview under ${PREVIEW_PATH_PREFIX}: use base ${PREVIEW_PATH_PREFIX}; server.host='0.0.0.0'; server.port=${PREVIEW_SERVER_PORT}; server.strictPort=true; server.allowedHosts=true; server.hmr={ protocol:'wss', clientPort:443 }; legacy.skipWebSocketTokenCheck=true; do not set server.hmr.path.`,
-    'Vite React projects must install @vitejs/plugin-react and configure plugins: [react()] to preserve React Fast Refresh.',
-    'Do not hard-code temporary sandbox preview domains in vite.config.',
+    'If you generate a package.json, include scripts.build. For a static HTML/CSS/JS site use "scripts": { "build": "echo skip" }. Vite/Next must use their real build script.',
+    'If you generate a Next.js project, use the App Router and next.config.js or next.config.mjs; do not generate next.config.ts. Do not set basePath to /preview.',
+    'If you generate a Vite project, do not set base to /preview/. Vite React projects must install @vitejs/plugin-react and configure plugins: [react()].',
+    'Cloud/Edge function and agents/ code must read env vars via context.env, never process.env or os.environ. KV is not context.env.KV — it is a console-bound global (example: await my_kv.get(key) / my_kv.put(key, value)). If the user asked for KV but no namespace is bound, persist with @edgeone/pages-blob in a Cloud Function instead of inventing context.env.KV.',
     'If you generate a TypeScript project, ensure imports, types, and routing APIs can pass build or verification.',
     'Do not paste large code blocks in the reply. The final response should use the main language of the current user prompt by default; if the prompt mixes languages, follow the primary language. Keep technical terms, error logs, and non-preview links unchanged.',
-    'The final response must be a concrete conclusion tailored to the current user request, explaining what was completed and the preview/verification result. For example, if the user asks for "a pomodoro timer with stats and theme switching", reply with something like "Built the pomodoro timer with stats and theme switching. The preview is ready in the right panel." Do not say only "Done, please check the result."',
+    'The final response is user-facing, not an engineering report. Keep it to at most two short sentences: say what is ready and whether the preview works. Do not list filenames, routes, frameworks, models, environment variables, status codes, root causes, commands, or verification steps unless the user explicitly asked for technical details. Example: "AI 聊天网站已完成并修复了对话功能，右侧预览现在可以直接使用。" Do not say only "Done, please check the result."',
     'Do not claim success for anything that was not verified successfully. If it failed, briefly explain the failure point and the next step.',
-    `After code changes and dependency installation, you must call publish_preview to publish the getHost(${PREVIEW_PUBLIC_PORT})${PREVIEW_PATH_PREFIX} preview for the user. publish_preview handles startup and validation of the internal ${PREVIEW_SERVER_PORT} preview service. get_preview_link is only a legacy alias; do not prefer it.`,
-    'Do not synthesize preview URLs or sandboxDebugUrl. Use only the fields returned by publish_preview or get_preview_link.',
+    'After code changes, you must call publish_preview so the user can see the sandbox makers-dev preview. Do not synthesize preview URLs. Use only the fields returned by publish_preview. Do not call deploy_to_makers unless the user explicitly asks to publish a live Makers URL.',
     'Do not include preview buttons, preview links, preview URLs, or sandboxDebugUrl in the final response. The preview is shown only in the right preview panel.',
     'Do not take screenshots.',
     'Do not include emoji in the response.',
@@ -292,9 +297,9 @@ export async function runCodingAgent(
   // write_project_file (with the file just written, so the pipeline can stream
   // its content to the frontend instead of making it fetch the file back).
   onProjectFilesChanged?: (file?: { path: string; content: string }) => void | Promise<void>,
-  // Fires as soon as publish_preview / get_preview_link resolves a public URL so
+  // Fires as soon as publish_preview / deploy_to_makers resolves a public URL so
   // the UI can switch to the iframe without waiting for verification / finalize.
-  onPreviewReady?: (preview: { url?: string; sandboxDebugUrl?: string }) => void,
+  onPreviewReady?: (preview: { url?: string; sandboxDebugUrl?: string; kind?: PreviewKind }) => void,
   abortSignal?: AbortSignal,
 ): Promise<CodingAgentResult> {
   // Prefer AI Gateway for model access, with backward-compatible Anthropic / DeepSeek config.
@@ -387,7 +392,7 @@ export async function runCodingAgent(
         wasCreated = created;
       },
     );
-    const handlePreviewPublished = (preview: { url?: string; sandboxDebugUrl?: string }) => {
+    const handlePreviewPublished = (preview: { url?: string; sandboxDebugUrl?: string; kind?: PreviewKind }) => {
       previewTouched = true;
       if (preview.url) {
         onPreviewReady?.(preview);
@@ -403,6 +408,11 @@ export async function runCodingAgent(
       state,
       handlePreviewPublished,
     );
+    const deployToMakersTool = buildDeployToMakersTool(
+      context,
+      state,
+      handlePreviewPublished,
+    );
     const writeProjectFileTool = buildWriteProjectFileTool(
       context,
       state,
@@ -411,19 +421,25 @@ export async function runCodingAgent(
         await onProjectFilesChanged?.({ path: written, content });
       },
     );
+    const loadMakersSkillTool = buildLoadMakersSkillTool();
     const mcpTools = [
       ...sandboxTools,
       scaffoldTool,
+      loadMakersSkillTool,
       writeProjectFileTool,
       publishPreviewTool,
       previewLinkTool,
+      deployToMakersTool,
     ];
     const mcpAllowedTools = [
       ...sandboxAllowedTools,
       `mcp__${mcpServerName}__ensure_project_scaffold`,
+      `mcp__${mcpServerName}__load_makers_skill`,
       `mcp__${mcpServerName}__write_project_file`,
       `mcp__${mcpServerName}__publish_preview`,
       `mcp__${mcpServerName}__get_preview_link`,
+      `mcp__${mcpServerName}__deploy_to_makers`,
+      'Skill',
     ];
 
     const sandboxMcpServer = createSdkMcpServer({
@@ -439,9 +455,10 @@ export async function runCodingAgent(
       model,
       permissionMode: 'dontAsk',
       maxTurns: 100,
-      // Disable Claude Code built-in local tools so the model can only read,
-      // write, and execute through EdgeOne sandbox MCP tools.
-      tools: [],
+      // Built-in local Read/Write/Bash stay off. Skill is enabled so the model
+      // can load official Makers skills from .claude/skills/ on demand.
+      tools: ['Skill'],
+      skills: [...MAKERS_SKILL_NAMES],
       includePartialMessages: true,
       mcpServers: {
         [mcpServerName]: sandboxMcpServer,
@@ -450,8 +467,6 @@ export async function runCodingAgent(
       strictMcpConfig: true,
       systemPrompt: buildPrompt(userMessage, history, state, isNewProject, mcpServerName),
       env: sdkEnv,
-      // publish_preview starts the internal port 3000 service, verifies /preview/
-      // readiness, and publishes the getHost(9000)/preview/ preview link.
       cwd: process.cwd(),
       settingSources: ['project'],
       debug: isDebugEnabled(context),
@@ -664,7 +679,7 @@ export async function runCodingAgent(
                   ...(toolContext?.command ? { command: toolContext.command } : {}),
                   ok: !toolFailed,
                   preview: truncateForStream(text, 500),
-                  outputSummary: summarizeToolOutput(text, state.appDir),
+                  outputSummary: summarizeToolOutput(text, state.appDir, toolName),
                   status: toolFailed ? 'failed' : 'completed',
                   endedAt: Date.now(),
                 },

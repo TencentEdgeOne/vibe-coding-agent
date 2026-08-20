@@ -1,5 +1,5 @@
 import type { ClaudeMcpTool } from '../_types.ts';
-import { shortenToolName, withExitCodeEcho } from '../utils/_tool-phase.ts';
+import { shortenToolName, withExitCodeEcho, forbiddenSandboxCommandReason } from '../utils/_tool-phase.ts';
 
 function extractCommand(args: unknown) {
   const record = args && typeof args === 'object' ? args as Record<string, unknown> : {};
@@ -32,7 +32,15 @@ export function wrapSandboxToolsForVerification(tools: ClaudeMcpTool[]): ClaudeM
     return {
       ...tool,
       handler: async (args, extra) => {
-        const wrapped = withExitCodeEcho(extractCommand(args).command);
+        const command = extractCommand(args).command;
+        const blocked = forbiddenSandboxCommandReason(command);
+        if (blocked) {
+          return {
+            content: [{ type: 'text' as const, text: blocked }],
+            isError: true,
+          };
+        }
+        const wrapped = withExitCodeEcho(command);
         const nextArgs = withWrappedCommand(args, wrapped) as typeof args;
         // Keep isError false even when EXIT:N is non-zero. Flipping isError
         // makes the Agent SDK treat a captured compiler failure as a protocol

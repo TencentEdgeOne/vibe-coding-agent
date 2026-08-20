@@ -2,9 +2,10 @@ import type { SdkMcpToolDefinition } from '@anthropic-ai/claude-agent-sdk';
 import type {
   ActivityStatus,
   BuildStatus,
+  PreviewKind,
 } from '../shared/protocol.ts';
 
-export type { ActivityStatus, BuildStatus, FileTreeItem } from '../shared/protocol.ts';
+export type { ActivityStatus, BuildStatus, FileTreeItem, PreviewKind } from '../shared/protocol.ts';
 
 export type ProjectState = {
   created: boolean;
@@ -12,8 +13,9 @@ export type ProjectState = {
   appDir: string;
   previewUrl?: string;
   sandboxDebugUrl?: string;
-  /** Latched once publish_preview succeeds; survives live URL invalidation so resume can restart preview. */
+  /** Latched once publish_preview or deploy_to_makers succeeds; survives live URL invalidation so resume can restart preview. */
   previewPublished?: boolean;
+  previewKind?: PreviewKind;
 };
 
 // A base64 archive of the whole project, persisted outside the volatile sandbox so
