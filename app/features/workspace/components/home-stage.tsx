@@ -37,8 +37,10 @@ export function HomeStage({
   };
 
   return (
-    <section className="home-stage flex flex-1 flex-col items-center justify-center px-6 py-12 text-center">
-      <div className="w-full max-w-[820px]">
+    <section className="home-stage flex flex-1 flex-col items-center px-6 py-12 text-center">
+      {/* my-auto centers the hero when it fits and keeps the top reachable when it
+          does not, which justify-center would clip. */}
+      <div className="my-auto w-full max-w-[820px]">
         <h1 className="text-[clamp(2rem,4vw,2.75rem)] font-bold leading-[1.18]">
           {copy.home.titleBefore}
           {locale === 'en' ? ' ' : ''}

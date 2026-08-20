@@ -78,13 +78,17 @@
   box-sizing: border-box;
 }
 
+/* This is a single-screen tool, never a scrolling document: the page itself must
+   not scroll, otherwise the shell can be dragged down past its own layout. */
 html,
 body {
-  min-height: 100%;
+  height: 100%;
+  overflow: hidden;
 }
 
 body {
   margin: 0;
+  overscroll-behavior: none;
   background: var(--background);
   color: var(--foreground);
   font-size: 14px;
@@ -130,6 +134,23 @@ input::placeholder {
   opacity: 1;
 }
 
+/* Full-height app shell. dvh tracks the visible viewport, so a mobile URL bar
+   cannot leave a strip of empty page scrolling below the layout. */
+.app-shell {
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* The landing hero is the one place that may outgrow a short window, so it takes
+   the scrolling instead of handing it back to the page. */
+.home-stage {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 /* CF Build-inspired agent workspace. The landing view keeps its own identity;
    these styles only apply after a conversation starts. */
 .agent-conversation {
@@ -142,7 +163,11 @@ input::placeholder {
   background: transparent;
 }
 
+/* position: relative makes this the containing block for absolutely positioned
+   descendants (sr-only labels), so they scroll and clip with the chat instead of
+   escaping to the initial containing block and stretching the page. */
 .conversation-scroll {
+  position: relative;
   min-height: 0;
   flex: 1;
   overflow-y: auto;
@@ -264,6 +289,7 @@ input::placeholder {
 
 .tool-activity-trigger {
   display: flex;
+  position: relative;
   width: 100%;
   min-width: 0;
   align-items: center;
@@ -778,6 +804,7 @@ input::placeholder {
   align-items: center;
   justify-content: center;
   gap: 12px;
+  overflow: auto;
   background: var(--card);
   padding: 24px;
   color: #555d69;
@@ -1312,16 +1339,18 @@ input::placeholder {
   }
 }
 
+/* Stacked layout still has to fit the viewport: fixed vh panes used to add up to
+   more than one screen, so the shell scrolled past the panels into empty space. */
 @media (max-width: 900px) {
   .workspace-shell {
     flex-direction: column;
-    overflow: auto;
+    overflow: hidden;
   }
 
   .workspace-shell > .agent-conversation {
     width: 100%;
-    min-height: 52vh;
-    flex: 0 0 52vh;
+    min-height: 0;
+    flex: 1 1 45%;
     border-right: 0;
     border-bottom: 1px solid #e8eaee;
   }
@@ -1335,8 +1364,8 @@ input::placeholder {
   }
 
   .workspace-result-panel {
-    min-height: 70vh;
-    flex: 0 0 70vh;
+    min-height: 0;
+    flex: 1 1 55%;
     animation-name: workspace-panel-pop;
   }
 }
