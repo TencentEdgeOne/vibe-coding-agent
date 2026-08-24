@@ -2,7 +2,7 @@ import {
   getActivityHistory,
   getChatTask,
   getHistory,
-  getProjectSnapshot,
+  getLegacyProjectSnapshot,
   getProjectState,
   saveProjectState,
 } from '../_memory';
@@ -10,7 +10,7 @@ import {
   assertPreviewServerReady,
   getFileTree,
   resolvePublicLinks,
-  restoreProjectArchive,
+  restorePersistedProject,
   rewritePreviewAccessToken,
   runSandboxCommand,
   startPreviewServer,
@@ -104,7 +104,7 @@ async function loadProjectResumeHistory(context: any, conversationId: string) {
   const [messages, activityHistory, snapshot, chatTask, state] = await Promise.all([
     getHistory(context, conversationId),
     getActivityHistory(context, conversationId),
-    getProjectSnapshot(context, conversationId),
+    getLegacyProjectSnapshot(context, conversationId),
     getChatTask(context, conversationId),
     getProjectState(context, conversationId),
   ]);
@@ -259,26 +259,17 @@ async function runWorkspaceRestoreBody(context: any, conversationId: string) {
   }
 
   if (!hasFiles) {
-    const snapshot = await getProjectSnapshot(context, conversationId);
-    if (snapshot) {
-      try {
-        // Files-only restore first (snapshot excludes node_modules). Dependency
-        // install happens in republishPreviewOnResume under its own budget.
-        const restored = await withTimeout(
-          restoreProjectArchive(context, state, snapshot, {
-            installDependencies: false,
-          }),
-          RESTORE_BUDGET_MS,
-          'snapshot restore',
-        );
-        hasFiles = restored.ok;
-        if (!restored.ok) {
-          restoreError = restored.error || 'Failed to restore the project from snapshot.';
-        }
-      } catch (error) {
-        hasFiles = false;
-        restoreError = error instanceof Error ? error.message : 'Snapshot restore failed.';
-      }
+    try {
+      const restored = await withTimeout(
+        restorePersistedProject(context, conversationId, state, { installDependencies: false }),
+        RESTORE_BUDGET_MS,
+        'snapshot restore',
+      );
+      hasFiles = restored.restored;
+      if (!restored.restored) restoreError = restored.error;
+    } catch (error) {
+      hasFiles = false;
+      restoreError = error instanceof Error ? error.message : 'Snapshot restore failed.';
     }
   }
 

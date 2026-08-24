@@ -1,9 +1,9 @@
-import { clearProjectSnapshot, getProjectSnapshot, getProjectState } from '../_memory';
+import { clearLegacyProjectSnapshot, getProjectState } from '../_memory';
 import {
   createProjectState,
   getFileTree,
   resetProjectWorkspace,
-  restoreProjectArchive,
+  restorePersistedProject,
 } from '../_project';
 import type { ProjectState, StreamSend } from '../_types';
 
@@ -20,7 +20,8 @@ export async function prepareProjectWorkspace(
 
   if (resetProject) {
     await resetProjectWorkspace(context, state);
-    await clearProjectSnapshot(context, conversationId);
+    await clearLegacyProjectSnapshot(context, conversationId);
+    await context.sandbox.persist({ path: state.appDir });
     return state;
   }
 
@@ -36,20 +37,19 @@ export async function prepareProjectWorkspace(
     }
 
     if (!hasProjectFiles) {
-      const snapshot = await getProjectSnapshot(context, conversationId);
-      if (snapshot) {
-        send({ type: 'status', message: 'Restoring project from snapshot' });
-        const restored = await restoreProjectArchive(context, state, snapshot);
-        if (!restored.ok) {
+      send({ type: 'status', message: 'Restoring project from snapshot' });
+      const restored = await restorePersistedProject(context, conversationId, state);
+      if (!restored.restored) {
+        if (restored.error) {
           send({
             type: 'log',
             phase: 'scaffold',
             stream: 'stderr',
-            message: restored.error || 'Failed to restore the project from snapshot.',
+            message: restored.error,
           });
-        } else {
-          hasProjectFiles = true;
         }
+      } else {
+        hasProjectFiles = true;
       }
     }
 

@@ -27,10 +27,12 @@ export async function onRequest(context: any) {
     // "Stop and start new" intentionally abandons this conversation, so avoid a
     // full zip -> base64 -> store round trip that the new workspace will never use.
     // A normal Stop still snapshots immediately for same-conversation resume.
+    let persisted: boolean | undefined;
     if (!discardProject) {
       try {
         const state = await getProjectState(context, conversationId);
         const saved = await persistProjectSnapshot(context, conversationId, state);
+        persisted = saved;
         if (saved && !state.created) {
           state.created = true;
           await saveProjectState(context, conversationId, state);
@@ -65,6 +67,7 @@ export async function onRequest(context: any) {
       ok: true,
       conversation_id: conversationId,
       aborted: result?.aborted === true,
+      ...(persisted !== undefined ? { persisted } : {}),
     }), {
       headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
     });

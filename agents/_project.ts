@@ -18,3 +18,4 @@ export {
   assertPreviewServerReady,
 } from './project/_preview';
 export { createProjectArchive, restoreProjectArchive } from './project/_archive';
+export { restorePersistedProject } from './project/_persistence';

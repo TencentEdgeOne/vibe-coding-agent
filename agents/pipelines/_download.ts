@@ -1,8 +1,5 @@
-import {
-  getProjectSnapshot,
-  getProjectState,
-} from '../_memory';
-import { createProjectArchive } from '../_project';
+import { getProjectState } from '../_memory';
+import { createProjectArchive, restorePersistedProject } from '../_project';
 import { resolveConversationId } from '../utils/_request';
 
 export async function runProjectDownloadPipeline(context: any): Promise<Response> {
@@ -19,34 +16,15 @@ export async function runProjectDownloadPipeline(context: any): Promise<Response
 
   const state = await getProjectState(context, conversationId);
 
-  // Prefer the persisted snapshot so download works even after the sandbox is
-  // recycled (the code lives durably in the store, not just in /tmp). Fall back to
-  // packaging the live sandbox when no snapshot exists yet (e.g. first turn wrote
-  // it after this download, or the snapshot write failed) — a pragmatic deviation
-  // from plan §3.3.1-④ which forbade the fallback; keeping it avoids a dead-end
-  // "not ready" error while the sandbox is still alive.
-  const snapshot = await getProjectSnapshot(context, conversationId);
-  if (snapshot?.base64) {
-    return new Response(
-      JSON.stringify({
-        ok: true,
-        filename: snapshot.filename,
-        contentType: snapshot.contentType,
-        size: snapshot.size,
-        base64: snapshot.base64,
-      }),
-      {
-        headers: {
-          'content-type': 'application/json; charset=utf-8',
-          'cache-control': 'no-store',
-        },
-      },
-    );
-  }
-
   let archive;
   try {
     archive = await createProjectArchive(context, state);
+    if (!archive.ok) {
+      const restored = await restorePersistedProject(context, conversationId, state, {
+        installDependencies: false,
+      });
+      if (restored.restored) archive = await createProjectArchive(context, state);
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to package the project.';
     return jsonError(message, 500);
