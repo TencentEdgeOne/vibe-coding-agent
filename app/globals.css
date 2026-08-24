@@ -80,7 +80,10 @@
 
 html,
 body {
-  min-height: 100%;
+  height: 100%;
+  max-height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
 body {
@@ -492,7 +495,7 @@ input::placeholder {
   }
   to {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: none;
   }
 }
 
@@ -1131,7 +1134,7 @@ input::placeholder {
   }
   to {
     opacity: 1;
-    transform: translateX(0);
+    transform: none;
   }
 }
 
@@ -1297,13 +1300,13 @@ input::placeholder {
 @media (max-width: 900px) {
   .workspace-shell {
     flex-direction: column;
-    overflow: auto;
+    overflow: hidden;
   }
 
   .workspace-shell > .agent-conversation {
     width: 100%;
-    min-height: 52vh;
-    flex: 0 0 52vh;
+    min-height: 0;
+    flex: 1 1 42%;
     border-right: 0;
     border-bottom: 1px solid #e8eaee;
   }
@@ -1317,8 +1320,8 @@ input::placeholder {
   }
 
   .workspace-result-panel {
-    min-height: 70vh;
-    flex: 0 0 70vh;
+    min-height: 0;
+    flex: 1 1 58%;
     animation-name: workspace-panel-pop;
   }
 }

@@ -1415,7 +1415,7 @@ export function WorkspaceScreen() {
   // not see the home screen flash before their project is restored.
   if (!resumeChecked) {
     return (
-      <main className="flex min-h-screen flex-col items-center justify-center gap-4 text-foreground">
+      <main className="flex h-full flex-col items-center justify-center gap-4 overflow-hidden text-foreground">
         <span
           className="size-8 animate-spin rounded-full border-2 border-primary/30 border-t-primary"
           aria-hidden="true"
@@ -1426,11 +1426,7 @@ export function WorkspaceScreen() {
   }
 
   return (
-    <main
-      className={`flex flex-col text-foreground ${
-        hasWorkspace ? 'h-screen overflow-hidden' : 'min-h-screen'
-      }`}
-    >
+    <main className="flex h-full min-h-0 flex-col overflow-hidden text-foreground">
       <SiteHeader
         copy={t}
         language={language}
