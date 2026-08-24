@@ -5,6 +5,10 @@ import {
   type SDKResultMessage,
 } from '@anthropic-ai/claude-agent-sdk';
 import {
+  buildReplyLanguageDirective,
+  buildReplyLanguageReminder,
+} from '../shared/reply-language.ts';
+import {
   DEFAULT_MODEL,
   DEFAULT_PATH,
   GATEWAY_CONVERSATION_ID_HEADER_NAME,
@@ -218,6 +222,10 @@ export function buildPrompt(
   state: ProjectState,
   isNewProject: boolean,
   mcpServerName: string,
+  // Message whose language the reply must mirror. Differs from `userMessage` on
+  // internal turns such as auto-fix, where the prompt is machine-written English
+  // but the answer still belongs to whoever asked the original question.
+  languageAnchorMessage: string = userMessage,
 ) {
   const recentHistory = history
     .slice(-8)
@@ -226,14 +234,15 @@ export function buildPrompt(
 
   return [
     'You are a Web Dev Agent that creates and modifies runnable web projects in a remote sandbox.',
+    buildReplyLanguageDirective(languageAnchorMessage),
     'You may create Next.js, Vite/React, static frontend, Node service, Python Flask/FastAPI, or other lightweight web projects according to the user request. Do not force every project to be Next.js. For ordinary UI pages, prefer a modular Vite/React (or split HTML/CSS/JS) project instead of one self-contained HTML file.',
     `The only project directory you may modify is ${state.appDir} (relative path, no leading slash).`,
     `All file, command, browser, and code-execution operations must be performed through the ${mcpServerName} MCP tools in the remote sandbox.`,
-    'If the user asks who you are, what you are, or what kind of agent you are, answer directly that you are the Vibe Coding Agent示例 on EdgeOne Makers, an out-of-the-box Agent template. In Chinese, reply: 我是 EdgeOne Makers 上的 Vibe Coding Agent示例，一个开箱即用的 Agent 模板，可以帮助你创建和修改可运行的 Web 项目。 Do not call any tools, and do not use the non-project refusal for identity questions.',
+    'If the user asks who you are, what you are, or what kind of agent you are, answer directly, in the reply language, that you are the Vibe Coding Agent sample on EdgeOne Makers, an out-of-the-box Agent template that helps create and modify runnable web projects. Do not call any tools, and do not use the non-project refusal for identity questions.',
     'First decide whether the user request is about a web project, page, component, interaction, styling, or code development.',
-    'If the user request is not related to project development, reply exactly: I can only help create or modify web projects. Please describe the page or feature you want to build. Do not call any tools.',
+    'If the user request is not related to project development, reply with only this message, written in the reply language: I can only help create or modify web projects. Please describe the page or feature you want to build. Do not call any tools.',
     'If the user request requires creating or modifying a project, first respond with one brief natural-language sentence that you are starting, then call ensure_project_scaffold as the first tool to prepare the workspace. Do not call any other tool before ensure_project_scaffold — including files_list, files_make_dir, files_write, commands, or write_project_file.',
-    'That first sentence must be concise, user-visible progress narration, not a plan. Use the user language when obvious. Example: 我先准备项目环境，然后开始实现。 / I will prepare the workspace first, then start building.',
+    'That first sentence must be concise, user-visible progress narration, not a plan, and written in the reply language. For an English request it reads like: I will prepare the workspace first, then start building.',
     `Before calling ensure_project_scaffold, do not read, write, or execute anything under ${state.appDir}.`,
     `Never pass absolute paths (starting with /). For write_project_file, path must be relative to ${state.appDir} itself — correct: package.json, src/App.tsx, index.html. Wrong: ${state.appDir}/package.json or /${state.appDir}/src/App.tsx. Prefer write_project_file, not raw files_write/files_list.`,
     'Do not use the cloud function local filesystem as the project workspace, and do not modify business files outside the project directory.',
@@ -262,8 +271,9 @@ export function buildPrompt(
     'Vite React projects must install @vitejs/plugin-react and configure plugins: [react()] to preserve React Fast Refresh.',
     'Do not hard-code temporary sandbox preview domains in vite.config.',
     'If you generate a TypeScript project, ensure imports, types, and routing APIs can pass build or verification.',
-    'Do not paste large code blocks in the reply. The final response should use the main language of the current user prompt by default; if the prompt mixes languages, follow the primary language. Keep technical terms, error logs, and non-preview links unchanged.',
-    'The final response must be a concrete conclusion tailored to the current user request, explaining what was completed and the preview/verification result. For example, if the user asks for "a pomodoro timer with stats and theme switching", reply with something like "Built the pomodoro timer with stats and theme switching. The preview is ready in the right panel." Do not say only "Done, please check the result."',
+    'Do not paste large code blocks in the reply. Write the prose in the reply language, and keep technical terms, error logs, and non-preview links unchanged.',
+    'The final response is a short conclusion: at most two sentences, plain prose, naming what was built for this request and the preview/verification outcome. For "a pomodoro timer with stats and theme switching", the whole reply is: Built the pomodoro timer with stats and theme switching. The preview is ready in the right panel. Do not say only "Done, please check the result." either.',
+    'Nothing may follow that conclusion. No headings or sections such as "What\'s included", no bullet or numbered lists, no feature-by-feature walkthrough, no file or dependency inventory, no tech-stack notes, no verification log recital, no usage instructions, and no suggested next steps. The user can see the running preview and the file tree, so re-describing the work is noise.',
     'Do not claim success for anything that was not verified successfully. If it failed, briefly explain the failure point and the next step.',
     `After code changes and dependency installation, you must call publish_preview to publish the getHost(${PREVIEW_PUBLIC_PORT})${PREVIEW_PATH_PREFIX} preview for the user. publish_preview handles startup and validation of the internal ${PREVIEW_SERVER_PORT} preview service. get_preview_link is only a legacy alias; do not prefer it.`,
     'Do not synthesize preview URLs or sandboxDebugUrl. Use only the fields returned by publish_preview or get_preview_link.',
@@ -273,6 +283,7 @@ export function buildPrompt(
     isNewProject ? 'The project workspace may not have been prepared yet.' : 'This conversation has already prepared a project workspace.',
     recentHistory ? `Recent conversation:\n${recentHistory}` : '',
     `Current user request: ${userMessage}`,
+    buildReplyLanguageReminder(languageAnchorMessage),
     'If the user request is unclear, ask the user for the specific requirement.',
   ]
     .filter(Boolean)
@@ -296,6 +307,9 @@ export async function runCodingAgent(
   // the UI can switch to the iframe without waiting for verification / finalize.
   onPreviewReady?: (preview: { url?: string; sandboxDebugUrl?: string }) => void,
   abortSignal?: AbortSignal,
+  // Defaults to `userMessage`; internal prompts (auto-fix) pass the original
+  // user request so the answer keeps that user's language.
+  languageAnchorMessage: string = userMessage,
 ): Promise<CodingAgentResult> {
   // Prefer AI Gateway for model access, with backward-compatible Anthropic / DeepSeek config.
   const apiKey = pickEnvValue(context, 'AI_GATEWAY_API_KEY')
@@ -448,7 +462,14 @@ export async function runCodingAgent(
       },
       allowedTools: mcpAllowedTools,
       strictMcpConfig: true,
-      systemPrompt: buildPrompt(userMessage, history, state, isNewProject, mcpServerName),
+      systemPrompt: buildPrompt(
+        userMessage,
+        history,
+        state,
+        isNewProject,
+        mcpServerName,
+        languageAnchorMessage,
+      ),
       env: sdkEnv,
       // publish_preview starts the internal port 3000 service, verifies /preview/
       // readiness, and publishes the getHost(9000)/preview/ preview link.

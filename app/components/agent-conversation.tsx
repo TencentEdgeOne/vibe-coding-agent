@@ -156,10 +156,12 @@ function AssistantTurn({ message, copy }: {
     return snapshot;
   });
   const [traceOpen, setTraceOpen] = useState(true);
-  const normalizedFinal = message.content.replace(/\s+/g, ' ').trim();
+  // Compared without any whitespace so a narration whose spacing drifted from the
+  // final text is still recognized as the same sentence.
+  const normalizedFinal = message.content.replace(/\s+/g, '');
   const isFinalTextDuplicate = (content: string) => {
     if (message.status === 'running' || !normalizedFinal) return false;
-    const normalizedActivity = content.replace(/\s+/g, ' ').trim();
+    const normalizedActivity = content.replace(/\s+/g, '');
     return normalizedActivity.length > 24
       && (normalizedActivity.includes(normalizedFinal) || normalizedFinal.includes(normalizedActivity));
   };

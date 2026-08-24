@@ -45,6 +45,7 @@ import {
 } from '@/app/lib/conversation';
 import { LANGUAGE_STORAGE_KEY, TRANSLATIONS, type Locale } from '@/app/i18n';
 import { conversationExportFilename, conversationToJsonl } from '../../../shared/conversation-export';
+import { buildStoppedReply } from '../../../shared/reply-language';
 import type {
   AssistantActivity,
   AssistantStatus,
@@ -1203,9 +1204,11 @@ export function WorkspaceScreen() {
     const cid = conversationIdRef.current || conversationId;
     if (!loadingRef.current || !cid || stoppingRef.current) return null;
     stoppingRef.current = true;
-    const stoppedText = language === 'zh'
-      ? '已停止本次生成，你可以继续描述下一步修改。'
-      : 'Generation stopped. You can continue with another change.';
+    const currentAssistant = [...messages].reverse().find((item) => item.role === 'assistant' && item.status === 'running');
+    const currentUser = [...messages].reverse().find((item) => item.role === 'user');
+    // Anchored to the prompt being stopped, not the UI locale, so the assistant
+    // column stays in one language (and matches what /stop persists).
+    const stoppedText = buildStoppedReply(currentUser?.content || '');
     setMessages((current) => current.map((item, index) => {
       if (index !== current.length - 1 || item.role !== 'assistant' || item.status !== 'running') return item;
       return {
@@ -1222,8 +1225,6 @@ export function WorkspaceScreen() {
     setLoading(false);
     setFilesRefreshing(false);
 
-    const currentAssistant = [...messages].reverse().find((item) => item.role === 'assistant' && item.status === 'running');
-    const currentUser = [...messages].reverse().find((item) => item.role === 'user');
     const stoppedActivities = (currentAssistant?.activities ?? []).map((activity) =>
       activity.kind === 'tool' && activity.status === 'running'
         ? { ...activity, status: 'stopped' as const, endedAt: Date.now() }

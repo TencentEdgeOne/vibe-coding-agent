@@ -1,3 +1,4 @@
+import { detectReplyLanguage } from '../../shared/reply-language.ts';
 import { createProjectArchive } from '../_project';
 import { saveProjectSnapshot } from '../_memory';
 import type { ProjectState } from '../_types';
@@ -38,37 +39,23 @@ type SandboxWithTimeoutExtension = {
   extendTimeout?: (seconds: number) => unknown;
 };
 
-export function stripReturnedPreviewLinks(text: string, previewUrl?: string) {
-  if (!text || !previewUrl) {
-    return text;
-  }
-  const escapedUrl = escapeRegExp(previewUrl);
-  return text
-    .replace(new RegExp(`\\s*\\[[^\\]]*(?:打开预览|预览|preview)[^\\]]*\\]\\(${escapedUrl}\\)`, 'gi'), '')
-    .replace(new RegExp(`\\s*${escapedUrl}`, 'g'), '')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
-
-function escapeRegExp(value: string) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
+// Used when the model returns nothing usable. Only the two languages the template
+// ships copy for are localized; anything else falls back to English, which still
+// beats answering a request in a language nobody asked for.
 export function buildRequirementConclusionFallback(
   request: string,
   status: 'pending' | 'ready' | 'generated',
 ) {
   const summary = summarizeUserRequest(request);
-  const isEnglish = !/[\u3400-\u9fff]/.test(request);
 
-  if (isEnglish) {
+  if (detectReplyLanguage(request)?.code === 'zh') {
     if (status === 'ready') {
-      return `Built this for your request: ${summary}. The preview is ready in the right preview panel.`;
+      return `已按你的需求完成：${summary}。预览已在右侧预览面板中就绪。`;
     }
     if (status === 'generated') {
-      return `Generated the project for your request: ${summary}.`;
+      return `已按你的需求生成项目：${summary}。`;
     }
-    return `Handled your request: ${summary}. Verification and preview results are being prepared.`;
+    return `已处理你的需求：${summary}。校验与预览结果正在准备中。`;
   }
 
   if (status === 'ready') {
@@ -78,6 +65,41 @@ export function buildRequirementConclusionFallback(
     return `Generated the project for your request: ${summary}.`;
   }
   return `Handled your request: ${summary}. Verification and preview results are being prepared.`;
+}
+
+// Verification / preview caveats appended to the model's own conclusion. They
+// follow the request's language so the bubble does not end up bilingual.
+export function buildOutcomeSuffix(
+  request: string,
+  outcome: { autoFixAttempts: number; buildFailed: boolean; hasPreview: boolean },
+) {
+  const zh = detectReplyLanguage(request)?.code === 'zh';
+  const parts: string[] = [];
+  const attempts = outcome.autoFixAttempts;
+
+  if (attempts > 0) {
+    if (outcome.buildFailed) {
+      parts.push(zh
+        ? `已自动修复 ${attempts} 次，但校验仍未通过，最终日志已保留以便继续排查。`
+        : `Auto-fix ran ${attempts} time(s), but verification still fails. The final logs are preserved for further debugging.`);
+    } else {
+      parts.push(zh
+        ? `已根据校验报错自动修复 ${attempts} 次，校验现已通过。`
+        : `Auto-fix ran ${attempts} time(s) based on the verification error, and verification now passes.`);
+    }
+  } else if (outcome.buildFailed) {
+    parts.push(zh
+      ? '当前校验未通过，因此没有把这次更新描述为成功，请结合日志继续排查。'
+      : 'Verification currently fails, so I did not describe the update as successful. Please continue debugging from the logs.');
+  }
+
+  if (!outcome.hasPreview) {
+    parts.push(zh
+      ? '本次没有获取到预览链接，可以让 Agent 继续调用 publish_preview。'
+      : 'No preview link was obtained. Please continue by asking the agent to call publish_preview.');
+  }
+
+  return parts.map((part) => (zh ? part : ` ${part}`)).join('');
 }
 
 function summarizeUserRequest(request: string) {

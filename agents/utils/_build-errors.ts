@@ -76,7 +76,8 @@ export function buildAutoFixPrompt(
     '- Do not regenerate all files or rewrite unrelated code.',
     '- Use write_project_file for exactly one complete file per call. Wait for each result before writing another file.',
     '- After fixing, call publish_preview to publish the preview.',
-    '- Final response must be a concrete conclusion tailored to the original user request, covering what was completed and the preview/verification result. Do not use a generic completion line.',
+    '- Final response must be a concrete conclusion tailored to the original user request, covering what was fixed and the preview/verification result. Keep it to at most two sentences of plain prose, with no headings, lists, or feature walkthrough, and do not use a generic completion line.',
+    '- Write the final response in the language of the original user request above, not the language of this instruction block.',
     '- Do not include preview URLs, sandboxDebugUrl, or preview buttons in the final response.',
   ]
     .filter((part) => part !== '')

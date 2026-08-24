@@ -1,3 +1,4 @@
+import { buildStoppedReply } from '../shared/reply-language.ts';
 import { abortLiveChatTask, markChatTaskStopped } from './_chat-tasks';
 import { getProjectState, saveActivityTurn, saveProjectState } from './_memory';
 import { persistProjectSnapshot } from './pipelines/_helpers';
@@ -42,9 +43,7 @@ export async function onRequest(context: any) {
     if (rawTurn && typeof rawTurn === 'object') {
       const turn = rawTurn as Record<string, unknown>;
       const user = String(turn.user || '').slice(0, 20_000);
-      const assistant = /[\u3400-\u9fff]/.test(user)
-        ? '已停止本次生成，你可以继续描述下一步修改。'
-        : 'Generation stopped. You can continue with another change.';
+      const assistant = buildStoppedReply(user);
       const activities = (Array.isArray(turn.activities) ? turn.activities : [])
         .slice(-50)
         .filter((activity): activity is PersistedActivity => Boolean(activity) && typeof activity === 'object')

@@ -1,3 +1,5 @@
+import { stripReturnedPreviewLinks } from '../../shared/preview-links.ts';
+import { buildStoppedReply } from '../../shared/reply-language.ts';
 import { runCodingAgent } from '../_agent';
 import { AUTO_FIX_MAX_ATTEMPTS } from '../_constants';
 import { getHistory, saveProjectState } from '../_memory';
@@ -16,11 +18,11 @@ import { resolveConversationId } from '../utils/_request';
 import {
   FILE_PUSH_MAX_BYTES,
   FILE_PUSH_TURN_BUDGET_BYTES,
+  buildOutcomeSuffix,
   buildRequirementConclusionFallback,
   createProjectCheckpointController,
   extendExistingSandboxTimeout,
   isGenericCompletionReply,
-  stripReturnedPreviewLinks,
   utf8ByteLength,
 } from './_helpers';
 import { createTurnLifecycle } from './_turn-lifecycle';
@@ -128,7 +130,7 @@ export async function runChatPipeline(
     }
     if (event.type === 'text_segment') {
       const text = state.previewUrl
-        ? stripReturnedPreviewLinks(event.data.text, state.previewUrl)
+        ? stripReturnedPreviewLinks(event.data.text, state.previewUrl, { preserveEdges: true })
         : event.data.text;
       if (text.length === 0) {
         return;
@@ -237,9 +239,7 @@ export async function runChatPipeline(
   );
 
   if (modelResult.stopped || abortSignal?.aborted) {
-    const stoppedReply = /[\u3400-\u9fff]/.test(message)
-      ? '已停止本次生成，你可以继续描述下一步修改。'
-      : 'Generation stopped. You can continue with another change.';
+    const stoppedReply = buildStoppedReply(message);
     await finalizeTurn(stoppedReply, 'stopped', {
       withSnapshot: modelResult.projectTouched,
     });
@@ -421,11 +421,10 @@ export async function runChatPipeline(
       handleProjectFilesChanged,
       handlePreviewReady,
       abortSignal,
+      message,
     );
     if (autoFixResult.stopped || abortSignal?.aborted) {
-      const stoppedReply = /[\u3400-\u9fff]/.test(message)
-        ? '已停止本次生成，你可以继续描述下一步修改。'
-        : 'Generation stopped. You can continue with another change.';
+      const stoppedReply = buildStoppedReply(message);
       await finalizeTurn(stoppedReply, 'stopped', { withSnapshot: true });
       send({
         type: 'result',
@@ -505,24 +504,18 @@ export async function runChatPipeline(
     });
   }
 
-  const autoFixSuffix = autoFixAttempts > 0
-    ? build.status === 'success'
-      ? ` Auto-fix ran ${autoFixAttempts} time(s) based on the verification error, and verification now passes.`
-      : ` Auto-fix ran ${autoFixAttempts} time(s), but verification still fails. The final logs are preserved for further debugging.`
-    : '';
-  const buildFailedSuffix = build.status === 'failed' && autoFixAttempts === 0
-    ? ' Verification currently fails, so I did not describe the update as successful. Please continue debugging from the logs.'
-    : '';
-  const missingPreviewSuffix = state.previewUrl
-    ? ''
-    : ' No preview link was obtained. Please continue by asking the agent to call publish_preview.';
   const finalFallbackReply = buildRequirementConclusionFallback(
     message,
     build.status !== 'failed' && state.previewUrl ? 'ready' : 'generated',
   );
   const baseReply = autoFixReply || (modelOutput ? assistantReply : finalFallbackReply);
+  const outcomeSuffix = buildOutcomeSuffix(message, {
+    autoFixAttempts,
+    buildFailed: build.status === 'failed',
+    hasPreview: Boolean(state.previewUrl),
+  });
   const reply = stripReturnedPreviewLinks(
-    `${baseReply}${autoFixSuffix}${buildFailedSuffix}${missingPreviewSuffix}`,
+    `${baseReply}${outcomeSuffix}`,
     state.previewUrl,
   );
 
