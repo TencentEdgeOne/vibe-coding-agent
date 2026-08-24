@@ -108,8 +108,15 @@ export async function runChatPipeline(
     || String(context?.run_id || `${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
   // Mid-turn debounced snapshots + exit-path flush so a recycled sandbox still
-  // has a restorable projectSnapshot in the store.
-  const checkpoint = createProjectCheckpointController(context, conversationId, state);
+  // has a restorable workspace in project Blob storage.
+  const checkpoint = createProjectCheckpointController(context, conversationId, state, (persistenceError) => {
+    send({
+      type: 'log',
+      phase: 'agent',
+      stream: 'stderr',
+      message: persistenceError,
+    });
+  });
   const turn = createTurnLifecycle({
     context,
     conversationId,
@@ -552,7 +559,7 @@ export async function runChatPipeline(
     : failureReply;
 
   // Code first, then state, then conversation — so a crash mid-finalize still
-  // leaves a restorable projectSnapshot for resume after sandbox recycle.
+  // leaves a restorable workspace for resume after sandbox recycle.
   await finalizeTurn(
     reply,
     modelResult.success && build.status !== 'failed' && Boolean(state.previewUrl) ? 'completed' : 'failed',

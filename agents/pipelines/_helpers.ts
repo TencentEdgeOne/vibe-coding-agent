@@ -1,5 +1,3 @@
-import { createProjectArchive } from '../_project';
-import { saveProjectSnapshot } from '../_memory';
 import type { ProjectState } from '../_types';
 import { debugLog } from '../utils/_debug';
 export { compactUserFacingReply } from '../../shared/user-facing-reply.ts';
@@ -120,30 +118,19 @@ export async function extendExistingSandboxTimeout(context: any) {
   }
 }
 
-// Code persistence (防丢失): snapshot the current project into the store so the
-// generated code survives sandbox recycling. Best-effort — a snapshot failure must
-// never break the turn's result. Called on every path where the project has files
-// on disk, INCLUDING fatal-build turns: the code was still generated, so it must not
-// be lost just because verification failed (a later restore/resume needs it).
+// Persist the project through the sandbox SDK. Archive bytes travel directly from
+// the sandbox to project Blob storage and never enter conversation metadata.
 export async function persistProjectSnapshot(
   context: any,
   conversationId: string,
   state: ProjectState,
 ): Promise<boolean> {
   try {
-    const archive = await createProjectArchive(context, state);
-    if (archive.ok) {
-      await saveProjectSnapshot(context, conversationId, {
-        base64: archive.base64,
-        filename: archive.filename,
-        contentType: archive.contentType,
-        size: archive.size,
-        updatedAt: Date.now(),
-      });
-      return true;
-    }
+    await context.sandbox.persist({ path: state.appDir });
+    return true;
   } catch (error) {
     debugLog(context, '[snapshot]', {
+      conversationIdPresent: Boolean(conversationId),
       message: error instanceof Error ? error.message : String(error),
     });
   }
@@ -159,27 +146,29 @@ export type ProjectCheckpointController = {
   /** Mark the project dirty and (re)start the debounce timer. */
   schedule: () => void;
   /** Cancel the timer and persist immediately (await until the store write finishes). */
-  flush: () => Promise<void>;
+  flush: () => Promise<boolean>;
 };
 
-// Mid-turn + exit-path snapshot controller. schedule() is cheap and coalesces;
-// flush() forces a final zip→store write so stop/fatal/success never leave the
-// conversation without a restorable projectSnapshot.
+// Mid-turn + exit-path persistence controller. schedule() is cheap and coalesces;
+// flush() forces a final sandbox-to-Blob write on stop/fatal/success paths.
 export function createProjectCheckpointController(
   context: any,
   conversationId: string,
   state: ProjectState,
+  onFailure?: (message: string) => void,
 ): ProjectCheckpointController {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let dirty = false;
   let chain: Promise<void> = Promise.resolve();
+  let lastSucceeded = true;
 
   const kick = () => {
     chain = chain
       .then(async () => {
         while (dirty) {
           dirty = false;
-          await persistProjectSnapshot(context, conversationId, state);
+          lastSucceeded = await persistProjectSnapshot(context, conversationId, state);
+          if (!lastSucceeded) onFailure?.('Project persistence failed; the current sandbox files are still available until the sandbox expires.');
         }
       })
       .catch((error) => {
@@ -206,6 +195,7 @@ export function createProjectCheckpointController(
       }
       dirty = true;
       await kick();
+      return lastSucceeded;
     },
   };
 }

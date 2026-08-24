@@ -2,7 +2,7 @@ import {
   ARCHIVE_EXCLUDED_DIRECTORIES,
   DOWNLOAD_ARCHIVE_MAX_BYTES,
 } from '../_constants';
-import type { ProjectSnapshot, ProjectState } from '../_types';
+import type { LegacyProjectSnapshot, ProjectState } from '../_types';
 import { safeSegment } from '../utils/_paths';
 import { runSandboxCommand } from './_commands';
 import { assertResettableProjectPath } from './_state';
@@ -183,7 +183,7 @@ export async function createProjectArchive(
 export async function restoreProjectArchive(
   context: any,
   state: ProjectState,
-  snapshot: ProjectSnapshot,
+  snapshot: LegacyProjectSnapshot,
   options: { installDependencies?: boolean } = {},
 ): Promise<{ ok: boolean; error?: string }> {
   if (!snapshot?.base64) {

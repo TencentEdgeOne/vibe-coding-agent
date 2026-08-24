@@ -88,3 +88,17 @@ test('chat task status is a GET route keyed by conversationId query', async () =
   assert.match(pipeline, /done: isExportTaskDone\(status\)/);
   assert.match(client, /fetch\(`?\/status\?conversationId=/);
 });
+
+test('workspace persistence uses the sandbox SDK and metadata snapshots are read-only migration data', async () => {
+  const helpers = await readFile('agents/pipelines/_helpers.ts', 'utf8');
+  const persistence = await readFile('agents/project/_persistence.ts', 'utf8');
+  const memory = await readFile('agents/_memory.ts', 'utf8');
+
+  assert.match(helpers, /context\.sandbox\.persist\(\{ path: state\.appDir \}\)/);
+  assert.match(persistence, /context\.sandbox\.restore\(\{ path: state\.appDir \}\)/);
+  assert.match(persistence, /getLegacyProjectSnapshot/);
+  assert.match(persistence, /clearLegacyProjectSnapshot/);
+  assert.doesNotMatch(memory, /saveProjectSnapshot/);
+  assert.doesNotMatch(memory, /listConversations/);
+  assert.doesNotMatch(memory, /deleteConversation/);
+});

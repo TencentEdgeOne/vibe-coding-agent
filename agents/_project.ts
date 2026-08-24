@@ -20,3 +20,4 @@ export {
 } from './project/_preview';
 export { createProjectArchive, restoreProjectArchive } from './project/_archive';
 export { deployProjectToMakers, resolveMakersDeployConfig } from './project/_makers-deploy';
+export { restorePersistedProject } from './project/_persistence';

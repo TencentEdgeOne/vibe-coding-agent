@@ -4,7 +4,7 @@ import type {
   ChatTask,
   ConversationMessage,
   PersistedActivityTurn,
-  ProjectSnapshot,
+  LegacyProjectSnapshot,
   ProjectState,
 } from './_types';
 import { sanitizeAssistantText } from './utils/_text';
@@ -125,96 +125,15 @@ export async function saveProjectState(
   }
 }
 
-// Code persistence (防丢失): the sandbox /tmp is volatile and may be cleared
-// between requests, so the generated project only living there is not durable.
-// We persist a base64 zip snapshot of the project alongside projectState in the
-// conversation metadata, and restore it when the sandbox no longer has the code.
-//
-// Why metadata (not Blob): this project is Claude Agent SDK, so context.store has
-// no generic KV; conversation metadata mirrors saveProjectState with the least
-// code. Source archives exclude node_modules/.next/etc (see ARCHIVE_EXCLUDED_
-// DIRECTORIES) so they are typically KB-sized, well under the 50MB message limit.
-// Trade-off: getProjectState reads getConversation every turn, which pulls the
-// snapshot along with it — negligible at KB scale. If projects grow large or hit
-// an (undocumented) metadata size limit, migrate this to platform Blob
-// (@edgeone/pages-blob) as the original plan §四 specified.
-
-// ---- 惰性清理：回收超时项目，避免项目快照在 store 里随会话数无限膨胀 ----
-// 触发点：每次保存项目快照时顺带扫一小批会话（游标滚动，多次写入最终覆盖全量）。
-// 判定：距 lastMessageAt（平台自带的最后活跃时间戳）超过 TTL、且存过项目快照的会话即回收。
-// 安全：best-effort，任何错误都不影响本次存储；永不删除当前正在操作的会话。
-const PROJECT_TTL_MS = 24 * 60 * 60 * 1000; // 1 天没有新对话即视为超时
-const SWEEP_BATCH = 20;                      // 每次顺带扫描的会话数
-// ⚠️ 删除不可逆：先 dry-run（只记录不真删）。在 dev 里确认 sweepExpiredProjects
-// 扫描出的候选列表正确、且 deleteConversation 签名可用后，再改成 false 启用真删。
-const SWEEP_DRY_RUN = true;
-let sweepCursor: string | undefined;         // 进程内清理进度，丢失无害（下轮重扫）
-
-export async function sweepExpiredProjects(
-  context: any,
-  currentConversationId: string,
-): Promise<{ scanned: number; expired: string[]; dryRun: boolean }> {
-  const expired: string[] = [];
-  let scanned = 0;
-  try {
-    const now = Date.now();
-    const listed = await context.store.listConversations({ limit: SWEEP_BATCH, after: sweepCursor });
-    const items = Array.isArray(listed) ? listed : (listed?.items ?? []);
-    scanned = items.length;
-    // 游标滚动：取到底（nextCursor 为空）就重置，下一轮从头再扫。
-    sweepCursor = (!Array.isArray(listed) && listed?.nextCursor) ? listed.nextCursor : undefined;
-
-    for (const conv of items) {
-      const id = conv?.conversationId;
-      if (!id || id === currentConversationId) continue;      // 不动当前会话
-      if (!conv?.metadata?.projectSnapshot?.base64) continue; // 只回收占空间的项目快照会话
-      const lastActive = typeof conv?.lastMessageAt === 'number' ? conv.lastMessageAt : conv?.createdAt;
-      if (typeof lastActive !== 'number') continue;
-      if (now - lastActive <= PROJECT_TTL_MS) continue;       // 未超时
-      expired.push(id);
-      if (!SWEEP_DRY_RUN) {
-        await context.store.deleteConversation({ conversationId: id });
-      }
-    }
-    if (expired.length > 0) {
-      console.log(
-        `[sweep] ${SWEEP_DRY_RUN ? 'DRY-RUN would delete' : 'deleted'} ${expired.length} expired conversation(s):`,
-        expired,
-      );
-    }
-  } catch (error: any) {
-    // 清理是附带动作，绝不能让本次存储失败。
-    console.warn('[sweep] skipped due to error:', error?.message);
-  }
-  return { scanned, expired, dryRun: SWEEP_DRY_RUN };
-}
-
-export async function saveProjectSnapshot(
+// Read-only compatibility for snapshots written by template versions that stored
+// the archive in conversation metadata. New writes use context.sandbox.persist().
+export async function getLegacyProjectSnapshot(
   context: any,
   conversationId: string,
-  snapshot: ProjectSnapshot,
-) {
-  // 先删后存：存本次快照前，顺带回收一批超时项目。
-  await sweepExpiredProjects(context, conversationId);
-  try {
-    await context.store.updateConversation({
-      conversationId,
-      metadata: { projectSnapshot: snapshot },
-    });
-  } catch (error: any) {
-    if (error?.code !== 'MemoryNotFoundError') {
-      throw error;
-    }
-  }
-}
-
-export async function getProjectSnapshot(
-  context: any,
-  conversationId: string,
-): Promise<ProjectSnapshot | null> {
+): Promise<LegacyProjectSnapshot | null> {
   try {
     const conversation = await context.store.getConversation({ conversationId });
-    const stored = conversation?.metadata?.projectSnapshot as ProjectSnapshot | undefined;
+    const stored = conversation?.metadata?.projectSnapshot as LegacyProjectSnapshot | undefined;
     if (stored && typeof stored === 'object' && typeof stored.base64 === 'string' && stored.base64) {
       return stored;
     }
@@ -226,7 +145,7 @@ export async function getProjectSnapshot(
   return null;
 }
 
-export async function clearProjectSnapshot(context: any, conversationId: string) {
+export async function clearLegacyProjectSnapshot(context: any, conversationId: string) {
   try {
     await context.store.updateConversation({
       conversationId,
