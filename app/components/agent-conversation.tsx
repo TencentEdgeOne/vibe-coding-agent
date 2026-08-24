@@ -46,7 +46,6 @@ type ConversationCopy = {
   placeholder: string;
   send: string;
   stop: string;
-  workedFor: (duration: string) => string;
   toolActions: Record<ToolAction, string>;
 };
 
@@ -145,17 +144,16 @@ function AssistantTurn({ message, copy }: {
   copy: ConversationCopy;
 }) {
   const activities = message.activities ?? [];
-  const toolActivities = activities.filter(
-    (activity): activity is Extract<AssistantActivity, { kind: 'tool' }> => activity.kind === 'tool',
-  );
   const readPaths = new Set<string>();
-  const previouslyReadPaths = toolActivities.map((activity) => {
-    const snapshot = new Set(readPaths);
+  const previouslyReadByIndex = new Map<number, ReadonlySet<string>>();
+  activities.forEach((activity, index) => {
+    if (activity.kind !== 'tool') return;
+    previouslyReadByIndex.set(index, new Set(readPaths));
     const presentation = presentToolActivity(activity);
-    if (presentation.action === 'Read file' && presentation.target) readPaths.add(presentation.target);
-    return snapshot;
+    if (presentation.action === 'Read file' && presentation.target) {
+      readPaths.add(presentation.target);
+    }
   });
-  const [traceOpen, setTraceOpen] = useState(true);
   // Compared without any whitespace so a narration whose spacing drifted from the
   // final text is still recognized as the same sentence.
   const normalizedFinal = message.content.replace(/\s+/g, '');
@@ -165,64 +163,32 @@ function AssistantTurn({ message, copy }: {
     return normalizedActivity.length > 24
       && (normalizedActivity.includes(normalizedFinal) || normalizedFinal.includes(normalizedActivity));
   };
-
-  useEffect(() => {
-    if (message.status === 'running') setTraceOpen(true);
-  }, [message.status]);
-
-  const startedAt = toolActivities.reduce(
-    (earliest, activity) => activity.startedAt ? Math.min(earliest, activity.startedAt) : earliest,
-    Number.POSITIVE_INFINITY,
+  const hasRunningTool = activities.some(
+    (activity) => activity.kind === 'tool' && activity.status === 'running',
   );
-  const endedAt = toolActivities.reduce(
-    (latest, activity) => activity.endedAt ? Math.max(latest, activity.endedAt) : latest,
-    0,
-  );
-  const elapsedSeconds = Number.isFinite(startedAt)
-    ? Math.max(1, Math.round(((endedAt || startedAt) - startedAt) / 1000))
-    : 0;
-  const duration = elapsedSeconds >= 60
-    ? `${Math.floor(elapsedSeconds / 60)}m ${elapsedSeconds % 60}s`
-    : `${elapsedSeconds}s`;
+  const lastActivity = activities.at(-1);
+  const showWaiting = message.status === 'running'
+    && !hasRunningTool
+    && lastActivity?.kind !== 'text';
 
   return (
     <section className="conversation-turn conversation-assistant-turn">
       <div className="conversation-body">
-        {activities.map((activity, index) => activity.kind === 'text' ? (
-          isFinalTextDuplicate(activity.content)
-            ? null
-            : <Markdown key={`text-${index}`} content={activity.content} />
-        ) : null)}
-        {toolActivities.length > 0 && (
-          <div className="assistant-trace">
-            <button
-              type="button"
-              className="assistant-trace-trigger"
-              aria-expanded={traceOpen}
-              onClick={() => setTraceOpen((current) => !current)}
-            >
-              {message.status === 'running' ? (
-                <span className="assistant-trace-spinner" aria-hidden="true" />
-              ) : (
-                <ChevronRight className="assistant-trace-chevron" aria-hidden="true" />
-              )}
-              <span>{message.status === 'running' ? copy.running : copy.workedFor(duration)}</span>
-              {message.status === 'error' && <CircleAlert aria-hidden="true" />}
-            </button>
-            {traceOpen && (
-              <div className="assistant-trace-list">
-                {toolActivities.map((activity, index) => (
-                  <ToolActivityRow
-                    key={activity.toolUseId || `tool-${index}`}
-                    activity={activity}
-                    copy={copy}
-                    previouslyReadPaths={previouslyReadPaths[index]}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+        {activities.map((activity, index) => {
+          if (activity.kind === 'text') {
+            return isFinalTextDuplicate(activity.content)
+              ? null
+              : <Markdown key={`text-${index}`} content={activity.content} />;
+          }
+          return (
+            <ToolActivityRow
+              key={activity.toolUseId || `tool-${index}`}
+              activity={activity}
+              copy={copy}
+              previouslyReadPaths={previouslyReadByIndex.get(index) ?? new Set()}
+            />
+          );
+        })}
         {/* While running, streamed text activities are the source of truth. Showing
             message.content at the same time repeats the trailing sentence. */}
         {message.content && message.status !== 'running' && (
@@ -235,7 +201,7 @@ function AssistantTurn({ message, copy }: {
             <Markdown content={message.content} />
           )
         )}
-        {message.status === 'running' && activities.length === 0 && (
+        {showWaiting && (
           <div className="agent-waiting" aria-label={copy.running}>
             <span />
             <span />

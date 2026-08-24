@@ -1501,7 +1501,6 @@ export function WorkspaceScreen() {
             stopped: t.workspace.activityStopped,
             input: t.workspace.activityInput,
             output: t.workspace.activityOutput,
-            workedFor: t.workspace.workedFor,
             placeholder: t.workspace.changePlaceholder,
             send: t.workspace.send,
             stop: t.workspace.stop,

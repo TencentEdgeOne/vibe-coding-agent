@@ -218,6 +218,10 @@ input::placeholder {
   margin-top: 10px;
 }
 
+.tool-activity-row + .tool-activity-row {
+  margin-top: 2px;
+}
+
 .agent-markdown p + p,
 .agent-markdown p + ul,
 .agent-markdown p + ol,
@@ -1053,68 +1057,6 @@ input::placeholder {
 .tool-activity-trigger {
   color: #6b7280;
   font-size: 12px;
-}
-
-.conversation-assistant-turn .agent-markdown + .assistant-trace,
-.conversation-assistant-turn .assistant-trace + .agent-markdown {
-  margin-top: 12px;
-}
-
-.assistant-trace {
-  min-width: 0;
-}
-
-.assistant-trace-trigger {
-  display: flex;
-  width: 100%;
-  min-width: 0;
-  align-items: center;
-  gap: 6px;
-  border-radius: 6px;
-  padding: 3px 5px 3px 2px;
-  color: #6b7280;
-  font-size: 12px;
-  line-height: 20px;
-  text-align: left;
-  transition: color 160ms ease, background 160ms ease;
-}
-
-.assistant-trace-trigger:hover {
-  background: #f7f8fa;
-  color: #17181c;
-}
-
-.assistant-trace-trigger > svg {
-  width: 12px;
-  height: 12px;
-}
-
-.assistant-trace-chevron {
-  transition: transform 180ms ease;
-}
-
-.assistant-trace-trigger[aria-expanded='true'] .assistant-trace-chevron {
-  transform: rotate(90deg);
-}
-
-.assistant-trace-spinner {
-  width: 12px;
-  height: 12px;
-  flex: 0 0 12px;
-  border: 1.5px solid rgba(47, 107, 255, 0.22);
-  border-top-color: #2f6bff;
-  border-radius: 50%;
-  animation: spin 700ms linear infinite;
-}
-
-.assistant-trace-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin: 4px 0;
-  border: 0;
-  padding: 2px 0;
-  animation: trace-list-in 160ms ease-out both;
 }
 
 .assistant-error-message {
