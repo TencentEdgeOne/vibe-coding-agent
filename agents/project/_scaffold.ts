@@ -1,8 +1,8 @@
 import type { BuildResult, BuildStatus, ProjectState, ScaffoldLog } from '../_types';
-import { buildEdgeoneCliPrewarmScript } from '../../shared/makers-deploy';
 import { debugLog } from '../utils/_debug';
 import { detectFatalToolError } from '../utils/_text';
 import { runCommandCapturingExit, runSandboxCommand } from './_commands';
+import { runMakersCompatibilityCheck } from './_makers-compat';
 
 function shellQuote(value: string) {
   return `'${value.replace(/'/g, `'\\''`)}'`;
@@ -81,11 +81,6 @@ export async function ensureProjectScaffold(
   await sandbox.files.makeDir(state.sessionDir);
   await sandbox.files.makeDir(state.appDir);
 
-  // CLI installation dominates first preview latency in a fresh sandbox. Start
-  // it in the background while the model writes project files; publish_preview
-  // will join this same install instead of launching a duplicate.
-  await prewarmEdgeoneCli(context);
-
   await repairNestedAppDirLayout(context, state, onLog);
 
   const existing = await runSandboxCommand(
@@ -117,14 +112,23 @@ export async function ensureProjectScaffold(
   return true;
 }
 
-export async function prewarmEdgeoneCli(context: any) {
-  await runSandboxCommand(context, buildEdgeoneCliPrewarmScript(), {
-    timeout: 10,
-  });
-}
-
 export async function runVerification(context: any, state: ProjectState): Promise<BuildResult> {
   try {
+    const compatibility = await runMakersCompatibilityCheck(context, state);
+    if (compatibility.exitCode !== 0) {
+      return {
+        status: 'failed',
+        stdout: compatibility.stdout,
+        stderr: [
+          'Makers compatibility check failed.',
+          compatibility.stderr || compatibility.stdout,
+        ].filter(Boolean).join('\n'),
+      };
+    }
+    const withCompatibilityOutput = (stdout = '') => (
+      [compatibility.stdout.trim(), stdout.trim()].filter(Boolean).join('\n')
+    );
+
     const packageExists = await context.sandbox.files.exists(`${state.appDir}/package.json`);
     if (packageExists) {
       const hasBuildScript = await runSandboxCommand(
@@ -139,7 +143,7 @@ export async function runVerification(context: any, state: ProjectState): Promis
       if (hasBuildScript.exitCode !== 0) {
         return {
           status: 'failed',
-          stdout: hasBuildScript.stdout,
+          stdout: withCompatibilityOutput(hasBuildScript.stdout),
           stderr: hasBuildScript.stderr || 'Failed to read package.json; unable to determine whether a build script exists.',
         };
       }
@@ -148,7 +152,7 @@ export async function runVerification(context: any, state: ProjectState): Promis
       if (buildFlag === 'error') {
         return {
           status: 'failed',
-          stdout: hasBuildScript.stdout,
+          stdout: withCompatibilityOutput(hasBuildScript.stdout),
           stderr: 'Failed to parse package.json; unable to determine whether a build script exists.',
         };
       }
@@ -161,7 +165,7 @@ export async function runVerification(context: any, state: ProjectState): Promis
 
         return {
           status: result.exitCode === 0 ? ('success' as BuildStatus) : ('failed' as BuildStatus),
-          stdout: result.stdout,
+          stdout: withCompatibilityOutput(result.stdout),
           stderr: result.stderr,
         };
       }
@@ -169,7 +173,7 @@ export async function runVerification(context: any, state: ProjectState): Promis
       if (buildFlag !== 'no') {
         return {
           status: 'failed',
-          stdout: hasBuildScript.stdout,
+          stdout: withCompatibilityOutput(hasBuildScript.stdout),
           stderr: hasBuildScript.stderr || 'Failed to parse package.json; unable to determine whether a build script exists.',
         };
       }
@@ -191,7 +195,7 @@ export async function runVerification(context: any, state: ProjectState): Promis
     if (pythonFiles.exitCode !== 0) {
       return {
         status: 'failed',
-        stdout: pythonFiles.stdout,
+        stdout: withCompatibilityOutput(pythonFiles.stdout),
         stderr: pythonFiles.stderr || 'Python file inspection failed.',
       };
     }
@@ -204,14 +208,16 @@ export async function runVerification(context: any, state: ProjectState): Promis
 
       return {
         status: result.exitCode === 0 ? ('success' as BuildStatus) : ('failed' as BuildStatus),
-        stdout: result.stdout,
+        stdout: withCompatibilityOutput(result.stdout),
         stderr: result.stderr,
       };
     }
 
     return {
-      status: 'skipped',
-      stdout: 'No package build script or Python source files found; verification skipped.',
+      status: 'success',
+      stdout: withCompatibilityOutput(
+        'No package build script or Python source files found; Makers compatibility lint passed.',
+      ),
     };
   } catch (error) {
     const commandError = error as { stdout?: unknown; stderr?: unknown; message?: unknown };

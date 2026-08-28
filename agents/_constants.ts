@@ -1,10 +1,10 @@
 // Preview topology inside the sandbox:
-//   edgeone makers dev  → :8088 (app at /)
-//   strip-proxy         → :3000 (/preview/* → :8088/*)
-//   sandbox nginx       → :9000 public host, pathname /preview/
+//   edgeone makers dev  → :8088 (application at /)
+//   strip-prefix proxy  → :3000 (/preview/* → :8088/*)
+//   sandbox gateway     → :9000 public host at /preview/
+export const MAKERS_DEV_PORT = 8088;
 export const PREVIEW_SERVER_PORT = 3000;
 export const PREVIEW_PUBLIC_PORT = 9000;
-export const MAKERS_DEV_PORT = 8088;
 export const PREVIEW_PATH_PREFIX = '/preview/';
 export const HISTORY_FETCH_LIMIT = 50;
 export const AUTO_FIX_MAX_ATTEMPTS = 1;
@@ -77,7 +77,7 @@ export const FILE_TREE_IGNORED_DIRECTORIES = [
   '__pycache__',
   '.venv',
   'venv',
-  // Runtime symlink for static preview hosting — not project source.
+  // Legacy static-preview output — not project source.
   'preview',
   // Created by `edgeone makers deploy` / `makers dev`; hide it from the Files panel.
   '.edgeone',
@@ -86,8 +86,7 @@ export const FILE_TREE_IGNORED_DIRECTORIES = [
 export const FILE_TREE_IGNORED_FILENAMES = new Set([
   'tsconfig.tsbuildinfo',
   '.DS_Store',
-  // Symlink `preview -> .` from static-http publish_preview shows up as a file
-  // entry; hide it so the Files panel does not try to open a directory.
+  // Legacy static-preview symlink; hide it so Files does not open a directory.
   'preview',
 ]);
 

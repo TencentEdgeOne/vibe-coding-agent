@@ -1,0 +1,317 @@
+/* ============================================================
+   Landing — the first screen. Everything here exists to say
+   "this builds on Makers", not just "type a prompt": the
+   pipeline ribbon mirrors the real run phases, and the feature
+   cards below the composer state what the platform provides.
+   ============================================================ */
+
+/* The landing hero is the one place that may outgrow a short window, so it takes
+   the scrolling instead of handing it back to the page. */
+.home-stage {
+  display: flex;
+  position: relative;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 40px 24px 48px;
+  text-align: center;
+}
+
+.home-inner {
+  width: 100%;
+  max-width: 820px;
+}
+
+/* ---- Pipeline ribbon ---------------------------------------------------
+   The four phases every request actually goes through. It replaces the
+   decorative eyebrow a template would put here. */
+
+.home-pipeline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  margin: 0 0 22px;
+  padding: 0;
+  list-style: none;
+}
+
+.home-pipeline-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--n-500);
+  font-size: var(--fs-xs);
+  font-weight: 550;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.home-pipeline-step::before {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  content: '';
+  opacity: 0.55;
+}
+
+/* The run ends on the platform, so the last phase is the one that carries
+   the accent. */
+.home-pipeline-step:last-child {
+  color: var(--brand);
+}
+
+.home-pipeline-step:last-child::before {
+  opacity: 1;
+}
+
+.home-pipeline-step + .home-pipeline-step {
+  margin-left: 10px;
+}
+
+.home-pipeline-step + .home-pipeline-step::after {
+  order: -1;
+  width: 18px;
+  height: 1px;
+  margin-right: 10px;
+  background: var(--n-200);
+  content: '';
+}
+
+/* ---- Headline ---------------------------------------------------------- */
+
+.home-title {
+  margin: 0;
+  color: var(--n-900);
+  font-size: clamp(2rem, 4vw, 2.6rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.18;
+  text-wrap: balance;
+}
+
+.home-title-accent {
+  color: var(--brand);
+}
+
+.home-subtitle {
+  margin: 12px 0 0;
+  color: var(--n-600);
+  font-size: var(--fs-lg);
+  line-height: 1.6;
+  text-wrap: balance;
+}
+
+/* ---- Composer ---------------------------------------------------------- */
+
+.home-composer {
+  margin-top: 28px;
+  border: 1px solid var(--n-150);
+  border-radius: var(--r-lg);
+  background: var(--n-0);
+  padding: 14px;
+  text-align: left;
+  box-shadow: var(--shadow-1);
+  transition:
+    border-color var(--t-base) ease,
+    box-shadow var(--t-base) ease;
+}
+
+.home-composer:focus-within {
+  border-color: var(--brand);
+  box-shadow: var(--focus-ring);
+}
+
+.home-composer textarea {
+  display: block;
+  width: 100%;
+  min-height: 96px;
+  max-height: 220px;
+  resize: none;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  padding: 2px;
+  color: var(--foreground);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.home-composer textarea::placeholder {
+  color: var(--n-400);
+}
+
+.home-composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  border-top: 1px solid var(--n-100);
+  padding-top: 12px;
+}
+
+.home-examples {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.home-example {
+  display: inline-flex;
+  height: 26px;
+  min-width: 0;
+  max-width: 100%;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid var(--n-150);
+  border-radius: var(--r-full);
+  background: var(--n-0);
+  padding: 0 11px;
+  color: var(--n-600);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition:
+    border-color var(--t-fast) ease,
+    background var(--t-fast) ease,
+    color var(--t-fast) ease;
+}
+
+.home-example:hover {
+  border-color: color-mix(in srgb, var(--brand) 40%, transparent);
+  background: var(--brand-soft);
+  color: var(--brand-deep);
+}
+
+.home-submit {
+  display: inline-flex;
+  height: 32px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  border-radius: var(--r-md);
+  background: var(--brand);
+  padding: 0 16px;
+  color: var(--n-0);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  transition:
+    background var(--t-fast) ease,
+    box-shadow var(--t-fast) ease,
+    opacity var(--t-fast) ease;
+}
+
+.home-submit svg {
+  width: 14px;
+  height: 14px;
+}
+
+.home-submit:hover:not(:disabled) {
+  background: var(--brand-deep);
+  box-shadow: 0 8px 18px -10px color-mix(in srgb, var(--brand) 80%, transparent);
+}
+
+.home-submit:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.home-submit-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid color-mix(in srgb, var(--n-0) 40%, transparent);
+  border-top-color: var(--n-0);
+  border-radius: 50%;
+  animation: spin 700ms linear infinite;
+}
+
+/* ---- Platform feature cards --------------------------------------------
+   Read-only context about what Makers provides. Nothing here is clickable,
+   so the cards carry no hover affordance and no pointer cursor. */
+
+.home-features {
+  display: grid;
+  gap: 10px;
+  margin: 20px 0 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 0;
+  list-style: none;
+  text-align: left;
+}
+
+.home-feature {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 10px;
+  border: 1px solid var(--n-150);
+  border-radius: var(--r-md);
+  background: var(--n-0);
+  padding: 12px 14px;
+}
+
+.home-feature-icon {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  place-items: center;
+  border-radius: var(--r-sm);
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+
+.home-feature-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.home-feature-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.home-feature-copy strong {
+  color: var(--n-900);
+  font-size: var(--fs-md);
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.home-feature-copy span {
+  color: var(--n-500);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+
+@media (max-width: 640px) {
+  .home-stage {
+    padding: 28px 16px 36px;
+  }
+
+  .home-pipeline-step + .home-pipeline-step::after {
+    width: 12px;
+  }
+
+  .home-composer-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .home-submit {
+    justify-content: center;
+  }
+
+  .home-features {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

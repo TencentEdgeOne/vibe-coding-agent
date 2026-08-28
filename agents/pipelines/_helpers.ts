@@ -1,6 +1,9 @@
 import type { ProjectState } from '../_types';
 import { debugLog } from '../utils/_debug';
-export { compactUserFacingReply } from '../../shared/user-facing-reply.ts';
+export {
+  compactUserFacingReply,
+  withLiveDeploymentUrl,
+} from '../../shared/user-facing-reply.ts';
 
 const SANDBOX_EXTENSION_SECONDS = 1800;
 

@@ -3,6 +3,10 @@ import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 import { MAKERS_SKILL_NAMES } from '../agents/_constants.ts';
+import {
+  MAKERS_REFERENCE_SKILL_NAMES,
+  resolveMakersSkillDirectory,
+} from '../agents/tools/_makers-skills.ts';
 
 const skillsRoot = '.claude/skills';
 
@@ -35,35 +39,13 @@ test('official Makers router and progressive references are vendored unchanged i
   ));
 });
 
-test('agent prompt requires Makers-compatible output and forbids /preview/ hardcoding', async () => {
+// What the prompt actually says is asserted behaviourally in
+// prompt-single-source.test.ts; this covers the SDK session wiring around it.
+test('the SDK session is wired to the vendored skills and the extracted prompt', async () => {
   const source = await readFile('agents/_agent.ts', 'utf8');
   assert.match(source, /skills: \[\.\.\.MAKERS_SKILL_NAMES\]/);
   assert.match(source, /tools: \['Skill'\]/);
-  assert.match(source, /publish_preview/);
-  assert.match(source, /deploy_to_makers/);
-  assert.match(source, /cloud-functions/);
-  assert.match(source, /Do not hard-code \/preview\//);
-  assert.match(source, /including Skill, load_makers_skill/);
-  assert.match(source, /call load_makers_skill once for each specific reference/);
-  assert.match(source, /Never invoke the edgeone-makers-tools router through Skill/);
-  assert.match(source, /execute in parallel/);
-  assert.match(source, /Never load the same reference twice/);
-  assert.match(source, /load makers-agents/);
-  assert.match(source, /normalize the injected AI_GATEWAY_BASE_URL to end in exactly \/v1/);
-  assert.match(source, /local project Read\/Write\/Edit\/Bash, present_files, and direct edgeone CLI commands are unavailable/);
-  assert.match(source, /Response\.json\(\) is unavailable/);
-  assert.match(source, /never context\.env\.KV/);
-  assert.match(source, /export function middleware\(context\)/);
-  assert.match(source, /Never export onRequest from middleware\.js/);
-  assert.match(source, /agents\/chat\.ts/);
-  assert.match(source, /makers-conversation-id/);
-  assert.match(source, /@makers\/hy3-preview/);
-  assert.match(source, /window\.location\.href/);
-  assert.match(source, /copy the current access_token/);
-  assert.match(source, /Do not write a \.env file/);
-  assert.match(source, /Use at most one focused reproduction command/);
-  assert.match(source, /Do not run the edgeone CLI, curl Pages APIs/);
-  assert.match(source, /scripts": \{ "build": "echo skip" \}/);
+  assert.match(source, /buildPrompt\([\s\S]*?makersProjectName,[\s\S]*?\)/);
   assert.doesNotMatch(
     source,
     /Vite projects must support sandbox preview under/,
@@ -82,42 +64,50 @@ test('package.json without scripts.build is not a thrown verification failure', 
   assert.match(source, /buildFlag === 'yes'/);
 });
 
-test('publish_preview rejects known preview-breaking generated code before CLI startup', async () => {
-  const source = await readFile('agents/tools/_project-tools.ts', 'utf8');
+test('direct sandbox CLI replaces custom tools while retaining relevant compatibility checks', async () => {
+  const [agent, projectTools, commandTools, compatibility] = await Promise.all([
+    readFile('agents/_agent.ts', 'utf8'),
+    readFile('agents/tools/_project-tools.ts', 'utf8'),
+    readFile('agents/tools/_commands-wrap.ts', 'utf8'),
+    readFile('agents/project/_makers-compat.ts', 'utf8'),
+  ]);
   const paths = await readFile('agents/utils/_paths.ts', 'utf8');
-  assert.match(source, /assertPreviewCompatibility/);
-  assert.match(source, /root-absolute fetch bypasses sandbox preview/);
-  assert.match(source, /gpt-4o-mini is not a valid default/);
-  assert.doesNotMatch(source, /fs\.existsSync\('\.env'\)/);
+  assert.doesNotMatch(agent, /buildPublishPreviewTool|buildDeployToMakersTool/);
+  assert.doesNotMatch(projectTools, /publish_preview|deploy_to_makers|get_preview_link/);
+  assert.match(commandTools, /buildMakersDevBackgroundCommand/);
+  assert.match(commandTools, /buildMakersDeployCommand/);
+  assert.match(commandTools, /publishRunningPreview/);
+  assert.match(commandTools, /assertMakersProjectCompatible/);
+  assert.match(compatibility, /agents\.framework is required/);
+  assert.match(compatibility, /\.env\.example/);
+  assert.match(compatibility, /gpt-4o-mini is not a valid Makers default/);
+  assert.match(compatibility, /root-absolute fetch bypasses the sandbox \/preview\//);
   assert.match(paths, /runtime environment files must not be generated/);
-});
-
-test('CLI prewarm starts concurrently with environment preparation', async () => {
-  const source = await readFile('agents/project/_scaffold.ts', 'utf8');
-  const chat = await readFile('agents/pipelines/_chat.ts', 'utf8');
-  assert.match(source, /buildEdgeoneCliPrewarmScript/);
-  assert.match(source, /CLI installation dominates first preview latency/);
-  assert.match(chat, /const cliPrewarm = isLikelyProjectRequest\(message\)/);
-  assert.match(chat, /const state = await prepareProjectWorkspace/);
-  assert.match(chat, /await cliPrewarm/);
-  assert.ok(chat.indexOf('const cliPrewarm') < chat.indexOf('const state = await prepareProjectWorkspace'));
 });
 
 test('specific Makers skill loader reads official references without changing them', async () => {
   const source = await readFile('agents/tools/_makers-skills.ts', 'utf8');
   const agent = await readFile('agents/_agent.ts', 'utf8');
   assert.match(source, /'load_makers_skill'/);
-  assert.match(source, /references/);
-  assert.match(source, /SKILL\.md/);
-  assert.match(source, /readFile\(skillPath, 'utf8'\)/);
   assert.match(agent, /buildLoadMakersSkillTool/);
   assert.match(agent, /__load_makers_skill/);
+
+  // Every name the tool accepts must land on a vendored document that is served
+  // as-is, so the model reads official guidance rather than a paraphrase.
+  for (const skill of MAKERS_REFERENCE_SKILL_NAMES) {
+    const overview = await readFile(
+      path.join(resolveMakersSkillDirectory(skill), 'SKILL.md'),
+      'utf8',
+    );
+    assert.match(overview, /^---\nname:/);
+  }
 });
 
-test('cold resume overlaps dependency restore with CLI prewarm and has matching budgets', async () => {
+test('cold resume restores project dependencies without managing the sandbox CLI', async () => {
   const resume = await readFile('agents/pipelines/_resume.ts', 'utf8');
   const client = await readFile('app/features/workspace/workspace-api.ts', 'utf8');
-  assert.match(resume, /Promise\.all\(\[\s*ensureProjectDependencies\(context, state\),\s*prewarmEdgeoneCli\(context\)/);
+  assert.match(resume, /const depsReady = await ensureProjectDependencies\(context, state\)/);
+  assert.doesNotMatch(resume, /prewarmEdgeoneCli|npm install -g edgeone/);
   assert.match(resume, /WORKSPACE_RESUME_BUDGET_MS = 600_000/);
   assert.match(resume, /PREVIEW_RESTART_BUDGET_MS = 540_000/);
   assert.match(client, /RESUME_CLIENT_TIMEOUT_MS = 620_000/);
@@ -146,10 +136,4 @@ test('official makers-agents reference covers the agent contract', async () => {
   assert.match(skill, /makers-conversation-id/);
   assert.match(skill, /context\.request\.body/);
   assert.match(skill, /AI_GATEWAY_MODEL/);
-});
-
-test('agent prompt stops after a successful publish_preview', async () => {
-  const source = await readFile('agents/_agent.ts', 'utf8');
-  assert.match(source, /If publish_preview returns a url, stop/);
-  assert.match(source, /without a 0\.1\.x pin/);
 });

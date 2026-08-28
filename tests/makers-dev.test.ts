@@ -2,41 +2,119 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import {
+  buildMakersDevBackgroundCommand,
   buildMakersDevLaunchCommand,
   buildPreviewProxyScript,
+  parseMakersDevExitCode,
+  previewCanonicalRedirect,
   rewritePreviewProxyPath,
 } from '../shared/makers-dev.ts';
+import {
+  MAKERS_DEV_PORT,
+  PREVIEW_PATH_PREFIX,
+  PREVIEW_PUBLIC_PORT,
+  PREVIEW_SERVER_PORT,
+} from '../agents/_constants.ts';
 
-test('rewrites the sandbox /preview prefix onto makers-dev root paths', () => {
+test('rewrites the public preview prefix onto Makers dev root paths', () => {
   assert.equal(rewritePreviewProxyPath('/preview/'), '/');
   assert.equal(rewritePreviewProxyPath('/preview'), '/');
   assert.equal(rewritePreviewProxyPath('/preview/api/hello'), '/api/hello');
   assert.equal(rewritePreviewProxyPath('/preview/?q=1'), '/?q=1');
-  assert.equal(rewritePreviewProxyPath('/preview?q=1'), '?q=1');
+  assert.equal(rewritePreviewProxyPath('/preview?q=1'), '/?q=1');
   assert.equal(rewritePreviewProxyPath('/api/hello'), '/api/hello');
 });
 
+// Without the trailing slash the browser resolves every relative URL on the
+// page against the host root, which the gateway does not publish: stylesheets,
+// scripts, and API calls all 404 at once, and the page looks like it silently
+// stopped working.
+test('the preview root keeps its trailing slash, and its access token', () => {
+  assert.equal(previewCanonicalRedirect('/preview'), '/preview/');
+  assert.equal(
+    previewCanonicalRedirect('/preview?access_token=abc'),
+    '/preview/?access_token=abc',
+  );
+  // Already canonical, or not the prefix root at all: nothing to redirect.
+  assert.equal(previewCanonicalRedirect('/preview/'), undefined);
+  assert.equal(previewCanonicalRedirect('/preview/api/hello'), undefined);
+  assert.equal(previewCanonicalRedirect('/previewing'), undefined);
+  assert.equal(previewCanonicalRedirect('/api/hello'), undefined);
+  assert.equal(previewCanonicalRedirect('/preview', '/'), undefined);
+
+  const script = buildPreviewProxyScript(
+    PREVIEW_SERVER_PORT,
+    MAKERS_DEV_PORT,
+    PREVIEW_PATH_PREFIX,
+  );
+  assert.match(script, /canonicalRedirect/);
+  assert.match(script, /writeHead\(308/);
+});
+
 test('makers-dev launch is non-interactive and does not pass a token flag', () => {
-  const command = buildMakersDevLaunchCommand(8088, 'vibe-coding-playground');
-  assert.match(command, /edgeone makers dev --port 8088/);
+  const command = buildMakersDevLaunchCommand(MAKERS_DEV_PORT, 'vibe-coding-playground');
+  assert.match(command, new RegExp(`edgeone makers dev --port ${MAKERS_DEV_PORT}`));
   assert.match(command, /--skip-env-sync/);
   assert.match(command, /--name 'vibe-coding-playground'/);
   assert.doesNotMatch(command, / -t /);
   assert.doesNotMatch(command, /makers deploy/);
 });
 
-test('preview proxy script forwards HTTP and WebSocket upgrades', () => {
-  const script = buildPreviewProxyScript(3000, 8088, '/preview');
+test('preview topology keeps CLI, path adapter, and public gateway separate', () => {
+  assert.equal(MAKERS_DEV_PORT, 8088);
+  assert.equal(PREVIEW_SERVER_PORT, 3000);
+  assert.equal(PREVIEW_PUBLIC_PORT, 9000);
+  assert.equal(PREVIEW_PATH_PREFIX, '/preview/');
+});
+
+test('preview proxy strips the prefix and forwards HTTP and WebSocket upgrades', () => {
+  const script = buildPreviewProxyScript(
+    PREVIEW_SERVER_PORT,
+    MAKERS_DEV_PORT,
+    PREVIEW_PATH_PREFIX,
+  );
   assert.match(script, /LISTEN_PORT = 3000/);
   assert.match(script, /TARGET_PORT = 8088/);
   assert.match(script, /server\.on\('upgrade'/);
   assert.match(script, /function rewritePath/);
+  assert.match(script, /x-edgeone-preview-proxy/);
+  assert.doesNotThrow(() => new Function(script));
 });
 
-test('publish_preview starts makers-dev rather than cloud deploy', async () => {
+test('makers-dev runs behind the prefix-stripping preview proxy', () => {
+  const command = buildMakersDevBackgroundCommand({
+    makersPort: MAKERS_DEV_PORT,
+    previewPort: PREVIEW_SERVER_PORT,
+    previewPath: PREVIEW_PATH_PREFIX,
+    projectName: 'vibe-coding-playground',
+  });
+  assert.match(command, new RegExp(`nohup edgeone makers dev --port ${MAKERS_DEV_PORT}`));
+  assert.match(command, /edgeone-preview-proxy\.cjs/);
+  assert.match(
+    command,
+    new RegExp(`http://127\\.0\\.0\\.1:${PREVIEW_SERVER_PORT}/preview/`),
+  );
+  assert.match(command, /MAKERS_DEV_READY=started/);
+  assert.match(command, /MAKERS_DEV_EXIT:\$dev_status/);
+  assert.match(command, /exit 0/);
+});
+
+test('makers-dev captured exit markers preserve CLI failures', () => {
+  assert.equal(parseMakersDevExitCode('log\nMAKERS_DEV_EXIT:127\n'), 127);
+  assert.equal(parseMakersDevExitCode('MAKERS_DEV_EXIT:0\n'), 0);
+  assert.equal(parseMakersDevExitCode('no marker'), undefined);
+});
+
+test('sandbox preview publishes the fixed gateway path through a local adapter', async () => {
   const preview = await readFile('agents/project/_preview.ts', 'utf8');
-  assert.match(preview, /ensureEdgeoneCli/);
+  assert.doesNotMatch(preview, /ensureEdgeoneCli|npm install -g edgeone/);
   assert.match(preview, /buildMakersDevLaunchCommand/);
-  assert.match(preview, /buildPreviewProxyScript/);
+  assert.match(preview, /buildMakersDevBackgroundCommand/);
+  assert.match(preview, /getHost\(PREVIEW_PUBLIC_PORT\)/);
+  assert.match(
+    preview,
+    /127\.0\.0\.1:\$\{PREVIEW_SERVER_PORT\}\$\{PREVIEW_PATH_PREFIX\}chat/,
+  );
+  assert.match(preview, /proxyPath: PREVIEW_PATH_PREFIX/);
   assert.doesNotMatch(preview, /makers deploy/);
 });

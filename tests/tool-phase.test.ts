@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  buildEdgeoneVersionCheckCommand,
   forbiddenSandboxCommandReason,
+  isEdgeoneCliUnavailable,
+  isEdgeoneVersionCommand,
   isInstallCommand,
   isPreviewCommand,
   isVerificationCommand,
+  parseEdgeoneVersionExitCode,
   parseEchoedExitCode,
   shortenToolName,
   stripEchoedExit,
@@ -44,10 +48,49 @@ test('appends EXIT echo to verification commands once', () => {
   assert.equal(stripEchoedExit('error TS6133\nEXIT:1\n'), 'error TS6133');
 });
 
-test('forbids edgeone CLI, Pages APIs, and curlrc mutations', () => {
+test('allows direct Makers CLI lifecycle commands but blocks unsafe CLI operations', () => {
+  assert.equal(forbiddenSandboxCommandReason('edgeone makers deploy --json'), null);
+  assert.equal(
+    forbiddenSandboxCommandReason('edgeone makers dev --port 8088 --skip-env-sync'),
+    null,
+  );
+  assert.equal(forbiddenSandboxCommandReason('edgeone --version'), null);
+  assert.equal(forbiddenSandboxCommandReason('edgeone -v; echo "EXIT:$?"'), null);
+  assert.equal(isEdgeoneVersionCommand('edgeone --version'), true);
+  assert.match(buildEdgeoneVersionCheckCommand(), /EDGEONE_VERSION_EXIT:\$version_status/);
+  assert.equal(
+    parseEdgeoneVersionExitCode('edgeone: not found\nEDGEONE_VERSION_EXIT:127\n'),
+    127,
+  );
+  assert.equal(
+    isEdgeoneCliUnavailable(
+      "nohup: failed to run command 'edgeone': No such file or directory",
+    ),
+    true,
+  );
+  assert.equal(
+    isEdgeoneCliUnavailable('/bin/sh: 2: edgeone: not found'),
+    true,
+  );
+  assert.equal(
+    isEdgeoneCliUnavailable('zsh: command not found: edgeone'),
+    true,
+  );
+  assert.equal(
+    isEdgeoneCliUnavailable('Makers project not found for edgeone deployment'),
+    false,
+  );
   assert.match(
-    forbiddenSandboxCommandReason('edgeone makers deploy --json') || '',
-    /publish_preview/,
+    forbiddenSandboxCommandReason('edgeone --version; rm -rf /tmp/project') || '',
+    /Only use the sandbox EdgeOne CLI/,
+  );
+  assert.match(
+    forbiddenSandboxCommandReason('edgeone makers deploy -t secret --json') || '',
+    /Do not pass a token/,
+  );
+  assert.match(
+    forbiddenSandboxCommandReason('edgeone login --site china') || '',
+    /Only use the sandbox EdgeOne CLI/,
   );
   assert.match(
     forbiddenSandboxCommandReason('curl https://pages-api.cloud.tencent.com/v1') || '',
@@ -63,11 +106,7 @@ test('forbids edgeone CLI, Pages APIs, and curlrc mutations', () => {
   assert.equal(forbiddenSandboxCommandReason('npm install @edgeone/pages-blob'), null);
   assert.match(
     forbiddenSandboxCommandReason('npx edgeone makers deploy --json') || '',
-    /publish_preview/,
-  );
-  assert.match(
-    forbiddenSandboxCommandReason('edgeone makers dev --skip-env-sync') || '',
-    /publish_preview/,
+    /Do not invoke EdgeOne through npx/,
   );
   assert.match(
     forbiddenSandboxCommandReason('curl https://ai-gateway.edgeone.link/v1/models') || '',

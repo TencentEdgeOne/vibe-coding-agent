@@ -4,22 +4,54 @@ export type Locale = 'zh' | 'en';
 
 export const LANGUAGE_STORAGE_KEY = 'web-dev-agent-language';
 
+export type HomeFeatureIcon = 'agent' | 'functions' | 'storage' | 'build';
+
+/** A read-only platform capability card on the landing page. */
+type HomeFeature = {
+  readonly icon: HomeFeatureIcon;
+  readonly title: string;
+  readonly desc: string;
+};
+
 export const TRANSLATIONS = {
   zh: {
     languageToggleAria: 'Switch language to English',
     deployLabel: '一键部署',
     home: {
-      titleBefore: '今天想',
-      titleAccent: '创建',
-      titleAfter: '什么？',
-      subtitle: '把一个粗略想法变成精致的应用、网站或原型。',
+      pipeline: ['生成', '兼容性检查', '沙箱预览', '边缘部署'] as readonly string[],
+      titleBefore: '一句话，',
+      titleAccent: '生成并上线',
+      titleAfter: '你的应用',
+      subtitle: '在沙箱里生成、校验、预览，然后部署到 EdgeOne 全球边缘网络。',
       placeholder: '请输入你想构建的内容',
       fastBuild: '极速生成',
       examples: [
-        '做一个简洁好用的 Todolist',
-        '为产品设计师创建一个作品集网站',
-        '做一个带统计和主题切换的番茄钟',
-      ],
+        '做一个能聊天的 AI 助手',
+        '做一个留言板，留言要一直保存',
+        '做一个落地页，按访问地域展示不同内容',
+      ] as readonly string[],
+      features: [
+        {
+          icon: 'agent',
+          title: 'AI Agent 运行时',
+          desc: '会话记忆、工具与沙箱由平台注入，SSE 流式返回。',
+        },
+        {
+          icon: 'functions',
+          title: '云函数与边缘函数',
+          desc: 'Node / Go / Python 云函数与 V8 边缘函数，路径即路由。',
+        },
+        {
+          icon: 'storage',
+          title: 'KV 与 Blob 存储',
+          desc: '无需自建数据库，边缘键值与对象存储开箱即用。',
+        },
+        {
+          icon: 'build',
+          title: '零配置构建',
+          desc: '自动识别 Next.js / Vite / Nuxt 等框架，构建命令免写。',
+        },
+      ] as readonly HomeFeature[],
     },
     response: {
       noDisplay: '已编写完成，请查看结果。',
@@ -47,8 +79,21 @@ export const TRANSLATIONS = {
         'Create folder': '创建目录',
         'Delete file': '删除文件',
         'Create preview': '创建预览',
+        'Deploy project': '部署项目',
         'Load skill': '加载技能',
         'Run command': '运行命令',
+      },
+      deployment: {
+        title: '线上部署',
+        running: '正在部署到 EdgeOne Makers…',
+        success: '部署成功',
+        failed: '部署失败',
+        copyUrl: '复制线上地址',
+        copied: '已复制线上地址',
+        openUrl: '打开线上站点',
+        openConsole: '打开控制台',
+        projectId: '项目',
+        deploymentId: '部署',
       },
       preview: '预览',
       code: '代码',
@@ -92,23 +137,54 @@ export const TRANSLATIONS = {
       requestFailed: '请求失败',
       lines: (count: number) => `${count} 行`,
       truncated: '已截断',
+      capabilities: {
+        agent: 'AI 接口',
+        'cloud-function': '服务端 API',
+        'edge-function': '边缘接口',
+        middleware: '请求中间件',
+        config: 'Makers 运行配置',
+      },
+      route: (route: string) => `路由 ${route}`,
     },
   },
   en: {
     languageToggleAria: '切换语言为中文',
     deployLabel: 'Deploy',
     home: {
-      titleBefore: 'What will you',
-      titleAccent: 'create',
-      titleAfter: 'today?',
-      subtitle: 'Turn a rough idea into a polished app, site, or prototype.',
+      pipeline: ['Generate', 'Compatibility check', 'Sandbox preview', 'Edge deploy'] as readonly string[],
+      titleBefore: 'Describe it.',
+      titleAccent: 'Ship it',
+      titleAfter: 'to the edge.',
+      subtitle: 'Generate, validate and preview in a sandbox, then deploy to the EdgeOne global edge network.',
       placeholder: "Let's build a",
       fastBuild: 'Fast build',
       examples: [
-        'Build a SaaS dashboard for an analytics startup',
-        'Create a portfolio site for a product designer',
-        'Make a Pomodoro timer with stats and themes',
-      ],
+        'Build an AI chat assistant',
+        'Make a guestbook that keeps every message',
+        'Serve a landing page that varies by region',
+      ] as readonly string[],
+      features: [
+        {
+          icon: 'agent',
+          title: 'AI agent runtime',
+          desc: 'Memory, tools and sandbox injected. Streamed over SSE.',
+        },
+        {
+          icon: 'functions',
+          title: 'Cloud & edge functions',
+          desc: 'Node, Go, Python or V8. Every path is a route.',
+        },
+        {
+          icon: 'storage',
+          title: 'KV & Blob storage',
+          desc: 'Edge key-value and object storage, with no database to run.',
+        },
+        {
+          icon: 'build',
+          title: 'Zero-config builds',
+          desc: 'Next.js, Vite, Nuxt and more, detected automatically.',
+        },
+      ] as readonly HomeFeature[],
     },
     response: {
       noDisplay: 'The agent did not return anything displayable.',
@@ -136,8 +212,21 @@ export const TRANSLATIONS = {
         'Create folder': 'Create folder',
         'Delete file': 'Delete file',
         'Create preview': 'Create preview',
+        'Deploy project': 'Deploy project',
         'Load skill': 'Load skill',
         'Run command': 'Run command',
+      },
+      deployment: {
+        title: 'Live deployment',
+        running: 'Deploying to EdgeOne Makers…',
+        success: 'Deployment succeeded',
+        failed: 'Deployment failed',
+        copyUrl: 'Copy live URL',
+        copied: 'Live URL copied',
+        openUrl: 'Open live site',
+        openConsole: 'Open console',
+        projectId: 'Project',
+        deploymentId: 'Deployment',
       },
       preview: 'Preview',
       code: 'Code',
@@ -181,6 +270,14 @@ export const TRANSLATIONS = {
       requestFailed: 'Request failed',
       lines: (count: number) => `${count} line${count === 1 ? '' : 's'}`,
       truncated: 'truncated',
+      capabilities: {
+        agent: 'AI endpoint',
+        'cloud-function': 'Server API',
+        'edge-function': 'Edge API',
+        middleware: 'Request middleware',
+        config: 'Makers runtime config',
+      },
+      route: (route: string) => `Route ${route}`,
     },
   },
 } as const;

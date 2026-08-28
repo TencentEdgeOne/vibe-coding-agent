@@ -101,9 +101,9 @@ export function SiteHeader({
         )}
         <Dialog>
           <DialogTrigger asChild>
-            <Button size="sm" className="h-7 px-3 text-xs">
+            <button type="button" className="site-accent-button">
               {isZh ? '联系我们' : 'Contact'}
-            </Button>
+            </button>
           </DialogTrigger>
           <DialogContent
             className="contact-dialog"

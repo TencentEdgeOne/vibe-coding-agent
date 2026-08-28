@@ -1,10 +1,11 @@
 import { runCodingAgent } from '../_agent';
 import { AUTO_FIX_MAX_ATTEMPTS } from '../_constants';
 import { getHistory, saveProjectState } from '../_memory';
-import { getFileTree, prewarmEdgeoneCli, runVerification } from '../_project';
+import { getFileTree, runVerification } from '../_project';
 import type {
   AgentProgressEvent,
   BuildStatus,
+  DeploymentInfo,
   FileTreeItem,
   ProjectState,
   ScaffoldLog,
@@ -24,9 +25,11 @@ import {
   isGenericCompletionReply,
   stripReturnedPreviewLinks,
   utf8ByteLength,
+  withLiveDeploymentUrl,
 } from './_helpers';
 import { createTurnLifecycle } from './_turn-lifecycle';
 import { prepareProjectWorkspace } from './_workspace';
+import { isMakersDeployUrl } from '../../shared/makers-deploy';
 
 function previewLinkFromState(state: ProjectState) {
   if (!state.previewUrl) {
@@ -84,19 +87,12 @@ export async function runChatPipeline(
   });
 
   const shouldResetProject = options.resetProject === true;
-  // Begin the slow first-sandbox CLI download as soon as environment
-  // preparation starts. The prewarm command backgrounds the install, so
-  // workspace restore/reset continues concurrently.
-  const cliPrewarm = isLikelyProjectRequest(message)
-    ? prewarmEdgeoneCli(context)
-    : Promise.resolve();
   const state = await prepareProjectWorkspace(
     context,
     conversationId,
     shouldResetProject,
     send,
   );
-  await cliPrewarm;
   const history = shouldResetProject
     ? []
     : await getHistory(context, conversationId, {
@@ -221,7 +217,7 @@ export async function runChatPipeline(
     checkpoint.schedule();
   };
 
-  // Switch the iframe the moment publish_preview (or an explicit deploy) returns.
+  // Switch the iframe the moment a direct Makers CLI command returns a URL.
   // verification / finalizeTurn, which can take several more seconds.
   const handlePreviewReady = (preview: { url?: string; sandboxDebugUrl?: string; kind?: 'sandbox' | 'makers' }) => {
     if (!preview.url) {
@@ -229,7 +225,7 @@ export async function runChatPipeline(
     }
     state.previewUrl = preview.url;
     state.sandboxDebugUrl = preview.sandboxDebugUrl;
-    state.previewKind = preview.kind || (preview.url.includes('/preview/') ? 'sandbox' : 'makers');
+    state.previewKind = preview.kind || (isMakersDeployUrl(preview.url) ? 'makers' : 'sandbox');
     state.previewPublished = true;
     // Persist before the turn finishes so a refresh during verification still
     // resumes into the preview pane and restarts the live server.
@@ -246,6 +242,16 @@ export async function runChatPipeline(
       },
     });
   };
+  const handleDeploymentStatus = (deployment: DeploymentInfo) => {
+    state.deployment = deployment;
+    // The final turn commit is authoritative. This eager save keeps a completed
+    // deployment recoverable if the browser refreshes during later model output.
+    void saveProjectState(context, conversationId, state);
+    send({
+      type: 'deployment_status',
+      data: deployment,
+    });
+  };
 
   // The model handles creative code work; build and service steps remain deterministic.
   const modelResult = await runCodingAgent(
@@ -259,6 +265,7 @@ export async function runChatPipeline(
     forwardProgress,
     handleProjectFilesChanged,
     handlePreviewReady,
+    handleDeploymentStatus,
     abortSignal,
   );
 
@@ -278,6 +285,7 @@ export async function runChatPipeline(
         conversation_id: conversationId,
         build: { status: 'skipped' as BuildStatus },
         preview: previewLinkFromState(state),
+        deployment: state.deployment,
       },
     });
     return;
@@ -294,9 +302,18 @@ export async function runChatPipeline(
   const rawAssistantReply = stripReturnedPreviewLinks(sanitizeAssistantText(
     modelOutput || fallbackReply
   ) || fallbackReply, state.previewUrl);
-  const assistantReply = modelResult.projectTouched
-    ? compactUserFacingReply(rawAssistantReply, fallbackReply)
-    : rawAssistantReply;
+  // Only a deployment from this turn: state.deployment outlives the turn, and
+  // re-appending yesterday's URL to every later reply would be worse than none.
+  const liveDeploymentUrl = modelResult.deploymentTouched
+    && state.deployment?.status === 'success'
+    ? state.deployment.url
+    : undefined;
+  const assistantReply = withLiveDeploymentUrl(
+    modelResult.projectTouched
+      ? compactUserFacingReply(rawAssistantReply, fallbackReply)
+      : rawAssistantReply,
+    liveDeploymentUrl,
+  );
 
   send({
     type: 'agent',
@@ -323,13 +340,17 @@ export async function runChatPipeline(
           stderr: modelResult.error || assistantReply,
         },
         preview: {},
+        deployment: state.deployment,
       },
     });
     return;
   }
 
-  if (!modelResult.projectTouched && modelResult.previewTouched) {
-    if (state.previewUrl) {
+  if (
+    !modelResult.projectTouched
+    && (modelResult.previewTouched || modelResult.deploymentTouched)
+  ) {
+    if (modelResult.previewTouched && state.previewUrl) {
       send({
         type: 'preview_ready',
         data: {
@@ -342,21 +363,28 @@ export async function runChatPipeline(
       });
     }
 
-    await finalizeTurn(assistantReply, modelResult.success ? 'completed' : 'failed');
+    const previewReady = !modelResult.previewTouched || Boolean(state.previewUrl);
+    const deploymentReady = !modelResult.deploymentTouched
+      || state.deployment?.status === 'success';
+    const operationOk = modelResult.success && previewReady && deploymentReady;
+    await finalizeTurn(assistantReply, operationOk ? 'completed' : 'failed');
 
     send({
       type: 'result',
       data: {
-        ok: modelResult.success && Boolean(state.previewUrl),
+        ok: operationOk,
         reply: assistantReply,
         conversation_id: conversationId,
         build: { status: 'skipped' as BuildStatus },
-        preview: {
-          url: state.previewUrl,
-          sandboxDebugUrl: state.sandboxDebugUrl,
-          kind: state.previewKind,
-          ...(!state.previewUrl ? { error: 'The agent did not complete publish_preview.' } : {}),
-        },
+        preview: modelResult.previewTouched
+          ? {
+              url: state.previewUrl,
+              sandboxDebugUrl: state.sandboxDebugUrl,
+              kind: state.previewKind,
+              ...(!state.previewUrl ? { error: 'The agent did not complete the Makers CLI preview.' } : {}),
+            }
+          : previewLinkFromState(state),
+        deployment: state.deployment,
       },
     });
     return;
@@ -375,6 +403,7 @@ export async function runChatPipeline(
         conversation_id: conversationId,
         build: { status: 'skipped' as BuildStatus },
         preview: {},
+        deployment: state.deployment,
       },
     });
     return;
@@ -416,6 +445,7 @@ export async function runChatPipeline(
         },
         download: downloadLink,
         preview: {},
+        deployment: state.deployment,
       },
     });
     return;
@@ -451,6 +481,7 @@ export async function runChatPipeline(
       forwardProgress,
       handleProjectFilesChanged,
       handlePreviewReady,
+      handleDeploymentStatus,
       abortSignal,
     );
     if (autoFixResult.stopped || abortSignal?.aborted) {
@@ -467,6 +498,7 @@ export async function runChatPipeline(
           conversation_id: conversationId,
           build: { status: 'skipped' as BuildStatus },
           preview: previewLinkFromState(state),
+          deployment: state.deployment,
         },
       });
       return;
@@ -517,6 +549,7 @@ export async function runChatPipeline(
           },
           download: downloadLink,
           preview: {},
+          deployment: state.deployment,
         },
       });
       return;
@@ -528,7 +561,7 @@ export async function runChatPipeline(
     ...(autoFixAttempts > 0 ? { autoFixAttempts, autoFixApplied } : {}),
   };
 
-  // publish_preview (makers-dev) writes state.previewUrl.
+  // Makers dev owns preview state; deployments are streamed separately.
   if (state.previewUrl) {
     send({
       type: 'preview_ready',
@@ -551,12 +584,15 @@ export async function runChatPipeline(
   const failureReply = build.status === 'failed'
     ? (isChinese ? '项目已生成，但检查未通过，我还需要继续修复。' : 'The project was generated, but checks still fail and need another fix.')
     : (isChinese ? '项目已生成，但预览暂时不可用，请重试。' : 'The project was generated, but the preview is temporarily unavailable. Please retry.');
-  const reply = build.status !== 'failed' && state.previewUrl
-    ? compactUserFacingReply(
-      stripReturnedPreviewLinks(baseReply, state.previewUrl),
-      finalFallbackReply,
-    )
-    : failureReply;
+  const reply = withLiveDeploymentUrl(
+    build.status !== 'failed' && state.previewUrl
+      ? compactUserFacingReply(
+        stripReturnedPreviewLinks(baseReply, state.previewUrl),
+        finalFallbackReply,
+      )
+      : failureReply,
+    liveDeploymentUrl,
+  );
 
   // Code first, then state, then conversation — so a crash mid-finalize still
   // leaves a restorable workspace for resume after sandbox recycle.
@@ -586,12 +622,9 @@ export async function runChatPipeline(
         url: state.previewUrl,
         sandboxDebugUrl: state.sandboxDebugUrl,
         kind: state.previewKind,
-        ...(!state.previewUrl ? { error: 'The agent did not complete publish_preview.' } : {}),
+        ...(!state.previewUrl ? { error: 'The agent did not complete the Makers CLI preview.' } : {}),
       },
+      deployment: state.deployment,
     },
   });
-}
-
-function isLikelyProjectRequest(message: string) {
-  return /(?:网站|网页|页面|应用|工具|组件|界面|功能|创建|搭建|开发|修改|修复|报错|错误|聊天|助手|site|website|web\s*app|page|component|build|create|implement|fix|bug|chat)/i.test(message);
 }

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-test('preview address bar shows the current path, not the sandbox host or preview prefix', async () => {
+test('preview address bar shows the application route without the gateway prefix', async () => {
   const screen = await readFile('app/features/workspace/workspace-screen.tsx', 'utf8');
 
   // The address chip renders the mirrored route (previewDisplayPath) rather than
@@ -13,8 +13,8 @@ test('preview address bar shows the current path, not the sandbox host or previe
     /shareablePreviewUrl\.replace/,
     'the address bar must not strip-and-display the sandbox host domain',
   );
-  // The display helper strips the preview base prefix and falls back to a bare
-  // root ('/') before the first message arrives — never the '/preview/' prefix.
+  // Public previews carry /preview/, while the address bar presents paths
+  // relative to the generated application root.
   assert.match(screen, /function previewDisplayPathFromPath/);
   assert.match(screen, /if \(!path\) return '\/';/);
   assert.match(screen, /path\.startsWith\(PREVIEW_PATH_PREFIX\)/);
@@ -26,14 +26,18 @@ test('parent listens for the preview route posted by the injected tracker', asyn
   assert.match(screen, /addEventListener\('message'/);
 });
 
-test('sandbox preview starts makers-dev instead of injecting a Vite /preview/ config', async () => {
+test('sandbox preview strips the public prefix before forwarding to makers-dev', async () => {
   const preview = await readFile('agents/project/_preview.ts', 'utf8');
   const makersDev = await readFile('shared/makers-dev.ts', 'utf8');
   assert.match(preview, /makers-dev/);
   assert.match(preview, /buildMakersDevLaunchCommand/);
+  assert.match(preview, /assertMakersProjectCompatible/);
+  assert.match(preview, /getHost\(PREVIEW_PUBLIC_PORT\)/);
   assert.match(makersDev, /edgeone makers dev/);
   assert.match(makersDev, /skip-env-sync/);
-  assert.doesNotMatch(preview, /edgeone-preview-path-tracker/);
+  assert.match(makersDev, /buildPreviewProxyScript/);
+  assert.match(makersDev, /server\.on\('upgrade'/);
+  assert.match(preview, /PREVIEW_PATH_PREFIX/);
   assert.doesNotMatch(preview, /python3 -m http\.server/);
 });
 
@@ -58,7 +62,6 @@ test('cold preview probes do not throw on curl connection refused', async () => 
   assert.match(preview, /runCommandCapturingExit/);
   assert.match(preview, /set \+e/);
   assert.match(preview, /echo EXIT:\$\?/);
-  assert.match(preview, /SANDBOX_UNKNOWN_ERROR/);
 });
 
 test('expired preview credentials never fall back to the stale iframe URL', async () => {

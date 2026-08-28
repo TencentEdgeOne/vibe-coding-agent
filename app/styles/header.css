@@ -1,0 +1,169 @@
+/* ============================================================
+   Site header — brand lockup on the left, session actions on
+   the right. The bar holds no filled button: the primary action
+   always lives in the composer or the panel it belongs to.
+   ============================================================ */
+
+.site-topbar {
+  display: flex;
+  height: 44px;
+  flex: 0 0 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--n-150);
+  background: var(--n-0);
+  padding: 0 14px;
+}
+
+.site-brand-cluster {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.site-brand {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0;
+  color: var(--n-900);
+  font-size: var(--fs-md);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.site-topbar-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.site-language {
+  margin-right: 2px;
+}
+
+.site-lang-toggle {
+  display: inline-flex;
+  height: 28px;
+  align-items: stretch;
+  border: 1px solid var(--n-150);
+  border-radius: var(--r-md);
+  background: var(--n-50);
+  padding: 2px;
+}
+
+.site-lang-option {
+  display: inline-flex;
+  min-width: 36px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  padding: 0 8px;
+  color: var(--n-500);
+  font-size: var(--fs-xs);
+  font-weight: 550;
+  letter-spacing: 0.01em;
+  line-height: 1;
+  transition:
+    background var(--t-fast) ease,
+    color var(--t-fast) ease,
+    box-shadow var(--t-fast) ease;
+}
+
+.site-lang-option:hover:not(.is-active) {
+  color: var(--n-800);
+}
+
+.site-lang-option.is-active {
+  background: var(--n-0);
+  color: var(--n-900);
+  box-shadow: var(--shadow-1);
+}
+
+.site-icon-button,
+.site-secondary-button,
+.site-accent-button {
+  display: inline-flex;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--n-150);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
+  transition:
+    background var(--t-base) ease,
+    border-color var(--t-base) ease,
+    color var(--t-base) ease,
+    transform var(--t-fast) ease;
+}
+
+.site-icon-button {
+  width: 28px;
+  flex: 0 0 28px;
+  color: var(--n-800);
+}
+
+.site-icon-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.site-secondary-button {
+  padding: 0 12px;
+  color: var(--n-900);
+}
+
+/* The contact call to action stays findable without competing with the
+   composer for the eye: brand colour, but no fill. */
+.site-accent-button {
+  border-color: color-mix(in srgb, var(--brand) 26%, transparent);
+  background: transparent;
+  padding: 0 12px;
+  color: var(--brand);
+  font-weight: 600;
+}
+
+.site-icon-button:hover:not(:disabled),
+.site-secondary-button:hover:not(:disabled) {
+  border-color: var(--n-300);
+  background: var(--n-50);
+}
+
+.site-accent-button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--brand) 45%, transparent);
+  background: var(--brand-soft);
+  color: var(--brand-deep);
+}
+
+.site-icon-button:disabled,
+.site-secondary-button:disabled,
+.site-accent-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.site-icon-button:active,
+.site-secondary-button:active,
+.site-accent-button:active {
+  transform: scale(0.97);
+}
+
+@media (max-width: 640px) {
+  .site-topbar {
+    height: 40px;
+    flex-basis: 40px;
+    padding: 0 10px;
+  }
+
+  .site-language,
+  .site-secondary-button {
+    display: none;
+  }
+}

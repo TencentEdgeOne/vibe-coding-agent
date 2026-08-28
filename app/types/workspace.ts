@@ -5,6 +5,7 @@ export type {
   BuildInfo,
   ChatResponse,
   ChatStreamEvent,
+  DeploymentInfo,
   FileTree,
   LinkInfo,
   ResumeData,

@@ -1,0 +1,185 @@
+/* ============================================================
+   Deployment bar — the live deployment channel, kept separate
+   from the sandbox preview it sits above.
+   ============================================================ */
+
+.workspace-deployment-status {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  border-bottom: 1px solid var(--n-150);
+  background: var(--n-25);
+  padding: 10px 14px;
+  font-size: var(--fs-xs);
+}
+
+.workspace-deployment-status.is-running {
+  background: var(--warn-soft);
+}
+
+.workspace-deployment-status.is-success {
+  background: var(--success-soft);
+}
+
+.workspace-deployment-status.is-failed {
+  background: var(--danger-soft);
+}
+
+.workspace-deployment-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.workspace-deployment-heading > span:last-child {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.workspace-deployment-heading strong {
+  color: var(--n-900);
+  font-size: var(--fs-xs);
+  line-height: 15px;
+}
+
+.workspace-deployment-heading small {
+  color: var(--n-600);
+  font-size: var(--fs-2xs);
+  line-height: 14px;
+}
+
+.workspace-deployment-icon {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  place-items: center;
+  border-radius: var(--r-md);
+  background: var(--n-0);
+  color: var(--warn);
+  box-shadow: var(--hairline-inset);
+}
+
+.workspace-deployment-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.workspace-deployment-status.is-success .workspace-deployment-icon {
+  color: var(--success);
+}
+
+.workspace-deployment-status.is-failed .workspace-deployment-icon {
+  color: var(--danger);
+}
+
+.workspace-deployment-detail {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+}
+
+.workspace-deployment-url {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  color: var(--link);
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  line-height: 16px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.workspace-deployment-url:hover {
+  text-decoration: underline;
+}
+
+.workspace-deployment-meta {
+  color: var(--n-600);
+  font-size: var(--fs-2xs);
+  line-height: 15px;
+}
+
+.workspace-deployment-error {
+  overflow: hidden;
+  color: var(--danger-text);
+  font-size: var(--fs-2xs);
+  line-height: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-deployment-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--warn);
+  font-size: var(--fs-2xs);
+  line-height: 15px;
+}
+
+.workspace-deployment-progress svg {
+  width: 11px;
+  height: 11px;
+}
+
+.workspace-deployment-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.workspace-deployment-action {
+  display: inline-flex;
+  height: 27px;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--n-200);
+  border-radius: var(--r-sm);
+  background: var(--n-0);
+  padding: 0 8px;
+  color: var(--n-700);
+  font-size: var(--fs-2xs);
+  font-weight: 550;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+  transition:
+    border-color var(--t-fast) ease,
+    background var(--t-fast) ease,
+    color var(--t-fast) ease;
+}
+
+.workspace-deployment-action:hover,
+.workspace-deployment-action:focus-visible {
+  border-color: var(--n-300);
+  background: var(--n-50);
+  color: var(--n-900);
+}
+
+.workspace-deployment-action svg {
+  width: 12px;
+  height: 12px;
+}
+
+@media (max-width: 640px) {
+  .workspace-deployment-status {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .workspace-deployment-actions {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+}

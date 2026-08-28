@@ -12,6 +12,7 @@ import {
   FolderPlus,
   FolderSearch,
   Monitor,
+  Rocket,
   Search,
   Square,
   SquareTerminal,
@@ -27,6 +28,7 @@ import {
 } from '../lib/assistant-timeline';
 import {
   presentToolActivity,
+  toolActionTier,
   type ToolAction,
 } from '../lib/tool-activity';
 import type {
@@ -69,6 +71,7 @@ function ActionIcon({ action }: { action: ToolAction }) {
   if (action === 'Create folder') return <FolderPlus {...props} />;
   if (action === 'Delete file') return <Trash2 {...props} />;
   if (action === 'Create preview') return <AppWindow {...props} />;
+  if (action === 'Deploy project') return <Rocket {...props} />;
   if (action === 'Load skill') return <BookOpen {...props} />;
   return <SquareTerminal {...props} />;
 }
@@ -103,6 +106,7 @@ function ToolActivityRow({ activity, copy, previouslyReadPaths }: {
         type="button"
         onClick={() => setOpen((current) => !current)}
         aria-expanded={open}
+        data-tier={toolActionTier(presentation.action)}
         className={`tool-activity-trigger tool-activity-${activity.status}`}
       >
         <span className="tool-activity-status"><ActivityIcon status={activity.status} action={presentation.action} /></span>
@@ -258,7 +262,7 @@ export function AgentConversation({
     <div className={`agent-conversation min-w-0 w-full overflow-hidden ${compact ? 'agent-conversation-compact' : ''}`}>
       <div
         ref={scrollRef}
-        className="conversation-scroll"
+        className="conversation-scroll scroll-quiet"
         onScroll={(event) => {
           const node = event.currentTarget;
           followOutputRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 72;

@@ -7,6 +7,7 @@ import type { FileCopy } from '../i18n';
 import type { FileTree } from '../types/workspace';
 import type { FileContentCache } from '../hooks/use-file-content-cache';
 import { getOrCreateCachedConversationId } from '../lib/conversation';
+import { makersFileSemantic } from '../../shared/makers-file-semantics';
 import { Spinner } from './spinner';
 
 type FilePreviewState =
@@ -247,6 +248,16 @@ export function FilesPanel({
               const isDirectory = item.type === 'directory';
               const isCollapsed = collapsedDirs.has(item.path);
               const isSelected = !isDirectory && selectedPath === item.path;
+              const semantic = makersFileSemantic(item);
+              const capabilityLabel = semantic
+                ? copy.capabilities[semantic.capability]
+                : '';
+              const semanticTitle = semantic
+                ? [
+                    capabilityLabel,
+                    semantic.route ? copy.route(semantic.route) : '',
+                  ].filter(Boolean).join(' · ')
+                : '';
 
               return (
                 <button
@@ -259,12 +270,13 @@ export function FilesPanel({
                       loadFile(item.path);
                     }
                   }}
-                  className={`group relative flex h-7 w-full min-w-max items-center gap-1.5 rounded-[5px] pr-2 text-left transition-colors ${
+                  className={`group relative flex min-h-7 w-full min-w-0 items-center gap-1.5 rounded-[5px] py-1 pr-2 text-left transition-colors ${
                     isSelected
                       ? 'bg-[#e7efff] font-medium text-[#174ea6]'
                       : 'text-[#4d5561] hover:bg-[#eef0f3] hover:text-[#17181c]'
                   }`}
                   style={{ paddingLeft: `${7 + item.depth * 16}px` }}
+                  title={semanticTitle || item.path}
                 >
                   {isDirectory ? (
                     <>
@@ -277,7 +289,25 @@ export function FilesPanel({
                       <FileCode2 className={`size-3.5 shrink-0 ${isSelected ? 'text-[#2f6bff]' : 'text-[#9aa1ad]'}`} aria-hidden="true" />
                     </>
                   )}
-                  <span className="truncate">{item.name}</span>
+                  <span className="flex min-w-0 flex-1 flex-col justify-center">
+                    <span className="flex min-w-0 items-center gap-1">
+                      <span className="truncate">{item.name}</span>
+                      {semantic ? (
+                        <span
+                          className="capability-badge"
+                          data-capability={semantic.capability}
+                          aria-label={capabilityLabel}
+                        >
+                          {semantic.badge}
+                        </span>
+                      ) : null}
+                    </span>
+                    {semantic?.route ? (
+                      <span className="truncate font-mono text-[9px] font-normal leading-3 text-[#7a8492]">
+                        {copy.route(semantic.route)}
+                      </span>
+                    ) : null}
+                  </span>
                 </button>
               );
             })}

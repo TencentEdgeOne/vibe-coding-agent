@@ -1,7 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { wrapSandboxToolsForVerification } from '../agents/tools/_commands-wrap.ts';
-import type { ClaudeMcpTool } from '../agents/_types.ts';
+import { wrapSandboxTools } from '../agents/tools/_commands-wrap.ts';
+import { resolveMakersProjectName } from '../agents/project/_makers-deploy.ts';
+import {
+  MAKERS_DEV_PORT,
+  PREVIEW_PATH_PREFIX,
+  PREVIEW_PUBLIC_PORT,
+  PREVIEW_SERVER_PORT,
+} from '../agents/_constants.ts';
+import type {
+  ClaudeMcpTool,
+  DeploymentInfo,
+  ProjectState,
+} from '../agents/_types.ts';
 
 test('wraps verification commands with EXIT echo without marking protocol error', async () => {
   let received = '';
@@ -17,7 +28,7 @@ test('wraps verification commands with EXIT echo without marking protocol error'
     },
   } as unknown as ClaudeMcpTool;
 
-  const [wrapped] = wrapSandboxToolsForVerification([commandsTool]);
+  const [wrapped] = wrapSandboxTools([commandsTool]);
   const result = await wrapped.handler({ command: 'npm run build' }, {});
 
   assert.equal(received, 'npm run build; echo EXIT:$?');
@@ -36,14 +47,14 @@ test('does not wrap install commands', async () => {
     },
   } as unknown as ClaudeMcpTool;
 
-  const [wrapped] = wrapSandboxToolsForVerification([commandsTool]);
+  const [wrapped] = wrapSandboxTools([commandsTool]);
   const result = await wrapped.handler({ command: 'npm install' }, {});
 
   assert.equal(received, 'npm install');
   assert.equal(result.isError, undefined);
 });
 
-test('blocks edgeone CLI and Pages API commands before they run', async () => {
+test('allows direct Makers CLI preview but blocks token and account-management commands', async () => {
   let received = '';
   const commandsTool = {
     name: 'commands',
@@ -55,14 +66,31 @@ test('blocks edgeone CLI and Pages API commands before they run', async () => {
     },
   } as unknown as ClaudeMcpTool;
 
-  const [wrapped] = wrapSandboxToolsForVerification([commandsTool]);
-  const blocked = await wrapped.handler({
+  const [wrapped] = wrapSandboxTools([commandsTool]);
+  const preview = await wrapped.handler({
+    command: `edgeone makers dev --port ${MAKERS_DEV_PORT} --skip-env-sync --name demo`,
+  }, {});
+  assert.match(received, /edgeone makers dev/);
+  assert.equal(preview.isError, undefined);
+
+  const version = await wrapped.handler({
+    command: 'edgeone --version; echo "EXIT:$?"',
+  }, {});
+  assert.match(received, /edgeone --version/);
+  assert.match(received, /EDGEONE_VERSION_EXIT/);
+  assert.equal(version.isError, undefined);
+
+  received = '';
+  const token = await wrapped.handler({
     command: "edgeone makers deploy -n demo -t 'secret' --json",
   }, {});
-
   assert.equal(received, '');
-  assert.equal(blocked.isError, true);
-  assert.match((blocked.content[0] as { text: string }).text, /Do not run the edgeone CLI/);
+  assert.equal(token.isError, true);
+  assert.match((token.content[0] as { text: string }).text, /Do not pass a token/);
+
+  const login = await wrapped.handler({ command: 'edgeone login --site china' }, {});
+  assert.equal(login.isError, true);
+  assert.match((login.content[0] as { text: string }).text, /Only use the sandbox EdgeOne CLI/);
 
   const api = await wrapped.handler({
     command: 'curl -s -X POST https://pages-api.cloud.tencent.com/v1 -d \'{"Action":"DeletePagesProject"}\'',
@@ -75,4 +103,289 @@ test('blocks edgeone CLI and Pages API commands before they run', async () => {
   }, {});
   assert.equal(received, 'npm view @edgeone/pages-blob versions --json');
   assert.equal(scoped.isError, undefined);
+});
+
+test('version check reports a terminal error when the sandbox CLI is absent', async () => {
+  const commandsTool = {
+    name: 'commands',
+    description: 'run',
+    inputSchema: {},
+    handler: async () => ({
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          stdout: 'EDGEONE_VERSION_EXIT:127\n',
+          stderr: '/bin/sh: 2: edgeone: not found\n',
+          exitCode: 0,
+        }),
+      }],
+    }),
+  } as unknown as ClaudeMcpTool;
+  const [wrapped] = wrapSandboxTools([commandsTool]);
+
+  const result = await wrapped.handler({ command: 'edgeone --version' }, {});
+  const output = result.content.map((item) => (
+    item && typeof item === 'object' && 'text' in item ? item.text : ''
+  )).join('\n');
+
+  assert.equal(result.isError, true);
+  assert.match(output, /MAKERS_CLI_UNAVAILABLE/);
+  assert.match(output, /"retryable":false/);
+  assert.match(output, /Do not inspect PATH/);
+});
+
+test('direct makers dev is normalized, published, and reported through the lifecycle', async () => {
+  let received: Record<string, unknown> = {};
+  let published = '';
+  const commandsTool = {
+    name: 'commands',
+    description: 'run',
+    inputSchema: {},
+    handler: async (args: Record<string, unknown>) => {
+      received = args;
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            stdout: 'MAKERS_DEV_READY=started\nMAKERS_DEV_EXIT:0\n',
+            stderr: '',
+            exitCode: 0,
+          }),
+        }],
+      };
+    },
+  } as unknown as ClaudeMcpTool;
+  const state: ProjectState = {
+    created: true,
+    sessionDir: 'projects/demo',
+    appDir: 'projects/demo/app',
+  };
+  const context = {
+    env: {},
+    sandbox: {
+      envdAccessToken: 'sandbox-access',
+      getHost: (port: number) => `preview-${port}.sandbox.example`,
+      browser: {},
+      files: {
+        exists: async () => false,
+        write: async () => {},
+      },
+      commands: {
+        run: async () => ({ stdout: 'EXIT:0\n', stderr: '', exitCode: 0 }),
+      },
+    },
+  };
+  const [wrapped] = wrapSandboxTools([commandsTool], {
+    context,
+    state,
+    onPreviewReady: ({ url }) => {
+      published = url || '';
+    },
+  });
+
+  const result = await wrapped.handler({ command: 'edgeone makers dev' }, {});
+
+  assert.match(
+    String(received.command),
+    new RegExp(`nohup edgeone makers dev --port ${MAKERS_DEV_PORT}`),
+  );
+  assert.match(
+    String(received.command),
+    new RegExp(`http://127\\.0\\.0\\.1:${PREVIEW_SERVER_PORT}/preview/`),
+  );
+  assert.equal(received.cwd, state.appDir);
+  assert.deepEqual(received.env, { PAGES_SOURCE: 'skills' });
+  assert.equal(received.timeout, 120);
+  assert.match(
+    published,
+    new RegExp(
+      `^https://preview-${PREVIEW_PUBLIC_PORT}\\.sandbox\\.example${
+        PREVIEW_PATH_PREFIX
+      }\\?access_token=sandbox-access$`,
+    ),
+  );
+  assert.match((result.content.at(-1) as { text: string }).text, /"status":"success"/);
+});
+
+test('direct makers dev returns the captured CLI log instead of an unknown sandbox error', async () => {
+  let published = false;
+  const commandsTool = {
+    name: 'commands',
+    description: 'run',
+    inputSchema: {},
+    handler: async () => ({
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          stdout: 'MAKERS_DEV_EXIT:127\n',
+          stderr: 'nohup: failed to run command edgeone: No such file or directory\n',
+          exitCode: 0,
+        }),
+      }],
+    }),
+  } as unknown as ClaudeMcpTool;
+  const state: ProjectState = {
+    created: true,
+    sessionDir: 'projects/demo',
+    appDir: 'projects/demo/app',
+  };
+  const [wrapped] = wrapSandboxTools([commandsTool], {
+    context: {
+      env: {},
+      sandbox: {
+        files: { write: async () => {} },
+        commands: {
+          run: async () => ({ stdout: '', stderr: '', exitCode: 0 }),
+        },
+      },
+    },
+    state,
+    onPreviewReady: () => {
+      published = true;
+    },
+  });
+
+  const result = await wrapped.handler({ command: 'edgeone makers dev' }, {});
+  const output = result.content.map((item) => (
+    item && typeof item === 'object' && 'text' in item ? item.text : ''
+  )).join('\n');
+
+  assert.equal(result.isError, true);
+  assert.equal(published, false);
+  assert.match(output, /No such file or directory/);
+  assert.match(output, /MAKERS_CLI_UNAVAILABLE/);
+  assert.match(output, /"retryable":false/);
+});
+
+test('direct makers deploy reports durable deployment state without replacing preview', async () => {
+  let received: Record<string, unknown> = {};
+  let previewPublished = false;
+  const deploymentStates: DeploymentInfo[] = [];
+  const deployUrl = 'https://demo.edgeone.cool?eo_token=keep-me&eo_time=1';
+  const consoleUrl = 'https://console.example/deployments/dp-1';
+  const commandsTool = {
+    name: 'commands',
+    description: 'run',
+    inputSchema: {},
+    handler: async (args: Record<string, unknown>) => {
+      received = args;
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            stdout: `Deploying...\n${JSON.stringify({
+              status: 'success',
+              url: deployUrl,
+              projectId: 'makers-1',
+              deploymentId: 'dp-1',
+              consoleUrl,
+            })}\nMAKERS_DEPLOY_EXIT:0\n`,
+            stderr: '',
+            exitCode: 0,
+          }),
+        }],
+      };
+    },
+  } as unknown as ClaudeMcpTool;
+  const state: ProjectState = {
+    created: true,
+    sessionDir: 'projects/demo',
+    appDir: 'projects/demo/app',
+  };
+  const [wrapped] = wrapSandboxTools([commandsTool], {
+    context: {
+      env: {},
+      sandbox: {
+        files: { write: async () => {} },
+        commands: {
+          run: async () => ({ stdout: '', stderr: '', exitCode: 0 }),
+        },
+      },
+    },
+    state,
+    onPreviewReady: () => {
+      previewPublished = true;
+    },
+    onDeploymentStatus: (deployment) => {
+      deploymentStates.push(deployment);
+    },
+  });
+
+  const result = await wrapped.handler({
+    command: 'edgeone makers deploy -e preview',
+  }, {});
+
+  assert.match(
+    String(received.command),
+    new RegExp(
+      `edgeone makers deploy -n '${resolveMakersProjectName({ env: {} }, state)}' --json -e preview`,
+    ),
+  );
+  assert.equal(received.cwd, state.appDir);
+  assert.equal(received.timeout, 600);
+  assert.equal(previewPublished, false);
+  assert.equal(state.previewUrl, undefined);
+  assert.equal(state.previewKind, undefined);
+  assert.deepEqual(deploymentStates.map(({ status }) => status), ['running', 'success']);
+  assert.equal(state.deployment?.url, deployUrl);
+  assert.equal(state.deployment?.projectId, 'makers-1');
+  assert.equal(state.deployment?.deploymentId, 'dp-1');
+  assert.equal(state.deployment?.consoleUrl, consoleUrl);
+  assert.match((result.content.at(-1) as { text: string }).text, /"status":"published"/);
+});
+
+test('direct makers deploy surfaces the captured CLI failure', async () => {
+  let previewPublished = false;
+  const deploymentStates: DeploymentInfo[] = [];
+  const commandsTool = {
+    name: 'commands',
+    description: 'run',
+    inputSchema: {},
+    handler: async () => ({
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          stdout: '{"status":"error","error":"Project name conflict"}\nMAKERS_DEPLOY_EXIT:1\n',
+          stderr: '',
+          exitCode: 0,
+        }),
+      }],
+    }),
+  } as unknown as ClaudeMcpTool;
+  const state: ProjectState = {
+    created: true,
+    sessionDir: 'projects/demo',
+    appDir: 'projects/demo/app',
+  };
+  const [wrapped] = wrapSandboxTools([commandsTool], {
+    context: {
+      env: {},
+      sandbox: {
+        files: { write: async () => {} },
+        commands: {
+          run: async () => ({ stdout: '', stderr: '', exitCode: 0 }),
+        },
+      },
+    },
+    state,
+    onPreviewReady: () => {
+      previewPublished = true;
+    },
+    onDeploymentStatus: (deployment) => {
+      deploymentStates.push(deployment);
+    },
+  });
+
+  const result = await wrapped.handler({ command: 'edgeone makers deploy' }, {});
+  const output = result.content.map((item) => (
+    item && typeof item === 'object' && 'text' in item ? item.text : ''
+  )).join('\n');
+
+  assert.equal(result.isError, true);
+  assert.equal(previewPublished, false);
+  assert.deepEqual(deploymentStates.map(({ status }) => status), ['running', 'failed']);
+  assert.equal(state.deployment?.status, 'failed');
+  assert.match(state.deployment?.error || '', /Project name conflict/);
+  assert.match(output, /Project name conflict/);
+  assert.match(output, /"exitCode":1/);
 });

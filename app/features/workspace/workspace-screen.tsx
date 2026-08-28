@@ -24,6 +24,10 @@ import {
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AgentConversation } from '@/app/components/agent-conversation';
 import { FilesPanel } from '@/app/components/files-panel';
+import {
+  appendNarrationChunk,
+  dropTrailingSummaryEcho,
+} from '@/app/lib/tool-activity';
 import { useFileContentCache } from '@/app/hooks/use-file-content-cache';
 import { useTypewriterPlaceholder } from '@/app/hooks/use-typewriter-placeholder';
 import {
@@ -53,12 +57,14 @@ import type {
   ChatMessage,
   ChatResponse,
   ChatStreamEvent,
+  DeploymentInfo,
   FileTree,
   LinkInfo,
   ResumeData,
   ResumeStreamEvent,
 } from '@/app/types/workspace';
 import { HomeStage } from './components/home-stage';
+import { DeploymentStatus } from './components/deployment-status';
 import { SiteHeader } from './components/site-header';
 import { consumeEventStream } from './sse';
 import {
@@ -77,13 +83,12 @@ import {
 const PREVIEW_CREDENTIAL_REFRESH_MS = 8 * 60_000;
 const PREVIEW_REFRESH_POLL_MS = 60_000;
 
-// Mirror of the sandbox preview base path (agents/_constants.ts). Defined
-// locally so the frontend does not cross the app -> agents boundary.
+// Sandbox port 9000 publishes generated applications under this fixed prefix.
+// The UI hides it so the address chip still represents the application route.
 const PREVIEW_PATH_PREFIX = '/preview/';
 
-// Render a mirrored preview route (pathname[+search][+hash]) as the address-bar
-// display value: the /preview/ base (and any other leading slashes) is stripped
-// so only the route relative to the app root is shown, with a leading '/'.
+// Render the mirrored pathname[+search][+hash] relative to the application root.
+// Root URLs from older persisted previews remain supported.
 function previewDisplayPathFromPath(path: string) {
   if (!path) return '/';
   const stripped = path.startsWith(PREVIEW_PATH_PREFIX)
@@ -119,6 +124,8 @@ export function WorkspaceScreen() {
   // while /resume runs.
   const [resumeChecked, setResumeChecked] = useState(true);
   const [preview, setPreview] = useState<LinkInfo | null>(null);
+  const [deployment, setDeployment] = useState<DeploymentInfo | null>(null);
+  const [deploymentCopied, setDeploymentCopied] = useState(false);
   const [download, setDownload] = useState<LinkInfo | null>(null);
   const [downloadBusy, setDownloadBusy] = useState(false);
   const [build, setBuild] = useState<BuildInfo | null>(null);
@@ -198,14 +205,17 @@ export function WorkspaceScreen() {
   // is only what the iframe happens to be showing (deliberately left stale so a
   // token rotation does not reload the running app).
   const shareablePreviewUrl = preview?.url || activePreviewUrl;
-  const hasWorkspace = messages.length > 0 || Boolean(preview) || Boolean(build) || workspaceRestoring;
-  // Address bar shows the preview's current route (relative to the /preview/
-  // base) once the injected tracker reports it; before that it falls back to
-  // a bare root path so neither the host domain nor the preview base path is
-  // shown.
+  const hasWorkspace = messages.length > 0
+    || Boolean(preview)
+    || Boolean(deployment)
+    || Boolean(build)
+    || workspaceRestoring;
+  // Address bar shows the preview's current route once the injected tracker
+  // reports it; before that it falls back to a bare root path so the sandbox
+  // host is never shown.
   const previewDisplayPath = previewDisplayPathFromPath(previewPath);
-  // Cycling typewriter placeholder for the landing prompt (see plan/design-mockup.html).
-  // Reuses the localized example prompts; pauses while the field has text.
+  // Cycling typewriter placeholder for the landing prompt. Reuses the localized
+  // example prompts; pauses while the field has text.
   const placeholderPhrases = useMemo(() => t.home.examples.map((example) => `${example}…`), [t]);
   const typedPlaceholder = useTypewriterPlaceholder(
     placeholderPhrases,
@@ -271,7 +281,7 @@ export function WorkspaceScreen() {
     const applyHistory = (data: ResumeData) => {
       const history = Array.isArray(data.messages) ? data.messages : [];
       const activeTask = data.activeTask;
-      if (!data.hasProject && history.length === 0 && !activeTask) {
+      if (!data.hasProject && history.length === 0 && !activeTask && !data.deployment) {
         return false;
       }
       if (data.conversation_id) {
@@ -290,7 +300,7 @@ export function WorkspaceScreen() {
               id: `${turn.id}-assistant`,
               role: 'assistant' as const,
               content: turn.assistant,
-              activities: turn.activities,
+              activities: dropTrailingSummaryEcho(turn.activities ?? [], turn.assistant),
               status: turn.status === 'completed' ? 'done' as const : turn.status === 'failed' ? 'error' as const : 'stopped' as const,
             },
           ])
@@ -368,6 +378,10 @@ export function WorkspaceScreen() {
       });
 
       setMessages(nextMessages);
+      if (data.deployment) {
+        setDeployment(data.deployment);
+        setResultPanelOpen(true);
+      }
       if (data.hasProject || data.needsWorkspace || activeTask) {
         if (data.hasProject || data.needsWorkspace) {
           // If a preview was published before, stay on the preview pane and show
@@ -392,6 +406,10 @@ export function WorkspaceScreen() {
       }
       if (data.download?.url) {
         setDownload(data.download);
+      }
+      if (data.deployment) {
+        setDeployment(data.deployment);
+        setResultPanelOpen(true);
       }
       if (data.preview?.url) {
         setPreview(data.preview);
@@ -772,29 +790,9 @@ export function WorkspaceScreen() {
           if (!nextText) {
             return item;
           }
-          const activities = [...(item.activities ?? [])];
-          const last = activities.at(-1);
-          if (last?.kind === 'text') {
-            const trimmed = nextText.trim();
-            // Immutable append + skip replayed/overlapping chunks so concurrent
-            // setState updaters cannot double-paste the same suffix.
-            if (
-              last.content.endsWith(nextText)
-              || (trimmed.length > 0 && last.content.endsWith(trimmed))
-              || (trimmed.length > 24 && last.content.includes(trimmed))
-            ) {
-              return item;
-            }
-            activities[activities.length - 1] = {
-              ...last,
-              content: `${last.content}${nextText}`,
-            };
-          } else {
-            activities.push({ kind: 'text', content: nextText });
-          }
           return {
             ...item,
-            activities,
+            activities: appendNarrationChunk(item.activities ?? [], nextText),
           };
         }),
       );
@@ -838,7 +836,10 @@ export function WorkspaceScreen() {
             ? {
                 ...item,
                 content: finalContent,
-                activities: (item.activities ?? []).map((activity) =>
+                activities: dropTrailingSummaryEcho(
+                  item.activities ?? [],
+                  finalContent,
+                ).map((activity) =>
                   activity.kind === 'tool' && activity.status === 'running'
                     ? {
                         ...activity,
@@ -915,6 +916,10 @@ export function WorkspaceScreen() {
       }
       if (data.preview) {
         activatePreview(data.preview);
+      }
+      if (data.deployment) {
+        setDeployment(data.deployment);
+        setResultPanelOpen(true);
       }
       if (data.download) {
         setDownload(data.download);
@@ -1018,6 +1023,13 @@ export function WorkspaceScreen() {
         }
         return;
       }
+      if (event.type === 'deployment_status' && event.data) {
+        sawProjectActivity = true;
+        setDeployment(event.data);
+        setDeploymentCopied(false);
+        setResultPanelOpen(true);
+        return;
+      }
       if (event.type === 'preview_ready' && event.data) {
         sawProjectActivity = true;
         if (event.data.preview) {
@@ -1117,6 +1129,8 @@ export function WorkspaceScreen() {
       cacheConversationId(requestConversationId);
       setConversationId(requestConversationId);
       setPreview(null);
+      setDeployment(null);
+      setDeploymentCopied(false);
       setDownload(null);
       setBuild(null);
       setFileTree(null);
@@ -1365,6 +1379,19 @@ export function WorkspaceScreen() {
     }
   }
 
+  async function handleCopyDeploymentUrl() {
+    if (deployment?.status !== 'success' || !deployment.url || !navigator.clipboard) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(deployment.url);
+      setDeploymentCopied(true);
+      window.setTimeout(() => setDeploymentCopied(false), 1600);
+    } catch {
+      setDeploymentCopied(false);
+    }
+  }
+
   // Return to an uncommitted home state. A conversation ID is created and cached
   // only when the user sends the first message, so refreshing an untouched home
   // screen does not trigger an empty /resume request.
@@ -1380,6 +1407,8 @@ export function WorkspaceScreen() {
     setMessages([]);
     setLoading(false);
     setPreview(null);
+    setDeployment(null);
+    setDeploymentCopied(false);
     setDownload(null);
     setBuild(null);
     setFileTree(null);
@@ -1596,6 +1625,15 @@ export function WorkspaceScreen() {
               )}
             </div>
           </div>
+
+          {deployment && (
+            <DeploymentStatus
+              deployment={deployment}
+              copy={t.workspace.deployment}
+              copied={deploymentCopied}
+              onCopy={() => void handleCopyDeploymentUrl()}
+            />
+          )}
 
           <div className="workspace-panel-content">
             {/* The preview pane stays mounted and is only hidden behind the Code tab:

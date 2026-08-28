@@ -14,7 +14,8 @@ Web Dev Agent turns natural-language requests into runnable web projects. For ea
 - **Makers-compatible generation** — static sites, Cloud Functions, Edge Functions, AI agent endpoints under `agents/`, and similar layouts that Makers can preview locally
 - **Claude Agent SDK loop** — runs the model with EdgeOne sandbox MCP tools, vendored Makers skills, and a restricted tool set
 - **Live preview** — starts `edgeone makers dev` in the sandbox and shows that URL in the right panel (not a cloud `makers deploy`)
-- **Verification feedback** — runs build or Python compile checks and attempts one automatic repair pass when verification fails
+- **Makers-aware code view** — annotates `agents/`, Cloud/Edge Functions, middleware, and `edgeone.json` with capability badges and derived routes
+- **Verification feedback** — runs skill-backed Makers compatibility lint plus build/Python checks, then attempts one automatic repair pass when verification fails
 
 ## Environment Variables
 
@@ -24,8 +25,11 @@ Web Dev Agent turns natural-language requests into runnable web projects. For ea
 | `AI_GATEWAY_BASE_URL` | Yes | Gateway base URL. For Makers Models, use `https://ai-gateway.edgeone.link/v1`. |
 | `AI_GATEWAY_MODEL` | No | Model ID. Defaults to `@makers/deepseek-v4-flash` (a built-in Makers model). |
 | `WEB_DEV_AGENT_DEBUG` | No | Set to `true` or `1` to enable redacted server-side debug logs. Defaults to off. |
-| `EDGEONE_PAGES_API_TOKEN` | No | Optional. Used only if the user asks to live-deploy via `deploy_to_makers`. Preview does not need it. Do not commit it. |
-| `MAKERS_DEPLOY_PROJECT_NAME` | No | Shared mock project name. Defaults to `vibe-coding-playground`. |
+| `EDGEONE_PAGES_API_TOKEN` | No | Main Makers API token. It stays in the Agent Runtime and mints a per-project temporary tenant token that is injected into direct sandbox CLI calls. Needed for live deploys and credentialed local backends such as Blob. Do not commit it. |
+| `MAKERS_SUB_TOKEN_TTL_SECONDS` | No | Temporary tenant-token lifetime. Defaults to `3600`; accepted range is 900–86400 seconds. |
+| `MAKERS_DEPLOY_PROJECT_NAME` | No | Pins every conversation to one Makers project. Leave unset: preview and deploy then use a project derived from the conversation, so later turns reach the same site and two users never collide over one name. |
+| `MAKERS_API_ENV` | No | Makers deployment the token belongs to: `prod` (default), `pre`, or `test`. One switch drives both the token issuer and the sandbox CLI, so the credential is always verified by the environment that minted it. |
+| `MAKERS_API_REGION` | No | Region of that deployment: `china` (default) or `global`. Production tokens resolve their own region, so this only matters for `pre` and `test`. |
 
 This template follows the OpenAI-compatible standard — point these at Makers Models or any compatible provider.
 
@@ -83,7 +87,7 @@ web-dev-agent/
 │   ├── _pipelines.ts       # Chat and file-read pipelines
 │   ├── _project.ts         # Sandbox project, preview, and verification helpers
 │   ├── _types.ts           # Shared TypeScript types
-│   ├── tools/              # Custom sandbox MCP tools (scaffold, write, preview, deploy)
+│   ├── tools/              # Custom scaffold/write tools and direct CLI lifecycle observer
 │   └── utils/              # Path, text, and build-error helpers
 ├── .claude/skills/         # Vendored, sandbox-adapted Makers skills
 ├── edgeone.json            # Agent runtime configuration
@@ -101,9 +105,9 @@ The agent runs in session mode under `agents/`. Requests with the same `conversa
 1. **Submit and stream** — the frontend calls `POST /chat` with a message and the `Makers-Conversation-Id` header. The endpoint persists the task and streams it over the same SSE response, so a normal turn uses one Agent request. A new request from the home view can also set `resetProject: true` to recreate the project workspace.
 2. **State restore** — the chat pipeline reads conversation history from `context.store` and restores generated source from project Blob storage through `context.sandbox.restore()` when the sandbox is cold.
 3. **LLM and tool loop** — the Claude Agent SDK runs with the `edgeone-sandbox` MCP server, `permissionMode: 'dontAsk'`, and sandbox-only tools. The agent must call `ensure_project_scaffold` before reading or writing project files.
-4. **Project editing** — generated source files are written incrementally through one `write_project_file` call per file, so progress reaches the UI continuously. Commands and dependency installation run inside the sandbox.
-5. **Preview publish** — `publish_preview` runs `edgeone makers dev` inside the sandbox, proxies it under `/preview/`, and shows that URL in the right panel. `deploy_to_makers` remains available only when the user explicitly asks to publish a live Makers URL.
-6. **Verification** — the runtime runs `npm run build` when a Node project has a build script, or `python -m compileall .` when Python files are present. If verification fails after a successful agent run, the pipeline attempts one auto-fix pass.
+4. **Project editing** — generated source files are written incrementally through one `write_project_file` call per file, so progress reaches the UI continuously. Commands and dependency installation run inside the sandbox. The code panel derives Makers capability badges and public routes directly from file conventions.
+5. **Direct CLI preview and deploy** — the model invokes the target sandbox image's `edgeone makers dev` / `edgeone makers deploy --json` through the generic `commands` tool. Makers dev runs on port 8088 behind a strip-prefix adapter on port 3000; the sandbox's fixed port 9000 gateway publishes it at `/preview/` in the right panel. Deploy JSON is parsed into a separate deployment status. A thin host observer injects a short-lived tenant token when configured, so the main token never enters the sandbox or model context. Until that image capability is available, the observer returns the terminal `MAKERS_CLI_UNAVAILABLE` error and prevents install, path-probing, `npx`, and retry fallbacks.
+6. **Verification** — before preview/deploy and again in the deterministic verification phase, the runtime translates the vendored skills' `pathPatterns`/`validate` metadata plus structural Makers rules into a sandbox lint. It then runs `npm run build` when a Node project has a build script, or `python -m compileall .` when Python files are present. Any failure enters the existing one-pass auto-fix loop.
 7. **Persistence, SSE, and reconnect** — source checkpoints use `context.sandbox.persist()` and are stored under the current project's reserved `__sandbox` Blob store, so archive bytes never pass through conversation metadata. `POST /chat` receives status, logs, tool calls, file updates, preview state, build status, and the final reply. After a refresh, `GET /chat?runId=...` reconnects to the same detached task; `GET /resume` restores the workspace and hydrates up to 48 text files / 2 MiB over the same SSE connection.
 
 The file route is `/file?path=<relative-path>` and uses the same conversation context to read text files from the sandbox project. Sandbox credentials are provided by the runtime; no local sandbox credentials are required. Sandbox instances remain temporary and are controlled by `agents.sandbox.timeout`, while persisted source is charged to and retained with the user's project Blob storage.

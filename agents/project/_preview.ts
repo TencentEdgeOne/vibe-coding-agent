@@ -3,17 +3,28 @@ import {
   PREVIEW_PATH_PREFIX,
   PREVIEW_PUBLIC_PORT,
   PREVIEW_SERVER_PORT,
-} from '../_constants';
-import type { ProjectState } from '../_types';
-import { debugLog } from '../utils/_debug';
+} from '../_constants.ts';
+import type { ProjectState } from '../_types.ts';
+import { debugLog } from '../utils/_debug.ts';
 import {
-  PREVIEW_PROXY_SCRIPT_PATH,
+  buildMakersDevBackgroundCommand,
   buildMakersDevLaunchCommand,
-  buildPreviewProxyScript,
-} from '../../shared/makers-dev';
-import { redactSecret, shellQuote } from '../../shared/makers-deploy';
-import { runCommandCapturingExit, runSandboxCommand } from './_commands';
-import { ensureEdgeoneCli, resolveMakersDeployConfig } from './_makers-deploy';
+  parseMakersDevExitCode,
+} from '../../shared/makers-dev.ts';
+import { redactSecret, shellQuote } from '../../shared/makers-deploy.ts';
+import {
+  MAKERS_CLI_UNAVAILABLE_ERROR_CODE,
+  MAKERS_CLI_UNAVAILABLE_MESSAGE,
+  isEdgeoneCliUnavailable,
+} from '../../shared/tool-phase.ts';
+import { runCommandCapturingExit, runSandboxCommand } from './_commands.ts';
+import { assertMakersProjectCompatible } from './_makers-compat.ts';
+import { resolveMakersProjectName } from './_makers-deploy.ts';
+import {
+  buildSandboxMakersEnv,
+  resolveMakersMasterToken,
+  resolveSandboxMakersToken,
+} from './_makers-token.ts';
 
 export async function resolvePublicLinks(context: any) {
   const previewHost = context.sandbox.getHost(PREVIEW_PUBLIC_PORT);
@@ -90,33 +101,15 @@ export function rewritePreviewAccessToken(existingUrl: string, token: string) {
   }
 }
 
-function buildKillPortsScript(ports: number[]) {
-  const fuser = ports.map((port) => `fuser -k ${port}/tcp 2>/dev/null || true;`).join(' ');
-  const lsof = ports.map((port) => `lsof -ti tcp:${port} | xargs -r kill -9 2>/dev/null || true;`).join(' ');
-  return [
-    'if command -v fuser >/dev/null 2>&1; then',
-    fuser,
-    'elif command -v lsof >/dev/null 2>&1; then',
-    lsof,
-    'fi;',
-    'sleep 1',
-  ].join(' ');
-}
-
 export async function startPreviewServer(context: any, state: ProjectState) {
-  const { token, projectName } = resolveMakersDeployConfig(context);
-  const installed = await ensureEdgeoneCli(context, token);
-  if (!installed.ok) {
-    throw new Error(installed.error);
-  }
+  await assertMakersProjectCompatible(context, state);
+  const masterToken = resolveMakersMasterToken(context);
+  const projectName = resolveMakersProjectName(context, state);
   const launchCommand = buildMakersDevLaunchCommand(MAKERS_DEV_PORT, projectName);
+  let forceRestart = false;
 
-  // makers-dev watches project files. On follow-up turns, keep the healthy
-  // process instead of killing and rebuilding it. Agent routes get a smoke test;
-  // if hot reload is still settling, fall back to a clean restart below.
-  // The sandbox SDK throws SANDBOX_UNKNOWN_ERROR on a non-zero shell exit, so
-  // a cold curl (exit 7 / connection refused) must not abort before we start
-  // makers-dev. Always exit 0 and read EXIT:N.
+  // makers-dev watches project files. On resume, keep a healthy process rather
+  // than starting a second CLI instance on the same port.
   const warm = await runCommandCapturingExit(
     context,
     probePreviewReadyCommand(),
@@ -132,81 +125,45 @@ export async function startPreviewServer(context: any, state: ProjectState) {
       });
       return previewServerInfo(launchCommand);
     } catch (error) {
+      forceRestart = true;
       debugLog(context, '[preview-reuse-fallback]', {
         message: error instanceof Error ? error.message : String(error),
       });
     }
   }
 
-  const release = await runSandboxCommand(
+  // Scoped to this conversation, and redacted out of CLI output before the
+  // model or the UI sees it.
+  const sandboxToken = await resolveSandboxMakersToken(context, state, masterToken);
+
+  const startResult = await runSandboxCommand(
     context,
-    buildKillPortsScript([PREVIEW_SERVER_PORT, MAKERS_DEV_PORT]),
-    { timeout: 10 },
+    buildMakersDevBackgroundCommand({
+      makersPort: MAKERS_DEV_PORT,
+      previewPort: PREVIEW_SERVER_PORT,
+      previewPath: PREVIEW_PATH_PREFIX,
+      projectName,
+      forceRestart,
+    }),
+    {
+      cwd: state.appDir,
+      timeout: 110,
+      env: buildSandboxMakersEnv(context, sandboxToken),
+    },
   );
-  if (release.exitCode !== 0) {
-    throw new Error(release.stderr || release.stdout || `Failed to free preview ports.`);
-  }
-
-  const proxyScript = buildPreviewProxyScript(
-    PREVIEW_SERVER_PORT,
-    MAKERS_DEV_PORT,
-    PREVIEW_PATH_PREFIX.replace(/\/$/, ''),
-  );
-  const writeProxy = await runSandboxCommand(
-    context,
-    `node -e ${shellQuote(`require("fs").writeFileSync(${JSON.stringify(PREVIEW_PROXY_SCRIPT_PATH)}, ${JSON.stringify(proxyScript)})`)}`,
-    { timeout: 10 },
-  );
-  if (writeProxy.exitCode !== 0) {
-    throw new Error(writeProxy.stderr || writeProxy.stdout || 'Failed to write the preview proxy script.');
-  }
-
-  const startScript = [
-    'set +e',
-    'export PAGES_SOURCE=skills',
-    token ? `export EDGEONE_PAGES_API_TOKEN=${shellQuote(token)}` : '',
-    `: > /tmp/dev.log; : > /tmp/preview-proxy.log`,
-    `nohup ${launchCommand} > /tmp/dev.log 2>&1 &`,
-    `nohup node ${shellQuote(PREVIEW_PROXY_SCRIPT_PATH)} > /tmp/preview-proxy.log 2>&1 &`,
-    'echo START_OK',
-    'exit 0',
-  ].filter(Boolean).join('\n');
-
-  const startResult = await runSandboxCommand(context, startScript, {
-    cwd: state.appDir,
-    timeout: 15,
-  });
-  if (startResult.exitCode !== 0) {
+  const startOutput = [startResult.stdout, startResult.stderr].filter(Boolean).join('\n');
+  const capturedExitCode = parseMakersDevExitCode(startOutput);
+  if (
+    startResult.exitCode !== 0
+    || (capturedExitCode != null && capturedExitCode !== 0)
+  ) {
+    const failure = isEdgeoneCliUnavailable(startOutput)
+      ? `${MAKERS_CLI_UNAVAILABLE_ERROR_CODE}: ${MAKERS_CLI_UNAVAILABLE_MESSAGE}`
+      : startOutput || 'Failed to start edgeone makers dev.';
     throw new Error(
       redactSecret(
-        startResult.stderr || startResult.stdout || 'Failed to start edgeone makers dev.',
-        token,
-      ),
-    );
-  }
-
-  const ready = await runSandboxCommand(
-    context,
-    [
-      `for i in $(seq 1 60); do`,
-      `  curl -fsS ${shellQuote(`http://127.0.0.1:${PREVIEW_SERVER_PORT}${PREVIEW_PATH_PREFIX}`)} >/dev/null && exit 0;`,
-      '  sleep 1;',
-      'done;',
-      `echo "edgeone makers dev did not become ready on port ${MAKERS_DEV_PORT} (proxied via ${PREVIEW_SERVER_PORT}${PREVIEW_PATH_PREFIX})" >&2;`,
-      'echo "--- makers-dev log ---" >&2;',
-      'tail -n 120 /tmp/dev.log >&2 || true;',
-      'echo "--- preview proxy log ---" >&2;',
-      'tail -n 40 /tmp/preview-proxy.log >&2 || true;',
-      'exit 1',
-    ].join('\n'),
-    { timeout: 80 },
-  );
-
-  if (ready.exitCode !== 0) {
-    throw new Error(
-      redactSecret(
-        ready.stderr || ready.stdout || `Preview server did not become ready on port ${PREVIEW_SERVER_PORT}.`,
-        token,
+        failure,
+        sandboxToken,
       ),
     );
   }
@@ -254,6 +211,7 @@ async function assertGeneratedAgentChatReady(context: any, state: ProjectState) 
       'rm -f /tmp/agent-chat-smoke-body /tmp/agent-chat-smoke-headers',
       [
         'curl -sS -N --max-time 45',
+        "--noproxy '*'",
         '-D /tmp/agent-chat-smoke-headers',
         '-o /tmp/agent-chat-smoke-body',
         `-X POST ${shellQuote(endpoint)}`,
@@ -283,12 +241,33 @@ async function assertGeneratedAgentChatReady(context: any, state: ProjectState) 
   );
   if (smoke.exitCode !== 0) {
     throw new Error(
-      `${smoke.stderr || smoke.stdout || 'Generated /chat endpoint smoke test failed.'}\nFix the generated agent or frontend configuration, then call publish_preview again. Do not probe external gateways or runtime internals.`,
+      `${smoke.stderr || smoke.stdout || 'Generated /chat endpoint smoke test failed.'}\nFix the generated agent or frontend configuration, then rerun edgeone makers dev. Do not probe external gateways or runtime internals.`,
     );
   }
 }
 
-export async function assertPreviewServerReady(context: any, readyPath = PREVIEW_PATH_PREFIX) {
+export async function publishRunningPreview(context: any, state: ProjectState) {
+  await assertPreviewServerReady(context);
+  await assertGeneratedAgentChatReady(context, state);
+  const links = await resolvePublicLinks(context);
+  if (!links.previewUrl) {
+    throw new Error(`Makers dev is ready, but the sandbox did not return a public URL for port ${PREVIEW_PUBLIC_PORT}.`);
+  }
+  state.previewUrl = links.previewUrl;
+  state.sandboxDebugUrl = links.sandboxDebugUrl;
+  state.previewKind = 'sandbox';
+  state.previewPublished = true;
+  return {
+    url: links.previewUrl,
+    sandboxDebugUrl: links.sandboxDebugUrl,
+    kind: 'sandbox' as const,
+  };
+}
+
+export async function assertPreviewServerReady(
+  context: any,
+  readyPath = PREVIEW_PATH_PREFIX,
+) {
   const result = await runCommandCapturingExit(
     context,
     probePreviewReadyCommand(readyPath),
@@ -303,7 +282,8 @@ export async function assertPreviewServerReady(context: any, readyPath = PREVIEW
 function probePreviewReadyCommand(readyPath = PREVIEW_PATH_PREFIX) {
   return [
     'set +e',
-    `curl -fsS ${shellQuote(`http://127.0.0.1:${PREVIEW_SERVER_PORT}${readyPath}`)} >/dev/null`,
+    `curl --noproxy '*' -fsS ${shellQuote(`http://127.0.0.1:${PREVIEW_SERVER_PORT}/__edgeone_preview_proxy_health`)} >/dev/null \\`,
+    `  && curl --noproxy '*' -fsS ${shellQuote(`http://127.0.0.1:${PREVIEW_SERVER_PORT}${readyPath}`)} >/dev/null`,
     'echo EXIT:$?',
   ].join('\n');
 }

@@ -97,6 +97,22 @@ test('assistant replay after tool reset does not re-emit the same trailing block
   assert.equal(out.text, null);
 });
 
+// Deltas arrive token-sized, so a chunk that repeats the character before it
+// is ordinary text. Dropping it as a duplicate corrupts whatever it belonged
+// to, and a deploy URL one character short still looks like a deploy URL.
+test('a delta that repeats the preceding characters is still text', () => {
+  let state = emptyState();
+  const url = 'https://vibe-coding-e2b8952eaf-yy3vnimd.test-global.qcdntest.cn?eo_token=7d44f02fce5648fdb18832f92dbd1caa';
+
+  for (const delta of ['站点已上线。', 'https://vibe-coding-e2b8952eaf-y', 'y', '3vnimd', '.test-global.qcdntest.cn?eo_token=7d44f02fce5648fdb18832f92dbd1ca', 'a']) {
+    const out = apply(state, delta);
+    assert.equal(out.text, delta, `dropped delta ${JSON.stringify(delta)}`);
+    state = out.state;
+  }
+
+  assert.equal(state.emittedNarration, `站点已上线。${url}`);
+});
+
 test('cumulative stream deltas only forward the remainder', () => {
   let state = emptyState();
   state = apply(state, '项目环境已准备好。').state;

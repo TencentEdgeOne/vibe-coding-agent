@@ -3,7 +3,34 @@
  * Keep this free of sandbox / React imports so tests and the frontend can share it.
  */
 
-export const DEFAULT_MAKERS_DEPLOY_PROJECT_NAME = 'vibe-coding-playground';
+export function buildMakersDeployCommand(projectName: string, requestedCommand = '') {
+  const previewEnvironment = /(?:^|\s)(?:-e|--environment)(?:\s+|=)preview(?:\s|$)/i
+    .test(requestedCommand);
+  const launch = [
+    'edgeone makers deploy',
+    `-n ${shellQuote(projectName)}`,
+    '--json',
+    previewEnvironment ? '-e preview' : '',
+  ].filter(Boolean).join(' ');
+  return [
+    'set +e',
+    'rm -f /tmp/makers-deploy.log',
+    `${launch} > /tmp/makers-deploy.log 2>&1`,
+    'deploy_status=$?',
+    'cat /tmp/makers-deploy.log',
+    'echo "MAKERS_DEPLOY_EXIT:$deploy_status"',
+    // Preserve the CLI output even on failure; the command adapter converts
+    // the marker back into an MCP tool error after parsing it.
+    'exit 0',
+  ].join('\n');
+}
+
+export function parseMakersDeployExitCode(output: string) {
+  const matches = [...output.matchAll(/(?:^|\n)MAKERS_DEPLOY_EXIT:(\d+)(?=\s|$)/g)];
+  if (matches.length === 0) return undefined;
+  const value = Number(matches.at(-1)?.[1]);
+  return Number.isInteger(value) ? value : undefined;
+}
 
 export type MakersDeploySuccess = {
   status: 'success';
@@ -80,8 +107,8 @@ export function formatMakersDeployFailure(stdout: string, stderr = '', fallback 
   if (/exceeds \d+ limit/i.test(error) || /exceeds \d+ limit/i.test(combined)) {
     return [
       error.includes('exceeds') ? error : 'Makers project exceeds the account limit.',
-      'Do not delete other Makers projects, do not call Pages APIs, and do not run the edgeone CLI.',
-      'Tell the user the mock-deploy account is out of project quota and they need to free a slot or reuse an existing project name.',
+      'Do not delete other Makers projects and do not call Pages APIs.',
+      'Tell the user the account is out of project quota and present only these choices: free a slot in the console, or reuse an existing project name before rerunning the direct CLI deploy.',
     ].join(' ');
   }
   return error;
@@ -109,76 +136,4 @@ export function redactSecret(text: string, secret: string) {
 
 export function shellQuote(value: string) {
   return `'${value.replace(/'/g, `'\\''`)}'`;
-}
-
-export const MAKERS_PREVIEW_USER_AGENT =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
-
-export function buildEdgeoneCliPrewarmScript() {
-  return [
-    'set +e',
-    'if command -v edgeone >/dev/null 2>&1; then exit 0; fi',
-    'if [ -f /tmp/edgeone-cli-install.pid ] && kill -0 "$(cat /tmp/edgeone-cli-install.pid)" 2>/dev/null; then exit 0; fi',
-    'rm -f /tmp/edgeone-cli-install.status /tmp/edgeone-cli-install.log',
-    'nohup sh -c \'npm install -g edgeone@latest --no-audit --no-fund --prefer-offline > /tmp/edgeone-cli-install.log 2>&1; status=$?; echo "$status" > /tmp/edgeone-cli-install.status.tmp; mv /tmp/edgeone-cli-install.status.tmp /tmp/edgeone-cli-install.status\' >/dev/null 2>&1 &',
-    'echo "$!" > /tmp/edgeone-cli-install.pid',
-    'exit 0',
-  ].join('\n');
-}
-
-export function buildEdgeoneCliEnsureScript() {
-  return [
-    'set +e',
-    'export PAGES_SOURCE=skills',
-    'if command -v edgeone >/dev/null 2>&1; then',
-    '  edgeone -v',
-    '  echo EXIT:0',
-    '  exit 0',
-    'fi',
-    'if [ -f /tmp/edgeone-cli-install.pid ] && kill -0 "$(cat /tmp/edgeone-cli-install.pid)" 2>/dev/null; then',
-    '  for i in $(seq 1 420); do',
-    '    command -v edgeone >/dev/null 2>&1 && break',
-    '    [ -f /tmp/edgeone-cli-install.status ] && break',
-    '    sleep 1',
-    '  done',
-    'fi',
-    'if command -v edgeone >/dev/null 2>&1; then',
-    '  edgeone -v',
-    '  echo EXIT:0',
-    '  exit 0',
-    'fi',
-    'prefix=$(npm prefix -g 2>/dev/null || echo /usr)',
-    'rm -rf "$prefix/lib/node_modules/edgeone" "$prefix/lib/node_modules/.edgeone-"* 2>/dev/null',
-    'npm install -g edgeone@latest --no-audit --no-fund --prefer-offline',
-    'status=$?',
-    'command -v edgeone >/dev/null 2>&1 && edgeone -v',
-    'echo EXIT:$status',
-    'exit 0',
-  ].join('\n');
-}
-
-export function buildMakersPreviewVerifyScript(quotedUrl: string) {
-  return [
-    'set +e',
-    'rm -f /tmp/makers-cookies.txt /tmp/makers-preview-body',
-    `code=$(curl -sS -L --max-time 30 -A ${shellQuote(MAKERS_PREVIEW_USER_AGENT)} -c /tmp/makers-cookies.txt -b /tmp/makers-cookies.txt -o /tmp/makers-preview-body -w '%{http_code}' ${quotedUrl})`,
-    'status=$?',
-    'if [ "$status" -ne 0 ]; then',
-    '  echo "CURL_ERROR"',
-    '  echo EXIT:1',
-    '  exit 0',
-    'fi',
-    'bytes=$(wc -c < /tmp/makers-preview-body | tr -d " ")',
-    'echo "HTTP:$code BYTES:$bytes"',
-    'if [ "$code" -lt 200 ] || [ "$code" -ge 400 ]; then',
-    '  echo EXIT:2',
-    '  exit 0',
-    'fi',
-    'if [ "${bytes:-0}" -lt 1 ]; then',
-    '  echo EXIT:3',
-    '  exit 0',
-    'fi',
-    'echo EXIT:0',
-    'exit 0',
-  ].join('\n');
 }

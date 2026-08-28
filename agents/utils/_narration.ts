@@ -10,6 +10,13 @@ export function sanitizeNarrationText(input: string) {
     .replace(/\n{4,}/g, '\n\n\n');
 }
 
+/**
+ * Shortest accumulated block that a repeated delta can be measured against.
+ * Below it, "the delta repeats everything so far" is a coincidence between two
+ * short fragments rather than evidence of a re-send.
+ */
+const MIN_RESEND_PREFIX = 8;
+
 export type NarrationEmitState = {
   /** Text already streamed for the current assistant text block. */
   currentTextBlock: string;
@@ -80,11 +87,17 @@ export function resolveNarrationEmit(
     };
   }
 
-  // Incremental delta. Some providers re-send cumulative text; emit only the remainder.
-  if (state.currentTextBlock.endsWith(text)) {
-    return { state, text: null };
-  }
-  if (state.currentTextBlock && text.startsWith(state.currentTextBlock)) {
+  // Incremental delta. Some providers re-send the whole block in place of the
+  // new fragment, which is only safely recognisable as an exact prefix of a
+  // block long enough that a genuine fragment could not repeat it by accident.
+  // Nothing here may compare against the tail: deltas are token-sized, so a
+  // chunk like "a" landing after an "a" is ordinary text, and dropping it
+  // quietly corrupts whatever it belonged to — a URL loses a character and
+  // still looks like a URL.
+  if (
+    state.currentTextBlock.length >= MIN_RESEND_PREFIX
+    && text.startsWith(state.currentTextBlock)
+  ) {
     const remainder = text.slice(state.currentTextBlock.length);
     if (!remainder) {
       return { state, text: null };

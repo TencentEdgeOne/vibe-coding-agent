@@ -1,8 +1,11 @@
 export { runCommandCapturingExit, runSandboxCommand } from './project/_commands';
-export { createProjectState, resetProjectWorkspace } from './project/_state';
+export {
+  createProjectState,
+  resetProjectWorkspace,
+  separateLegacyMakersDeployment,
+} from './project/_state';
 export {
   ensureProjectScaffold,
-  prewarmEdgeoneCli,
   repairNestedAppDirLayout,
   runVerification,
 } from './project/_scaffold';
@@ -15,9 +18,10 @@ export {
 export {
   resolvePublicLinks,
   rewritePreviewAccessToken,
+  publishRunningPreview,
   startPreviewServer,
   assertPreviewServerReady,
 } from './project/_preview';
 export { createProjectArchive, restoreProjectArchive } from './project/_archive';
-export { deployProjectToMakers, resolveMakersDeployConfig } from './project/_makers-deploy';
+export { resolveMakersProjectName } from './project/_makers-deploy';
 export { restorePersistedProject } from './project/_persistence';

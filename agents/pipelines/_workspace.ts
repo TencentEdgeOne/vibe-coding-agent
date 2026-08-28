@@ -4,6 +4,7 @@ import {
   getFileTree,
   resetProjectWorkspace,
   restorePersistedProject,
+  separateLegacyMakersDeployment,
 } from '../_project';
 import type { ProjectState, StreamSend } from '../_types';
 
@@ -16,12 +17,23 @@ export async function prepareProjectWorkspace(
 ): Promise<ProjectState> {
   const state = resetProject
     ? createProjectState(conversationId)
-    : await getProjectState(context, conversationId);
+    : separateLegacyMakersDeployment(await getProjectState(context, conversationId));
 
   if (resetProject) {
     await resetProjectWorkspace(context, state);
     await clearLegacyProjectSnapshot(context, conversationId);
-    await context.sandbox.persist({ path: state.appDir });
+    // The snapshot only speeds up later sessions, so a failure here (backend
+    // unavailable, size cap, quota) must not abort the turn the user asked for.
+    try {
+      await context.sandbox.persist({ path: state.appDir });
+    } catch (error) {
+      send({
+        type: 'log',
+        phase: 'scaffold',
+        stream: 'stderr',
+        message: error instanceof Error ? error.message : 'Snapshot save failed.',
+      });
+    }
     return state;
   }
 

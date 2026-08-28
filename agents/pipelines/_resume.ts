@@ -9,16 +9,17 @@ import {
 import {
   assertPreviewServerReady,
   getFileTree,
-  prewarmEdgeoneCli,
   resolvePublicLinks,
   restorePersistedProject,
   rewritePreviewAccessToken,
   runSandboxCommand,
+  separateLegacyMakersDeployment,
   startPreviewServer,
 } from '../_project';
 import type { FileTreeItem, PersistedActivity, PersistedActivityTurn, ProjectState } from '../_types';
 import { createSSEResponse, sseEvent } from '../_shared';
 import { isMakersDeployUrl } from '../../shared/makers-deploy';
+import { isMakersDeployCommand, isMakersDevCommand } from '../../shared/tool-phase';
 import { getRequestQueryParam, resolveConversationId } from '../utils/_request';
 import { withTimeout } from './_helpers';
 import { loadResumeFileContents } from './_resume-files';
@@ -30,17 +31,23 @@ function isMakersPreviewState(state: ProjectState) {
 function toolNameImpliesProject(name: string) {
   return name.includes('write_project_file')
     || name.includes('ensure_project_scaffold')
-    || name.includes('publish_preview')
-    || name.includes('get_preview_link')
-    || name.includes('deploy_to_makers')
     || name.includes('write_files')
     || /__files_write$/.test(name);
+}
+
+function activityIsMakersCli(activity: PersistedActivity) {
+  if (activity.kind !== 'tool' || !activity.name.includes('commands')) {
+    return false;
+  }
+  const command = activity.inputSummary || '';
+  return isMakersDevCommand(command) || isMakersDeployCommand(command);
 }
 
 function activityHistoryImpliesProject(activityHistory: PersistedActivityTurn[]) {
   return activityHistory.some((turn) =>
     (turn.activities || []).some((activity: PersistedActivity) =>
-      activity.kind === 'tool' && toolNameImpliesProject(activity.name || ''),
+      activity.kind === 'tool'
+      && (toolNameImpliesProject(activity.name || '') || activityIsMakersCli(activity)),
     ),
   );
 }
@@ -50,11 +57,8 @@ function activityHistoryImpliesPreview(activityHistory: PersistedActivityTurn[])
     (turn.activities || []).some((activity: PersistedActivity) =>
       activity.kind === 'tool'
       && activity.status === 'completed'
-      && (
-        (activity.name || '').includes('publish_preview')
-        || (activity.name || '').includes('get_preview_link')
-        || (activity.name || '').includes('deploy_to_makers')
-      ),
+      && activity.name.includes('commands')
+      && isMakersDevCommand(activity.inputSummary || ''),
     ),
   );
 }
@@ -69,9 +73,7 @@ type ResumeStage = 'history' | 'workspace' | 'preview';
 
 // Hard ceiling for the whole workspace stage so a stuck sandbox call cannot
 // leave the browser spinner pending indefinitely after stop/refresh.
-// A recycled sandbox may need both project dependencies and a cold EdgeOne CLI
-// install. Those are overlapped below, but the stage budget must still cover
-// the CLI's 420s install ceiling plus makers-dev startup.
+// A recycled sandbox may need dependencies plus a cold Makers dev startup.
 const WORKSPACE_RESUME_BUDGET_MS = 600_000;
 const SANDBOX_PROBE_MS = 15_000;
 const RESTORE_BUDGET_MS = 45_000;
@@ -110,13 +112,14 @@ async function readResumeStage(context: any): Promise<ResumeStage> {
 // Fast path: store reads only. No sandbox restore / npm install / preview.
 // Lets the UI paint chat history immediately after a refresh.
 async function loadProjectResumeHistory(context: any, conversationId: string) {
-  const [messages, activityHistory, snapshot, chatTask, state] = await Promise.all([
+  const [messages, activityHistory, snapshot, chatTask, storedState] = await Promise.all([
     getHistory(context, conversationId),
     getActivityHistory(context, conversationId),
     getLegacyProjectSnapshot(context, conversationId),
     getChatTask(context, conversationId),
     getProjectState(context, conversationId),
   ]);
+  const state = separateLegacyMakersDeployment(storedState);
 
   // Prefer a durable snapshot, but also open the workspace when the turn clearly
   // touched the project (stop mid-write may race the snapshot flush; sandbox may
@@ -148,6 +151,7 @@ async function loadProjectResumeHistory(context: any, conversationId: string) {
     hasProject,
     hasPreview,
     needsWorkspace: hasProject,
+    deployment: state.deployment,
   };
 }
 
@@ -183,7 +187,7 @@ async function ensureProjectDependencies(context: any, state: ProjectState) {
   return installed.exitCode === 0;
 }
 
-// Warm sandboxes may still be serving /preview/; otherwise install + restart.
+// Warm sandboxes may still be serving port 8088; otherwise install + restart.
 // Makers deploy URLs are durable and must not be rewritten with envdAccessToken.
 async function republishPreviewOnResume(context: any, state: ProjectState) {
   if (isMakersPreviewState(state) && state.previewUrl) {
@@ -199,9 +203,8 @@ async function republishPreviewOnResume(context: any, state: ProjectState) {
       ? context.sandbox.envdAccessToken
       : '';
 
-    // Prefer rotating the token on the URL the iframe already used. Fresh
-    // getHost() can mint a LazySandbox host whose /preview/ proxy is not ready,
-    // which shows up in the panel as {"error":"Not Found",...}.
+    // Prefer rotating the token on the URL the iframe already used. This keeps
+    // an open preview stable even when getHost() issues a fresh sandbox host.
     if (state.previewUrl && accessToken) {
       const rewritten = rewritePreviewAccessToken(state.previewUrl, accessToken);
       if (rewritten) {
@@ -230,11 +233,7 @@ async function republishPreviewOnResume(context: any, state: ProjectState) {
     // Server is not ready — fall through to a full restart.
   }
 
-  // Start the global CLI install while project-local dependencies restore.
-  const [depsReady] = await Promise.all([
-    ensureProjectDependencies(context, state),
-    prewarmEdgeoneCli(context),
-  ]);
+  const depsReady = await ensureProjectDependencies(context, state);
   if (!depsReady) {
     throw new Error('Project dependencies are not available for preview resume.');
   }
@@ -256,11 +255,12 @@ async function republishPreviewOnResume(context: any, state: ProjectState) {
 }
 
 async function runWorkspaceRestoreBody(context: any, conversationId: string) {
-  const [state, chatTask, activityHistory] = await Promise.all([
+  const [storedState, chatTask, activityHistory] = await Promise.all([
     getProjectState(context, conversationId),
     getChatTask(context, conversationId),
     getActivityHistory(context, conversationId),
   ]);
+  const state = separateLegacyMakersDeployment(storedState);
   const hadPreview = projectStateImpliesPreview(state, activityHistory);
   const generationActive = Boolean(
     chatTask && (chatTask.status === 'queued' || chatTask.status === 'running'),
@@ -301,6 +301,7 @@ async function runWorkspaceRestoreBody(context: any, conversationId: string) {
       conversation_id: conversationId,
       hasProject: false,
       preview: restoreError ? { error: restoreError } : {},
+      deployment: state.deployment,
       files: { root: state.appDir, items: [] as FileTreeItem[] },
     };
   }
@@ -319,7 +320,7 @@ async function runWorkspaceRestoreBody(context: any, conversationId: string) {
   }
 
   const hasFileItems = items.some((item) => item.type === 'file');
-  // Only restart preview when publish_preview previously succeeded for this
+  // Only restart preview when a Makers CLI preview previously succeeded for this
   // conversation. Do NOT key off package.json — a stopped mid-generation
   // project often has a scaffold but is not previewable yet.
   const shouldRestartPreview = !generationActive && hasFileItems && hadPreview;
@@ -363,6 +364,7 @@ async function runWorkspaceRestoreBody(context: any, conversationId: string) {
     conversation_id: conversationId,
     hasProject: hasFileItems || Boolean(state.created),
     preview,
+    deployment: state.deployment,
     files: { root: state.appDir, items },
     ...(hasFileItems
       ? { download: { url: '/download', filename: 'source.zip' } }
@@ -404,10 +406,11 @@ export async function runProjectResumeWorkspacePipeline(context: any): Promise<R
 // iframe's access_token expires — visibility return / toolbar refresh.
 // Falls back to full workspace restore when the sandbox has gone cold.
 async function runPreviewRefreshBody(context: any, conversationId: string) {
-  const [state, activityHistory] = await Promise.all([
+  const [storedState, activityHistory] = await Promise.all([
     getProjectState(context, conversationId),
     getActivityHistory(context, conversationId),
   ]);
+  const state = separateLegacyMakersDeployment(storedState);
   const hadPreview = projectStateImpliesPreview(state, activityHistory);
   if (!hadPreview) {
     return {
@@ -415,6 +418,7 @@ async function runPreviewRefreshBody(context: any, conversationId: string) {
       stage: 'preview' as const,
       conversation_id: conversationId,
       preview: {},
+      deployment: state.deployment,
     };
   }
 
@@ -432,6 +436,7 @@ async function runPreviewRefreshBody(context: any, conversationId: string) {
       stage: 'preview' as const,
       conversation_id: conversationId,
       preview,
+      deployment: state.deployment,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

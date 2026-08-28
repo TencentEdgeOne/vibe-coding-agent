@@ -2,20 +2,31 @@ import type { SdkMcpToolDefinition } from '@anthropic-ai/claude-agent-sdk';
 import type {
   ActivityStatus,
   BuildStatus,
+  DeploymentInfo,
   PreviewKind,
 } from '../shared/protocol.ts';
 
-export type { ActivityStatus, BuildStatus, FileTreeItem, PreviewKind } from '../shared/protocol.ts';
+export type {
+  ActivityStatus,
+  BuildStatus,
+  DeploymentInfo,
+  FileTreeItem,
+  PreviewKind,
+} from '../shared/protocol.ts';
 
 export type ProjectState = {
   created: boolean;
   sessionDir: string;
   appDir: string;
+  /** Opaque, non-secret tenant ID used to mint short-lived Makers tokens for direct sandbox CLI calls. */
+  makersTenantId?: string;
   previewUrl?: string;
   sandboxDebugUrl?: string;
-  /** Latched once publish_preview or deploy_to_makers succeeds; survives live URL invalidation so resume can restart preview. */
+  /** Latched once Makers dev succeeds so resume can restore the sandbox preview. */
   previewPublished?: boolean;
   previewKind?: PreviewKind;
+  /** Latest live deployment, kept separate from the sandbox preview iframe. */
+  deployment?: DeploymentInfo;
 };
 
 // A base64 archive of the whole project, persisted outside the volatile sandbox so
@@ -86,6 +97,7 @@ export type CodingAgentResult = {
   error: string | null;
   projectTouched: boolean;
   previewTouched?: boolean;
+  deploymentTouched?: boolean;
   wasCreated: boolean;
   fatal?: boolean;
   stopped?: boolean;

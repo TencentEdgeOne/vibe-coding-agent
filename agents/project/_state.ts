@@ -1,6 +1,7 @@
 import type { ProjectState } from '../_types';
 import { safeSegment } from '../utils/_paths';
 import { runSandboxCommand } from './_commands';
+import { isMakersDeployUrl } from '../../shared/makers-deploy';
 
 export function createProjectState(conversationId: string): ProjectState {
   const sessionDir = `projects/${safeSegment(conversationId)}`;
@@ -9,6 +10,29 @@ export function createProjectState(conversationId: string): ProjectState {
     sessionDir,
     appDir: `${sessionDir}/app`,
   };
+}
+
+/** Migrate persisted state from versions that rendered a deployment as preview. */
+export function separateLegacyMakersDeployment(state: ProjectState) {
+  const legacyUrl = state.previewUrl;
+  if (
+    !legacyUrl
+    || (state.previewKind !== 'makers' && !isMakersDeployUrl(legacyUrl))
+  ) {
+    return state;
+  }
+
+  state.deployment ??= {
+    status: 'success',
+    startedAt: 0,
+    finishedAt: 0,
+    url: legacyUrl,
+  };
+  state.previewUrl = undefined;
+  state.sandboxDebugUrl = undefined;
+  state.previewPublished = undefined;
+  state.previewKind = undefined;
+  return state;
 }
 
 export async function resetProjectWorkspace(
@@ -42,6 +66,7 @@ export async function resetProjectWorkspace(
   state.sandboxDebugUrl = undefined;
   state.previewPublished = undefined;
   state.previewKind = undefined;
+  state.deployment = undefined;
   return appDirExists;
 }
 

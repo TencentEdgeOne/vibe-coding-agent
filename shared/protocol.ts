@@ -43,6 +43,19 @@ export type BuildInfo = {
 
 export type PreviewKind = 'sandbox' | 'makers';
 
+export type DeploymentStatus = 'running' | 'success' | 'failed';
+
+export type DeploymentInfo = {
+  status: DeploymentStatus;
+  startedAt: number;
+  finishedAt?: number;
+  url?: string;
+  projectId?: string;
+  deploymentId?: string;
+  consoleUrl?: string;
+  error?: string;
+};
+
 export type LinkInfo = {
   url?: string;
   sandboxDebugUrl?: string;
@@ -87,6 +100,7 @@ export type ResumeData = {
   hasPreview?: boolean;
   needsWorkspace?: boolean;
   preview?: LinkInfo;
+  deployment?: DeploymentInfo;
   files?: FileTree;
   download?: LinkInfo;
   activityHistory?: PersistedActivityTurn[];
@@ -101,6 +115,7 @@ export type ChatResponse = {
   build?: BuildInfo;
   files?: FileTree;
   preview?: LinkInfo;
+  deployment?: DeploymentInfo;
   download?: LinkInfo;
   error?: string;
   stopped?: boolean;
@@ -128,6 +143,10 @@ export type ChatStreamEvent =
   | {
       type: 'preview_ready';
       data?: { preview?: LinkInfo; download?: LinkInfo };
+    }
+  | {
+      type: 'deployment_status';
+      data?: DeploymentInfo;
     }
   | {
       type: 'tool_use';

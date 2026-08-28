@@ -10,3 +10,9 @@ plan*
 .codegraph
 .tef_dist/*
 logs/
+
+# Tencent Cloud EdgeOne
+.env
+.edgeone/*
+.tef_dist/*
+  
