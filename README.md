@@ -14,6 +14,7 @@ Web Dev Agent turns natural-language requests into runnable web projects. For ea
 - **Makers-compatible generation** — static sites, Cloud Functions, Edge Functions, AI agent endpoints under `agents/`, and similar layouts that Makers can preview locally
 - **Claude Agent SDK loop** — runs the model with EdgeOne sandbox MCP tools, vendored Makers skills, and a restricted tool set
 - **Live preview** — starts `edgeone makers dev` in the sandbox and shows that URL in the right panel (not a cloud `makers deploy`)
+- **One-click deploy** — a header button runs `edgeone makers deploy` for the finished project without going through the model, and streams the live URL into the same deployment status the model-driven publish uses
 - **Makers-aware code view** — annotates `agents/`, Cloud/Edge Functions, middleware, and `edgeone.json` with capability badges and derived routes
 - **Verification feedback** — runs skill-backed Makers compatibility lint plus build/Python checks, then attempts one automatic repair pass when verification fails
 

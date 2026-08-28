@@ -21,7 +21,7 @@ import { createSSEResponse, sseEvent } from '../_shared';
 import { isMakersDeployUrl } from '../../shared/makers-deploy';
 import { isMakersDeployCommand, isMakersDevCommand } from '../../shared/tool-phase';
 import { getRequestQueryParam, resolveConversationId } from '../utils/_request';
-import { withTimeout } from './_helpers';
+import { ensureProjectDependencies, withTimeout } from './_helpers';
 import { loadResumeFileContents } from './_resume-files';
 
 function isMakersPreviewState(state: ProjectState) {
@@ -169,22 +169,6 @@ async function probeSandboxHasFiles(context: any, state: ProjectState) {
   }
   const tree = await getFileTree(context, state);
   return tree.some((item) => item.type === 'file');
-}
-
-async function ensureProjectDependencies(context: any, state: ProjectState) {
-  const hasPackageJson = await context.sandbox.files.exists(`${state.appDir}/package.json`);
-  if (!hasPackageJson) {
-    return false;
-  }
-  const hasNodeModules = await context.sandbox.files.exists(`${state.appDir}/node_modules`);
-  if (hasNodeModules) {
-    return true;
-  }
-  const installed = await runSandboxCommand(context, 'npm install --no-audit --no-fund', {
-    cwd: state.appDir,
-    timeout: 300,
-  });
-  return installed.exitCode === 0;
 }
 
 // Warm sandboxes may still be serving port 8088; otherwise install + restart.

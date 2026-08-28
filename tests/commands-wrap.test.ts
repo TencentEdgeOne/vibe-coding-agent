@@ -194,7 +194,10 @@ test('direct makers dev is normalized, published, and reported through the lifec
     new RegExp(`http://127\\.0\\.0\\.1:${PREVIEW_SERVER_PORT}/preview/`),
   );
   assert.equal(received.cwd, state.appDir);
-  assert.deepEqual(received.env, { PAGES_SOURCE: 'skills' });
+  assert.deepEqual(received.env, {
+    PAGES_SOURCE: 'skills',
+    PAGES_BLOB_STS_ENV: 'prod',
+  });
   assert.equal(received.timeout, 120);
   assert.match(
     published,

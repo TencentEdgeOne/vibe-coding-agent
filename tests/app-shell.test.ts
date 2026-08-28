@@ -58,6 +58,28 @@ test('the landing hero centers without clipping its own top', async () => {
   assert.match(stage, /className="home-inner my-auto"/);
 });
 
+// An action that vanishes when it is unavailable teaches nothing: the user is
+// left looking for a button that was there a moment ago. Everything the
+// workspace offers stays in the bar and explains itself when it cannot run.
+test('workspace actions stay in place and go quiet instead of disappearing', async () => {
+  const header = await readFile('app/features/workspace/components/site-header.tsx', 'utf8');
+
+  assert.match(header, /disabled=\{downloadBusy \|\| !canDownload\}/);
+  assert.doesNotMatch(header, /hasWorkspace && canDownload/);
+  // A disabled button receives neither hover nor a native title, so the hint
+  // has to hang off the wrapper to be readable exactly when it is needed.
+  assert.match(header, /<span className="site-hint" data-hint=\{downloadHint\}>/);
+  assert.doesNotMatch(header, /title=\{(downloadHint|exportHint|deployHint)\}/);
+  // Leaving the project reads as going back, and lives next to the wordmark
+  // rather than among the actions that operate on the project.
+  const brandCluster = header.slice(
+    header.indexOf('site-brand-cluster'),
+    header.indexOf('site-topbar-actions'),
+  );
+  assert.match(brandCluster, /onClick=\{onBack\}/);
+  assert.match(brandCluster, /<ArrowLeft \/>/);
+});
+
 // Tailwind emits its utilities inside @layer utilities and unlayered CSS
 // outranks every layer, so the handwritten chrome never needs !important to
 // win. Reintroducing one means a selector is fighting itself again.

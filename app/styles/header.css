@@ -1,10 +1,12 @@
 /* ============================================================
-   Site header — brand lockup on the left, session actions on
-   the right. The bar holds no filled button: the primary action
-   always lives in the composer or the panel it belongs to.
+   Site header — leaving the project and the brand lockup on the
+   left; every session action on the right, read as two groups
+   either side of a hairline: utilities first, then what ships.
    ============================================================ */
 
 .site-topbar {
+  position: relative;
+  z-index: 50;
   display: flex;
   height: 44px;
   flex: 0 0 44px;
@@ -16,11 +18,63 @@
   padding: 0 14px;
 }
 
+/* An icon button says nothing on its own, and a disabled one says even less
+   about why. The hint rides on a wrapper rather than the control: browsers
+   drop hover, and native titles, on a disabled button. */
+.site-hint {
+  position: relative;
+  display: inline-flex;
+}
+
+.site-hint::after {
+  content: attr(data-hint);
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: max-content;
+  max-width: 220px;
+  border-radius: var(--r-sm);
+  background: var(--n-900);
+  padding: 5px 8px;
+  color: var(--n-0);
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+  opacity: 0;
+  transform: translateY(-3px);
+  transition:
+    opacity var(--t-fast) ease,
+    transform var(--t-fast) ease;
+  pointer-events: none;
+  box-shadow: var(--shadow-2);
+}
+
+/* Anchored buttons near the left edge open the other way, or the hint runs
+   off the window. */
+.site-hint.is-start::after {
+  right: auto;
+  left: 0;
+}
+
+.site-hint:not([data-hint])::after,
+.site-hint[data-hint='']::after {
+  content: none;
+}
+
+.site-hint:hover::after,
+.site-hint:focus-within::after {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.site-hint:has(:disabled) {
+  cursor: not-allowed;
+}
+
 .site-brand-cluster {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
 }
 
 .site-brand {
@@ -36,9 +90,18 @@
   white-space: nowrap;
 }
 
+/* Two clusters: what you take out of the session, then what you send
+   outside it. Whitespace does the separating — a rule between buttons that
+   already carry their own borders just adds another line to read. */
 .site-topbar-actions {
   display: flex;
   min-width: 0;
+  align-items: center;
+  gap: 16px;
+}
+
+.site-topbar-group {
+  display: flex;
   align-items: center;
   gap: 6px;
 }
@@ -88,7 +151,7 @@
 }
 
 .site-icon-button,
-.site-secondary-button,
+.site-primary-button,
 .site-accent-button {
   display: inline-flex;
   height: 28px;
@@ -115,9 +178,32 @@
   height: 14px;
 }
 
-.site-secondary-button {
-  padding: 0 12px;
+/* Leaving the project sits next to the wordmark rather than among the
+   actions, so it carries no box of its own until the pointer is on it. */
+.site-icon-button.is-ghost {
+  border-color: transparent;
+  color: var(--n-600);
+}
+
+.site-icon-button.is-ghost:hover:not(:disabled) {
+  border-color: transparent;
   color: var(--n-900);
+}
+
+/* Publishing is the one action here that changes something outside the
+   sandbox, so it is the only filled button in the bar. */
+.site-primary-button {
+  gap: 6px;
+  border-color: transparent;
+  background: var(--brand);
+  padding: 0 12px;
+  color: var(--n-0);
+  font-weight: 600;
+}
+
+.site-primary-button svg {
+  width: 14px;
+  height: 14px;
 }
 
 /* The contact call to action stays findable without competing with the
@@ -130,10 +216,13 @@
   font-weight: 600;
 }
 
-.site-icon-button:hover:not(:disabled),
-.site-secondary-button:hover:not(:disabled) {
+.site-icon-button:hover:not(:disabled) {
   border-color: var(--n-300);
   background: var(--n-50);
+}
+
+.site-primary-button:hover:not(:disabled) {
+  background: var(--brand-deep);
 }
 
 .site-accent-button:hover:not(:disabled) {
@@ -142,15 +231,17 @@
   color: var(--brand-deep);
 }
 
+/* Pointer events pass through to the hint wrapper, which is what keeps a
+   disabled button able to explain itself. */
 .site-icon-button:disabled,
-.site-secondary-button:disabled,
+.site-primary-button:disabled,
 .site-accent-button:disabled {
-  cursor: not-allowed;
   opacity: 0.4;
+  pointer-events: none;
 }
 
 .site-icon-button:active,
-.site-secondary-button:active,
+.site-primary-button:active,
 .site-accent-button:active {
   transform: scale(0.97);
 }
@@ -162,8 +253,18 @@
     padding: 0 10px;
   }
 
-  .site-language,
-  .site-secondary-button {
+  /* Every action survives the narrow bar; the wordmark is the one thing
+     here that can be read from context, so it yields the space. */
+  .site-topbar-actions {
+    gap: 10px;
+  }
+
+  .site-brand {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .site-language {
     display: none;
   }
 }

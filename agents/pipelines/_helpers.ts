@@ -1,9 +1,43 @@
+import { runSandboxCommand } from '../_project';
 import type { ProjectState } from '../_types';
 import { debugLog } from '../utils/_debug';
 export {
   compactUserFacingReply,
   withLiveDeploymentUrl,
 } from '../../shared/user-facing-reply.ts';
+
+/** The preview link as the frontend expects it, or nothing when none is live. */
+export function previewLinkFromState(state: ProjectState) {
+  if (!state.previewUrl) {
+    return {};
+  }
+  return {
+    url: state.previewUrl,
+    sandboxDebugUrl: state.sandboxDebugUrl,
+    kind: state.previewKind,
+  };
+}
+
+/**
+ * Install only when the sandbox actually came back empty. A restored snapshot
+ * carries source without node_modules, and both the preview server and the
+ * Makers build need dependencies on disk.
+ */
+export async function ensureProjectDependencies(context: any, state: ProjectState) {
+  const hasPackageJson = await context.sandbox.files.exists(`${state.appDir}/package.json`);
+  if (!hasPackageJson) {
+    return false;
+  }
+  const hasNodeModules = await context.sandbox.files.exists(`${state.appDir}/node_modules`);
+  if (hasNodeModules) {
+    return true;
+  }
+  const installed = await runSandboxCommand(context, 'npm install --no-audit --no-fund', {
+    cwd: state.appDir,
+    timeout: 300,
+  });
+  return installed.exitCode === 0;
+}
 
 const SANDBOX_EXTENSION_SECONDS = 1800;
 

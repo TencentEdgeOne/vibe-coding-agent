@@ -3,6 +3,9 @@
  * Keep this free of sandbox / React imports so tests and the frontend can share it.
  */
 
+import type { DeploymentInfo } from './protocol.ts';
+import { MAKERS_CLI_UNAVAILABLE_MESSAGE, isEdgeoneCliUnavailable } from './tool-phase.ts';
+
 export function buildMakersDeployCommand(projectName: string, requestedCommand = '') {
   const previewEnvironment = /(?:^|\s)(?:-e|--environment)(?:\s+|=)preview(?:\s|$)/i
     .test(requestedCommand);
@@ -112,6 +115,76 @@ export function formatMakersDeployFailure(stdout: string, stderr = '', fallback 
     ].join(' ');
   }
   return error;
+}
+
+export type MakersDeployOutcome =
+  | Omit<MakersDeploySuccess, 'type'>
+  | { status: 'cli-missing'; error: string }
+  | { status: 'error'; error: string; exitCode?: number };
+
+/**
+ * The single reading of what the CLI just did.
+ *
+ * Two callers publish — the model through its command tool, and the deploy
+ * button through its own pipeline — and a disagreement between them would show
+ * as a deployment the UI calls failed while the site is live, or the reverse.
+ */
+export function readMakersDeployOutcome(
+  stdout: string,
+  stderr = '',
+  secret = '',
+): MakersDeployOutcome {
+  const combined = [stdout, stderr].filter(Boolean).join('\n');
+  if (isEdgeoneCliUnavailable(combined)) {
+    return { status: 'cli-missing', error: MAKERS_CLI_UNAVAILABLE_MESSAGE };
+  }
+
+  // Read before redacting: the deploy URL carries a token query value that can
+  // overlap the credential, and redacting first would cut the link in half.
+  const parsed = parseMakersDeployJson(stdout, stderr);
+  const exitCode = parseMakersDeployExitCode(combined);
+  if (parsed.status === 'success' && (exitCode == null || exitCode === 0)) {
+    return {
+      status: 'success',
+      url: parsed.url,
+      ...(parsed.projectId ? { projectId: parsed.projectId } : {}),
+      ...(parsed.deploymentId ? { deploymentId: parsed.deploymentId } : {}),
+      ...(parsed.consoleUrl ? { consoleUrl: parsed.consoleUrl } : {}),
+    };
+  }
+
+  return {
+    status: 'error',
+    error: redactSecret(
+      parsed.status === 'error'
+        ? parsed.error
+        : `edgeone makers deploy exited with code ${exitCode}.`,
+      secret,
+    ),
+    ...(exitCode != null ? { exitCode } : {}),
+  };
+}
+
+export function describeMakersDeployment(
+  outcome: MakersDeployOutcome,
+  timing: { startedAt: number; finishedAt?: number },
+): DeploymentInfo {
+  const finishedAt = timing.finishedAt ?? Date.now();
+  if (outcome.status === 'success') {
+    const { status, ...details } = outcome;
+    return {
+      status: 'success',
+      startedAt: timing.startedAt,
+      finishedAt,
+      ...details,
+    };
+  }
+  return {
+    status: 'failed',
+    startedAt: timing.startedAt,
+    finishedAt,
+    error: outcome.error,
+  };
 }
 
 export function isMakersDeployUrl(url?: string | null): boolean {

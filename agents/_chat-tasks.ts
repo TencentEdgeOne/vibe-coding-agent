@@ -1,10 +1,10 @@
-import { runChatPipeline } from './_pipelines';
+import { runChatPipeline, runDeployPipeline } from './_pipelines';
 import {
   appendTurn,
   getChatTask,
   saveChatTask,
 } from './_memory';
-import type { ChatTask, ChatTaskStatus, StreamSend } from './_types';
+import type { ChatTask, ChatTaskIntent, ChatTaskStatus, StreamSend } from './_types';
 import { createSSEResponse, sseEvent } from './_shared';
 import { resolveConversationId } from './utils/_request';
 
@@ -162,7 +162,7 @@ function isTaskActive(task: ChatTask | null) {
 async function createChatTask(
   context: any,
   message: string,
-  options: { resetProject?: boolean; turnId?: string } = {},
+  options: { resetProject?: boolean; turnId?: string; intent?: ChatTaskIntent } = {},
 ) {
   const conversationId = getConversationId(context);
   if (!conversationId) {
@@ -195,6 +195,7 @@ async function createChatTask(
   const task: ChatTask = {
     id: taskId,
     message,
+    ...(options.intent === 'deploy' ? { intent: 'deploy' as const } : {}),
     resetProject: options.resetProject === true,
     status: 'queued',
     createdAt: Date.now(),
@@ -234,11 +235,18 @@ async function executeLiveTask(context: any, liveTask: LiveChatTask) {
   try {
     await saveChatTask(taskContext, liveTask.conversationId, runningTask);
     publish(liveTask, { type: 'status', message: 'Starting the chat task' });
-    await runChatPipeline(taskContext, liveTask.task.message, send, {
-      resetProject: liveTask.task.resetProject,
-      turnId: liveTask.task.id,
-      userMessagePersisted: true,
-    });
+    if (liveTask.task.intent === 'deploy') {
+      await runDeployPipeline(taskContext, liveTask.task.message, send, {
+        turnId: liveTask.task.id,
+        userMessagePersisted: true,
+      });
+    } else {
+      await runChatPipeline(taskContext, liveTask.task.message, send, {
+        resetProject: liveTask.task.resetProject,
+        turnId: liveTask.task.id,
+        userMessagePersisted: true,
+      });
+    }
   } catch (runError) {
     error = runError instanceof Error ? runError.message : 'Request processing failed.';
     if (!finalEvent) {
@@ -380,7 +388,7 @@ function createLiveTaskStreamResponse(
 export async function createChatTaskAndStreamResponse(
   context: any,
   message: string,
-  options: { resetProject?: boolean; turnId?: string } = {},
+  options: { resetProject?: boolean; turnId?: string; intent?: ChatTaskIntent } = {},
 ) {
   const result = await createChatTask(context, message, options);
   if (!result.ok) {

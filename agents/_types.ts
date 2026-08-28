@@ -47,9 +47,18 @@ export type ConversationMessage = {
 
 export type ChatTaskStatus = 'queued' | 'running' | 'completed' | 'failed' | 'stopped';
 
+/**
+ * What the task slot is running. Publishing is a service step with one correct
+ * command, so 'deploy' skips the model entirely — but it still occupies the
+ * same slot, so it cannot race a generation over the same sandbox.
+ */
+export type ChatTaskIntent = 'chat' | 'deploy';
+
 export type ChatTask = {
   id: string;
   message: string;
+  /** Absent on tasks persisted before deploy became a task of its own. */
+  intent?: ChatTaskIntent;
   resetProject: boolean;
   status: ChatTaskStatus;
   createdAt: number;

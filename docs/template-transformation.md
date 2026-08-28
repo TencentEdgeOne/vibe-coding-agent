@@ -250,10 +250,20 @@ runMakersCompatibilityCheck()      ─→  在沙箱中执行，解析退出码�
 - 叙述流的去重只按「长到不可能是巧合」的块判定：delta 是 token 粒度的，`endsWith` 一比，`...dbd1ca` 后面那个 `a` 就被当成重复吞掉，URL 少一个字符照样长得像 URL。运行时和前端两处都改成只对足够长的整块跳过（`resolveNarrationEmit` / `appendNarrationChunk`）
 - `dropTrailingSummaryEcho` 去重：模型结尾那句叙述和最终总结本就是同一句话，前端在定稿与 resume 两处丢掉尾部叙述，只留带 URL 的总结。比较时同时忽略空白和链接——总结会把线上地址单独提行、有时还加「线上地址：」前缀，只有正文才可比
 
+**一键部署入口：** 上线是一条已经没有决策余地的命令 —— 项目、凭证、目标项目名在按钮可点之前就已确定，让模型走一遍只多一次它做别的事的机会。所以右上角按钮不发提示词，直接跑 `edgeone makers deploy`。
+- 不新增路由：`POST /chat` 带 `intent: 'deploy'`，占用与生成同一个任务槽位。生成与部署都在同一个沙箱上动手，共用槽位才能保证两者不会同时开工；刷新后 `activeTask` 仍然从 `/chat?runId=` 重连，`/stop`、`/status` 一并复用
+- `agents/pipelines/_deploy.ts` 是确定性管线：还原工作区 → 兼容性检查 → 补依赖 → 签发租户 token → 跑 CLI → 推 `deployment_status`，全程不碰 `runCodingAgent`
+- 部署也写进对话：按钮把「把这个项目部署到线上」作为用户轮记录，活动流里同样是一条「部署项目」，成功回复带完整线上地址 —— 点出来的和打字要求的，事后读起来是同一件事
+- CLI 输出的解读收敛成 `readMakersDeployOutcome` / `describeMakersDeployment`，模型路径与按钮路径共用一套判定，不会出现一边说失败、站点却已经上线
+- 可点条件：有可部署的项目（`download.url` 即文件已落盘）、没有进行中的任务、不在 resume 还原中；不满足时按钮置灰并用 tooltip 说明还差什么
+
 **兼容：** `separateLegacyMakersDeployment` 把历史上 `previewKind === 'makers'` 的 URL 迁出预览态，避免旧会话刷新后继续把部署页当沙箱预览。
 
 **影响文件：**
 - `shared/protocol.ts` — `DeploymentInfo`、`deployment_status` 事件
+- `shared/makers-deploy.ts` — CLI 输出到部署态的唯一解读
+- `agents/pipelines/_deploy.ts` — 一键部署管线
+- `agents/_chat-tasks.ts` / `agents/chat.ts` / `agents/_types.ts` — 任务槽位区分 `intent`
 - `agents/tools/_commands-wrap.ts` — 部署成功/失败走 `onDeploymentStatus`，不再写 `previewUrl`
 - `agents/pipelines/_chat.ts` / `_resume.ts` — 流式推送并持久化部署态
 - `agents/project/_state.ts` — 旧会话迁移
@@ -262,9 +272,10 @@ runMakersCompatibilityCheck()      ─→  在沙箱中执行，解析退出码�
 - `agents/_prompt.ts` — 区分沙箱预览链接与线上地址，禁止模型自选项目名
 - `app/features/workspace/components/deployment-status.tsx` — 部署条
 - `agents/utils/_narration.ts` / `app/lib/tool-activity.ts` — 叙述分片拼接不再吞字符
-- `app/features/workspace/workspace-screen.tsx` — 订阅事件、复制完整 URL、收敛尾部叙述
+- `app/features/workspace/workspace-screen.tsx` — 订阅事件、复制完整 URL、收敛尾部叙述、部署按钮可点条件
+- `app/features/workspace/components/site-header.tsx` — 一键部署按钮（替换从未上线的「认领部署」占位入口）
 - `app/lib/tool-activity.ts` — 活动标签拆分、`dropTrailingSummaryEcho`
-- `tests/commands-wrap.test.ts` / `tests/tool-activity.test.ts` / `tests/user-facing-reply.test.ts` — 回归
+- `tests/deploy-task.test.ts` / `tests/makers-deploy.test.ts` / `tests/commands-wrap.test.ts` / `tests/tool-activity.test.ts` / `tests/user-facing-reply.test.ts` — 回归
 
 ---
 
@@ -279,7 +290,9 @@ runMakersCompatibilityCheck()      ─→  在沙箱中执行，解析退出码�
 - **token 化** — 中性色阶（`--n-0` ~ `--n-900`）、状态色、三级阴影、四档圆角、三档动效时长与缓动曲线全部集中在 `tokens.css`；shadcn 契约变量映射到同一色阶，工具层与手写层不再各说各话
 - **单一主题色** — 全站只有品牌蓝一个强调色，不引入第二主色；活动流按 `data-tier` 分级，Skills / 兼容性检查 / dev / deploy 这些平台节点取品牌蓝，普通文件操作保持中性灰
 - **能力色相** — `agent` / `cloud-function` / `edge-function` / `middleware` / `config` 从三种共用一个蓝，拆成五个可区分的色相；色相围绕蓝—青—琥珀展开，作为分类标签而非第二套主题
-- **CTA 权重** — 头部唯一的实心蓝按钮「联系我们」降级为描边，主按钮权重交还给输入框；左上角 wordmark `MAKERS VIBE CODING` 维持原样不动
+- **CTA 权重** — 头部实心蓝只留给「一键部署」：它是这一排里唯一会改变沙箱之外状态的操作，营销性质的「联系我们」降级为描边；左上角 wordmark `MAKERS VIBE CODING` 维持原样不动
+- **头部分工** — 左边只放「离开这个项目」（后退箭头，无边框，紧邻 wordmark）；右边按「从会话里取东西」（导出 Log、下载源码，两枚安静的图标）和「把东西送出去」（一键部署实心、联系我们描边）分成两组，用间距而非竖线分隔 —— 按钮本身已经带边框，再画一条线只是多一条要读的竖线
+- **禁用态仍然可读** — 下载按钮不再在没有产物时整个消失，改为置灰；提示挂在外层 `.site-hint` 包裹元素上而不是按钮的 `title`，因为浏览器既不给 disabled 按钮派发 hover、也不显示原生 title —— 而一键部署恰恰是在不可点时才需要说清「还差什么」。可点时不给提示：按钮上的标题已经说完了
 
 **回归护栏：** `tests/app-shell.test.ts` 改为对全部样式分片做断言，并新增两条反向测试 —— 样式表不得出现 `!important`，surface 分片不得出现裸色值。
 
@@ -300,8 +313,8 @@ runMakersCompatibilityCheck()      ─→  在沙箱中执行，解析退出码�
 | 新增代码行 | +5,982 |
 | 删除代码行 | -2,626 |
 | 净增代码行 | +3,356 |
-| 新增测试文件 | 5 |
-| 测试总数 | 153（全部通过） |
+| 新增测试文件 | 6 |
+| 测试总数 | 175（全部通过） |
 | 类型检查 | 通过 |
 
 ---
@@ -318,7 +331,7 @@ load_makers_skill (仅顶层)                 load_makers_skill (顶层 + ref �
 publish_preview / deploy_to_makers         commands wrapper (直接 CLI)
   ↓                                          ↓
 代理预览 (/preview/ 前缀)                  makers dev :8088 → 代理 :3000 → :9000/preview/
-部署结果丢进同一 iframe                    makers deploy → 独立部署条 (URL / 控制台)
+部署结果丢进同一 iframe                    一键部署按钮 / makers deploy → 独立部署条 (URL / 控制台)
   ↓                                          ↓
 无兼容性检查                               Makers 兼容性 lint (Skills 驱动)
   ↓                                          ↓
@@ -335,7 +348,7 @@ publish_preview / deploy_to_makers         commands wrapper (直接 CLI)
 | 机制 | 说明 |
 |------|------|
 | Sub-token 隔离 | 主 Token 只留在 Agent Runtime；沙箱 CLI 拿到的一律是按会话隔离的临时 tenant token，`resolveSandboxMakersToken` 是唯一出口，没有回退到主 Token 的分支（约束见「待完成项 → 租户 Token 的已知约束」）|
-| 环境同源 | `MAKERS_API_ENV` + `MAKERS_API_REGION` 同时决定 SDK 签发端点与注入沙箱的 `API_ENV` / `EDGEONE_PAGES_API_REGION`，令牌永远由签发它的环境校验 |
+| 环境同源 | `MAKERS_API_ENV` + `MAKERS_API_REGION` 同时决定 SDK 签发端点、注入沙箱的 `API_ENV` / `EDGEONE_PAGES_API_REGION`，以及 `PAGES_BLOB_STS_ENV`（见下），令牌与存储凭证永远由签发它的环境校验 |
 | 命令白名单 | `forbiddenSandboxCommandReason` 只允许 `makers dev`、`makers deploy`、`--version` |
 | 终止型错误 | `MAKERS_CLI_UNAVAILABLE` 禁止模型重试、安装、npx、路径探测 |
 | Exit code 保护 | 后台脚本总以 0 退出，真实退出码通过 marker 传递，避免 sandbox 吞错 |
@@ -350,6 +363,7 @@ publish_preview / deploy_to_makers         commands wrapper (直接 CLI)
 |--------|------|------|
 | 1 | 归属与认领方案 — 解决部署产物到用户 Makers 项目的绑定流程 | 大 |
 | 2 | 补齐 tenant token 权限 — 下表接口尚未放开，且沙箱镜像需带上改用 `DescribePagesProjects` 校验的 CLI | 中 |
+| 3 | CLI 侧只有 `dev/runners/node-function.ts` 读运行时的 `PAGES_BLOB_STS_ENV`，`python-function` / `agent-node` / `agent-python` 三个 runner 直接用编译期常量，Python 与 agent 型生成项目的预览仍会环境错配 | 小 |
 
 沙箱注入 tenant token 后，对 `eo-test.qcloud.com` 逐个实测 CLI 在 dev / deploy 链路上用到的 16 个接口，未授权的返回顶层 `Code=107 "Action has not found."`：
 
@@ -370,6 +384,17 @@ publish_preview / deploy_to_makers         commands wrapper (直接 CLI)
 **配额只增不减，每个 AppId 上限 50000。** 计数用的是 `count({ AppId, Type: 'tenant' })`，不排除已过期的记录；`DescribeTokens` 明确排除 `Type='tenant'`，控制台列表里看不到；`DeleteTokens` 只能按 TokenId 删，而那个 ID 从不返回给调用方。当前 tenantId 是每个 project state 一个新 UUID，等于每个新会话永久占一个名额，且没有自助清理路径。
 
 **子 Token 是幂等复用，不是每次新签。** `{AppId, Uin, TenantId, Type}` 命中已有记录就返回同一个 token 字符串，只把 `Expired` 往后推。所以 `MAKERS_SUB_TOKEN_TTL_SECONDS` 的真实语义是「最后一次使用后 N 秒失效」的滑动过期，同一项目拿到的凭证值在整个生命周期内是稳定的。好处是反复预览不会增加记录，只有新项目才增。
+
+### 存储凭证：预览与线上是两条路
+
+生成项目用 `@edgeone/pages-blob` 存数据时，两个环境拿凭证的方式完全不同：
+
+- **线上**：产物里的字面量占位符 `{{PAGES_BLOB_DEPLOY_CREDENTIAL}}` 由发布流水线替换成实凭证，运行时不做任何交换。
+- **预览**：占位符没被替换，SDK 退回读 `PAGES_BLOB_DEPLOY_CREDENTIAL` / `PAGES_PROJECT_ID` / `PAGES_BLOB_STS_ENV` 三个环境变量，向 `blob-sts.edgeone.site` 换取 STS 凭证，请求头 `X-Env` 取自第三个变量。
+
+前两个由 CLI 在项目 link 后注入（`dev.tsx` 的 `agentDevBlobAuth`）；`detectDevLinkRequirement()` 扫到函数依赖链引用 `@edgeone/pages-blob` 会强制要求 link，模板的 `--name` 会自动完成。第三个此前无人设置，落到沙箱 CLI 的编译期常量 `__PAGES_BLOB_STS_ENV__`，于是测试环境的 token + 项目撞上生产 STS，预览里每次读写都是 `CREDENTIAL_ERROR: credential exchange failed (code=-1): Invalid credential`，而线上因为不走这条交换所以正常 —— 表现就是「留言板预览读写失败、部署后一切正常」。同一 token 与项目实测：`PAGES_BLOB_STS_ENV=test` 时 list / write / delete 全通，改成 `prod` 即复现上述报错。
+
+`buildSandboxMakersEnv` 现在按 `MAKERS_API_ENV` 固定注入这个变量（test → `test`，prod / pre → `prod`），生产也显式写死，不再依赖沙箱 CLI 是为哪个环境构建的。
 
 ---
 

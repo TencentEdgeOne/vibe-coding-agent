@@ -219,5 +219,14 @@ export function buildSandboxMakersEnv(
     // and would send a test credential to a production endpoint.
     ...(endpoint.apiEnv === 'prod' ? {} : { API_ENV: endpoint.apiEnv }),
     ...(endpoint.region ? { EDGEONE_PAGES_API_REGION: endpoint.region } : {}),
+    // A generated project that imports @edgeone/pages-blob trades the API token
+    // for storage credentials on every request, and that exchange is scoped to
+    // this variable. Deploys never perform it — the pipeline substitutes a
+    // credential into the artifact instead — which is why a store that works on
+    // the live site answers CREDENTIAL_ERROR in preview once the two ends
+    // disagree. Unset, the value comes from a constant compiled into the
+    // sandbox CLI, so it is pinned here for production too rather than trusting
+    // whichever environment that CLI happened to be built for.
+    PAGES_BLOB_STS_ENV: endpoint.apiEnv === 'test' ? 'test' : 'prod',
   };
 }

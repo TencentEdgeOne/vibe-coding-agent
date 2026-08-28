@@ -51,9 +51,11 @@ test('production stays on the endpoints both ends already default to', () => {
   assert.deepEqual(buildSandboxMakersEnv({ env: {} }, 'tenant-token'), {
     PAGES_SOURCE: 'skills',
     EDGEONE_PAGES_API_TOKEN: 'tenant-token',
+    PAGES_BLOB_STS_ENV: 'prod',
   });
   assert.deepEqual(buildSandboxMakersEnv({ env: {} }), {
     PAGES_SOURCE: 'skills',
+    PAGES_BLOB_STS_ENV: 'prod',
   });
 });
 
@@ -72,6 +74,7 @@ test('a non-production environment moves the issuer and the sandbox together', (
     EDGEONE_PAGES_API_TOKEN: 'tenant-token',
     API_ENV: 'test',
     EDGEONE_PAGES_API_REGION: 'china',
+    PAGES_BLOB_STS_ENV: 'test',
   });
 
   // Hosts mirror the CLI's own URL tables. A china test credential sent to the
@@ -93,6 +96,25 @@ test('a non-production environment moves the issuer and the sandbox together', (
     }).baseUrl,
     'https://pages-api.cloud.tencent.com/v1',
   );
+});
+
+// A generated store reaches production through a credential baked into the
+// deployed artifact, but reaches preview through a live exchange scoped to
+// PAGES_BLOB_STS_ENV. Leaving that variable to the sandbox CLI's compiled
+// default is what makes a guestbook read fine on the live site and fail in
+// preview with "credential exchange failed (code=-1): Invalid credential".
+test('blob storage credentials follow the same environment as the API', () => {
+  for (const [apiEnv, expected] of [
+    ['test', 'test'],
+    ['pre', 'prod'],
+    ['prod', 'prod'],
+  ] as const) {
+    assert.equal(
+      buildSandboxMakersEnv({ env: { MAKERS_API_ENV: apiEnv } }).PAGES_BLOB_STS_ENV,
+      expected,
+      `MAKERS_API_ENV=${apiEnv} must pin the blob storage environment to ${expected}`,
+    );
+  }
 });
 
 test('unknown environment and region values fail before a token is minted', () => {

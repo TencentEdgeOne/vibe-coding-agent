@@ -3,10 +3,12 @@ import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import {
   buildMakersDeployCommand,
+  describeMakersDeployment,
   formatMakersDeployFailure,
   isMakersDeployUrl,
   parseMakersDeployExitCode,
   parseMakersDeployJson,
+  readMakersDeployOutcome,
   redactSecret,
   shellQuote,
 } from '../shared/makers-deploy.ts';
@@ -94,6 +96,60 @@ test('formatMakersDeployFailure tells the model not to delete other projects', (
   );
   assert.match(message, /exceeds 40 limit/);
   assert.match(message, /Do not delete other Makers projects/);
+});
+
+// The model's command tool and the deploy button both publish. One reading of
+// the CLI output keeps them from disagreeing about whether the site is live.
+test('one reading of the CLI output serves both ways of publishing', () => {
+  const startedAt = 1_700_000_000_000;
+  const success = readMakersDeployOutcome([
+    '[cli] Deploying...',
+    '{"status":"success","url":"https://demo.edgeone.cool/?eo_token=keep-me","projectId":"makers-1","deploymentId":"dp-1"}',
+    'MAKERS_DEPLOY_EXIT:0',
+  ].join('\n'), '', 'keep-me');
+  assert.deepEqual(success, {
+    status: 'success',
+    url: 'https://demo.edgeone.cool/?eo_token=keep-me',
+    projectId: 'makers-1',
+    deploymentId: 'dp-1',
+  });
+  assert.deepEqual(describeMakersDeployment(success, { startedAt, finishedAt: startedAt + 5 }), {
+    status: 'success',
+    startedAt,
+    finishedAt: startedAt + 5,
+    url: 'https://demo.edgeone.cool/?eo_token=keep-me',
+    projectId: 'makers-1',
+    deploymentId: 'dp-1',
+  });
+
+  // A zero exit with an error payload, or a non-zero exit with a success
+  // payload, are both failures: the URL is only trustworthy when they agree.
+  const failed = readMakersDeployOutcome(
+    '{"status":"error","error":"Failed to create pages project"}\nMAKERS_DEPLOY_EXIT:1\n',
+  );
+  assert.deepEqual(failed, {
+    status: 'error',
+    error: 'Failed to create pages project',
+    exitCode: 1,
+  });
+  assert.equal(
+    describeMakersDeployment(failed, { startedAt, finishedAt: startedAt + 5 }).error,
+    'Failed to create pages project',
+  );
+
+  // A missing CLI is an image problem, not something to report as a bad deploy.
+  assert.equal(
+    readMakersDeployOutcome('sh: 1: edgeone: not found\nMAKERS_DEPLOY_EXIT:127\n').status,
+    'cli-missing',
+  );
+
+  // The credential can appear in the log, but never in what is shown back.
+  const leaked = readMakersDeployOutcome(
+    '{"status":"error","error":"token sub-token-value rejected"}\nMAKERS_DEPLOY_EXIT:1\n',
+    '',
+    'sub-token-value',
+  );
+  assert.equal(leaked.status === 'error' && leaked.error.includes('sub-token-value'), false);
 });
 
 // Both CLI commands create the project when the lookup misses, and a tenant

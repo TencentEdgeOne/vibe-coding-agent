@@ -7,7 +7,6 @@ import type {
   BuildStatus,
   DeploymentInfo,
   FileTreeItem,
-  ProjectState,
   ScaffoldLog,
   StreamSend,
 } from '../_types';
@@ -23,6 +22,7 @@ import {
   createProjectCheckpointController,
   extendExistingSandboxTimeout,
   isGenericCompletionReply,
+  previewLinkFromState,
   stripReturnedPreviewLinks,
   utf8ByteLength,
   withLiveDeploymentUrl,
@@ -30,17 +30,6 @@ import {
 import { createTurnLifecycle } from './_turn-lifecycle';
 import { prepareProjectWorkspace } from './_workspace';
 import { isMakersDeployUrl } from '../../shared/makers-deploy';
-
-function previewLinkFromState(state: ProjectState) {
-  if (!state.previewUrl) {
-    return {};
-  }
-  return {
-    url: state.previewUrl,
-    sandboxDebugUrl: state.sandboxDebugUrl,
-    kind: state.previewKind,
-  };
-}
 
 export async function runChatPipeline(
   context: any,

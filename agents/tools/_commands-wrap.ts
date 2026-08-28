@@ -26,8 +26,8 @@ import {
 } from '../../shared/makers-dev.ts';
 import {
   buildMakersDeployCommand,
-  parseMakersDeployJson,
-  parseMakersDeployExitCode,
+  describeMakersDeployment,
+  readMakersDeployOutcome,
   redactSecret,
 } from '../../shared/makers-deploy.ts';
 import {
@@ -381,47 +381,29 @@ export function wrapSandboxTools(
           }
         }
 
-        const parsed = parseMakersDeployJson(makersOutput);
-        const deployExitCode = parseMakersDeployExitCode(makersOutput);
-        if (isEdgeoneCliUnavailable(makersOutput)) {
-          failDeployment(MAKERS_CLI_UNAVAILABLE_MESSAGE);
+        const outcome = readMakersDeployOutcome(makersOutput, '', makers.sandboxToken);
+        if (outcome.status === 'cli-missing') {
+          failDeployment(outcome.error);
           return withMakersCliUnavailableError(result, 'edgeone makers deploy');
         }
-        if (
-          parsed.status !== 'success'
-          || (deployExitCode != null && deployExitCode !== 0)
-        ) {
-          const error = redactSecret(
-            parsed.status === 'error'
-              ? parsed.error
-              : `edgeone makers deploy exited with code ${deployExitCode}.`,
-            makers.sandboxToken,
-          );
-          failDeployment(error);
+        if (outcome.status === 'error') {
+          failDeployment(outcome.error);
           return {
             ...appendText(result, JSON.stringify({
               status: 'error',
-              error,
-              ...(deployExitCode != null ? { exitCode: deployExitCode } : {}),
+              error: outcome.error,
+              ...(outcome.exitCode != null ? { exitCode: outcome.exitCode } : {}),
             })),
             isError: true,
           };
         }
-        updateDeploymentStatus(lifecycle, {
-          status: 'success',
+        updateDeploymentStatus(lifecycle, describeMakersDeployment(outcome, {
           startedAt: deploymentStartedAt,
-          finishedAt: Date.now(),
-          url: parsed.url,
-          ...(parsed.projectId ? { projectId: parsed.projectId } : {}),
-          ...(parsed.deploymentId ? { deploymentId: parsed.deploymentId } : {}),
-          ...(parsed.consoleUrl ? { consoleUrl: parsed.consoleUrl } : {}),
-        });
+        }));
+        const { status: _outcomeStatus, ...published } = outcome;
         return appendText(result, JSON.stringify({
           status: 'published',
-          url: parsed.url,
-          ...(parsed.projectId ? { projectId: parsed.projectId } : {}),
-          ...(parsed.deploymentId ? { deploymentId: parsed.deploymentId } : {}),
-          ...(parsed.consoleUrl ? { consoleUrl: parsed.consoleUrl } : {}),
+          ...published,
         }));
       },
     };

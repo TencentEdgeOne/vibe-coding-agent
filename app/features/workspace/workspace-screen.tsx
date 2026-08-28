@@ -31,9 +31,7 @@ import {
 import { useFileContentCache } from '@/app/hooks/use-file-content-cache';
 import { useTypewriterPlaceholder } from '@/app/hooks/use-typewriter-placeholder';
 import {
-  CLAIM_DEPLOY_ENABLED,
   TENCENT_CLOUD_CONTACT_URL,
-  TENCENT_CLOUD_DEPLOY_URL,
   base64ToBlob,
   cacheConversationId,
   clearCachedConversationId,
@@ -42,7 +40,6 @@ import {
   downloadTextFile,
   extractProjectName,
   getContactUrl,
-  getDeployUrl,
   getOrCreateCachedConversationId,
   getStoredConversationId,
   sanitizeThinkingContent,
@@ -109,7 +106,6 @@ function isSamePreviewTarget(a: string, b: string) {
 
 export function WorkspaceScreen() {
   const [language, setLanguage] = useState<Locale>('zh');
-  const [deployUrl, setDeployUrl] = useState(TENCENT_CLOUD_DEPLOY_URL);
   const [contactUrl, setContactUrl] = useState(TENCENT_CLOUD_CONTACT_URL);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -210,6 +206,15 @@ export function WorkspaceScreen() {
     || Boolean(deployment)
     || Boolean(build)
     || workspaceRestoring;
+  // Publishing needs a finished project and an idle sandbox. The download link
+  // is what says the project exists as files rather than as a half-written
+  // turn, and it survives a refresh the same way the Files panel does.
+  const hasDeployableProject = Boolean(download?.url);
+  const deployRunning = loading || deployment?.status === 'running';
+  const canDeployProject = hasDeployableProject && !deployRunning && !workspaceRestoring;
+  const deployHint = hasDeployableProject
+    ? (canDeployProject ? t.deployLabel : t.workspace.deployNeedsIdle)
+    : t.workspace.deployNeedsProject;
   // Address bar shows the preview's current route once the injected tracker
   // reports it; before that it falls back to a bare root path so the sandbox
   // host is never shown.
@@ -255,7 +260,6 @@ export function WorkspaceScreen() {
 
   useEffect(() => {
     const { domain } = extractProjectName();
-    setDeployUrl(getDeployUrl(domain));
     setContactUrl(getContactUrl(domain));
   }, []);
 
@@ -1115,13 +1119,16 @@ export function WorkspaceScreen() {
 
   attachChatStreamRef.current = attachChatStream;
 
-  async function sendMessage(message: string) {
+  async function sendMessage(message: string, options: { intent?: 'deploy' } = {}) {
     const trimmed = message.trim();
     if (!trimmed || loading) {
       return;
     }
 
-    const isStartingFromHome = !hasWorkspace;
+    // Publishing acts on the project that is already here: it never starts a
+    // workspace, never clears what the user is typing, and touches no files.
+    const isDeploy = options.intent === 'deploy';
+    const isStartingFromHome = !isDeploy && !hasWorkspace;
     const requestConversationId = isStartingFromHome
       ? createConversationId()
       : conversationId || getOrCreateCachedConversationId();
@@ -1169,8 +1176,10 @@ export function WorkspaceScreen() {
         status: 'running',
       },
     ]);
-    setFilesRefreshing(true);
-    setInput('');
+    if (!isDeploy) {
+      setFilesRefreshing(true);
+      setInput('');
+    }
     setLoading(true);
 
     try {
@@ -1184,6 +1193,7 @@ export function WorkspaceScreen() {
         message: trimmed,
         turnId: assistantMessageId,
         resetProject: isStartingFromHome,
+        ...(options.intent ? { intent: options.intent } : {}),
         signal: requestAbortController.signal,
       });
       await attachChatStream({
@@ -1328,10 +1338,11 @@ export function WorkspaceScreen() {
     }
   }
 
-  // Placeholder for "claim deployment" (plan §3.1). Until the platform drop/claim API
-  // is ready, this opens the EdgeOne console (plan's option A: finish the claim there).
-  function handleClaimDeploy() {
-    window.open(deployUrl, '_blank', 'noreferrer');
+  function handleDeployProject() {
+    if (!canDeployProject) {
+      return;
+    }
+    void sendMessage(t.workspace.deployRequest, { intent: 'deploy' });
   }
 
   function handleRefreshPreview() {
@@ -1474,13 +1485,15 @@ export function WorkspaceScreen() {
         canDownload={Boolean(download?.url)}
         downloadBusy={downloadBusy}
         contactUrl={contactUrl}
-        showDeploy={CLAIM_DEPLOY_ENABLED}
+        canDeploy={canDeployProject}
+        deployBusy={deployment?.status === 'running'}
+        deployHint={deployHint}
         showExportTranscript={process.env.NODE_ENV === 'development'}
         canExportTranscript={Boolean(conversationId) && messages.length > 0}
         onLanguageChange={setLanguage}
         onDownload={() => void handleDownload()}
-        onNewProject={handleNewProject}
-        onDeploy={handleClaimDeploy}
+        onBack={handleNewProject}
+        onDeploy={handleDeployProject}
         onExportTranscript={handleExportTranscript}
       />
       <Dialog open={newProjectConfirmOpen} onOpenChange={setNewProjectConfirmOpen}>

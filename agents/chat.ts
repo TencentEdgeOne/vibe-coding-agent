@@ -2,11 +2,16 @@ import {
   createChatTaskAndStreamResponse,
   createChatTaskStreamResponse,
 } from './_chat-tasks';
+import { DEFAULT_DEPLOY_REQUEST } from './_pipelines';
 
 /** Create a durable task and stream it over the same HTTP request. */
 export async function onRequestPost(context: any) {
   const body = context?.request?.body || {};
-  const message = String(body?.message || '').trim();
+  // Publishing runs in the same slot and streams over the same connection as a
+  // generation, so a GET reconnect after refresh needs no separate route.
+  const intent = body?.intent === 'deploy' ? 'deploy' as const : 'chat' as const;
+  const message = String(body?.message || '').trim()
+    || (intent === 'deploy' ? DEFAULT_DEPLOY_REQUEST : '');
   if (!message) {
     return new Response(JSON.stringify({
       ok: false,
@@ -19,6 +24,7 @@ export async function onRequestPost(context: any) {
 
   try {
     return await createChatTaskAndStreamResponse(context, message, {
+      intent,
       resetProject: body?.resetProject === true,
       turnId: String(body?.turnId || '').trim() || undefined,
     });

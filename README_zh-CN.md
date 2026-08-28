@@ -14,6 +14,7 @@ Web Dev Agent 可以把自然语言需求转换为可运行的 Web 项目。每�
 - **适配 Makers 的生成** — 静态站、Cloud Functions、Edge Functions、`agents/` AI 接口等可在 Makers 本地预览的布局
 - **Claude Agent SDK 循环** — 使用 EdgeOne 沙箱 MCP 工具、内置 Makers skills 和受限工具集运行模型
 - **实时预览** — 在沙箱内启动 `edgeone makers dev`，并把该 URL 展示在右侧面板（不是云端 `makers deploy`）
+- **一键部署** — 项目生成完成后，右上角按钮不经过模型直接执行 `edgeone makers deploy`，线上地址进入与模型部署同一条部署状态
 - **Makers 语义代码视图** — 为 `agents/`、Cloud/Edge Functions、中间件和 `edgeone.json` 标注能力徽标与推导路由
 - **验证反馈** — 执行 skills 驱动的 Makers 兼容性 lint、构建或 Python 编译检查，失败时尝试一轮自动修复
 

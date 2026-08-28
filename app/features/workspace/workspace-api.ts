@@ -57,6 +57,8 @@ export function startChatTask(options: {
   message: string;
   turnId: string;
   resetProject: boolean;
+  /** 'deploy' publishes the current project instead of running the model. */
+  intent?: 'deploy';
   signal?: AbortSignal;
 }) {
   return fetch('/chat', {
@@ -66,6 +68,7 @@ export function startChatTask(options: {
       message: options.message,
       turnId: options.turnId,
       ...(options.resetProject ? { resetProject: true } : {}),
+      ...(options.intent ? { intent: options.intent } : {}),
     }),
     signal: options.signal,
   });
