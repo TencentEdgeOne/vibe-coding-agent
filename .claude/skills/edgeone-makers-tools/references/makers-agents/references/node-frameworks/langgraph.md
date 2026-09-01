@@ -17,9 +17,20 @@
 
 ## Dependencies
 
-```bash
-npm install @langchain/langgraph @langchain/openai @langchain/core zod
+Copy this `dependencies` block into `package.json` as written, then run `npm install`:
+
+```json
+{
+  "dependencies": {
+    "@langchain/langgraph": "^1.4.0",
+    "@langchain/core": "^1.2.9",
+    "@langchain/openai": ">=1.5.0 <1.5.9",
+    "zod": "^3.25.76"
+  }
+}
 ```
+
+> **Do not widen these ranges to `latest`.** `@langchain/langgraph` requires `@langchain/core@^1.1.48` as a peer, so an older `@langchain/core` (the widely-known `0.3.x` line) fails resolution with `ERESOLVE`. The `@langchain/openai` cap keeps the tree on `openai@6.x`; from `@langchain/openai@1.5.9` onward it pulls `openai@7`, which declares `engines.node >= 22` and does not match the Node 20.x runtime.
 
 `edgeone.json`:
 ```json

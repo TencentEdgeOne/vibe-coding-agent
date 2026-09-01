@@ -1,8 +1,8 @@
 import {
   createChatTaskAndStreamResponse,
   createChatTaskStreamResponse,
-} from './_chat-tasks';
-import { DEFAULT_DEPLOY_REQUEST } from './_pipelines';
+} from './_chat-tasks.ts';
+import { DEFAULT_DEPLOY_REQUEST } from './_pipelines.ts';
 
 /** Create a durable task and stream it over the same HTTP request. */
 export async function onRequestPost(context: any) {

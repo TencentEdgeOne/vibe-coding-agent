@@ -1,12 +1,12 @@
-import { runChatPipeline, runDeployPipeline } from './_pipelines';
+import { runChatPipeline, runDeployPipeline } from './_pipelines.ts';
 import {
   appendTurn,
   getChatTask,
   saveChatTask,
-} from './_memory';
-import type { ChatTask, ChatTaskIntent, ChatTaskStatus, StreamSend } from './_types';
-import { createSSEResponse, sseEvent } from './_shared';
-import { resolveConversationId } from './utils/_request';
+} from './_memory.ts';
+import type { ChatTask, ChatTaskIntent, ChatTaskStatus, StreamSend } from './_types.ts';
+import { createSSEResponse, sseEvent } from './_shared.ts';
+import { resolveConversationId } from './utils/_request.ts';
 
 type TaskEvent = Record<string, unknown>;
 

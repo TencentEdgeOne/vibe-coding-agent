@@ -1,14 +1,14 @@
-import { HISTORY_FETCH_LIMIT } from './_constants';
-import { createProjectState } from './_project';
+import { HISTORY_FETCH_LIMIT } from './_constants.ts';
+import { createProjectState } from './_project.ts';
 import type {
   ChatTask,
   ConversationMessage,
   PersistedActivityTurn,
   LegacyProjectSnapshot,
   ProjectState,
-} from './_types';
-import { sanitizeAssistantText } from './utils/_text';
-import { appendTrimmedActivityTurn, dedupeActivityTurns } from './utils/_activity';
+} from './_types.ts';
+import { sanitizeAssistantText } from './utils/_text.ts';
+import { appendTrimmedActivityTurn, dedupeActivityTurns } from './utils/_activity.ts';
 
 export async function getHistory(
   context: any,

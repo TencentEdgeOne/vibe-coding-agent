@@ -1,7 +1,7 @@
-import { clearLegacyProjectSnapshot, getLegacyProjectSnapshot } from '../_memory';
-import type { ProjectState } from '../_types';
-import { restoreProjectArchive } from './_archive';
-import { runSandboxCommand } from './_commands';
+import { clearLegacyProjectSnapshot, getLegacyProjectSnapshot } from '../_memory.ts';
+import type { ProjectState } from '../_types.ts';
+import { restoreProjectArchive } from './_archive.ts';
+import { runSandboxCommand } from './_commands.ts';
 
 export async function restorePersistedProject(
   context: any,

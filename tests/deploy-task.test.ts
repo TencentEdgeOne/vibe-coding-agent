@@ -30,7 +30,7 @@ test('the deploy pipeline publishes without the model in the loop', async () => 
   assert.match(pipeline, /readMakersDeployOutcome\(stdout, stderr, sandboxToken\)/);
   // Same short-lived tenant credential as every other sandbox CLI call.
   assert.match(pipeline, /resolveSandboxMakersToken\(/);
-  assert.match(pipeline, /buildSandboxMakersEnv\(context, sandboxToken\)/);
+  assert.match(pipeline, /buildSandboxMakersEnv\(sandboxToken\)/);
   // Nothing to publish is answered before the CLI is ever started.
   assert.match(pipeline, /if \(!files\.some\(\(item\) => item\.type === 'file'\)\)/);
   // The live URL is the deliverable, so the reply carries it in full.
@@ -70,6 +70,39 @@ test('the deploy button is disabled until a project exists and nothing is runnin
   // A disabled button that says nothing is a dead end; the hint names what is
   // still missing, and stands down once the button works.
   assert.match(header, /data-hint=\{canDeploy \? undefined : deployHint\}/);
+});
+
+// Resume hands back whatever deployment the stored conversation carries, so the
+// card has to follow the payload down as well as up. While every handler only set
+// it on presence, a URL published in an earlier session stayed on screen through a
+// session that never published anything.
+test('resumed history decides the deployment card, including when there is none', async () => {
+  const screen = await readFile('app/features/workspace/workspace-screen.tsx', 'utf8');
+  const start = screen.indexOf('const applyHistory = (data: ResumeData) => {');
+  const body = screen.slice(start, screen.indexOf('const applyWorkspace = (data: ResumeData) => {', start));
+
+  assert.ok(start >= 0 && body.length > 0);
+  assert.match(body, /setDeployment\(data\.deployment \?\? null\)/);
+  assert.doesNotMatch(body, /if \(data\.deployment\) \{\s*setDeployment/);
+});
+
+// The same stale card from the other direction: a resume already streaming when
+// the user starts a new project used to keep applying its events, restoring the
+// previous conversation — id, history and deployment — over the fresh one.
+test('starting a new project stops the resume that was already in flight', async () => {
+  const screen = await readFile('app/features/workspace/workspace-screen.tsx', 'utf8');
+  const reset = screen.slice(
+    screen.indexOf('function startNewProject() {'),
+    screen.indexOf('function handleNewProject() {'),
+  );
+
+  assert.ok(reset.length > 0);
+  assert.match(reset, /resumeAbortControllerRef\.current\?\.abort\(\)/);
+  // Aborting only stops the fetch; events already in hand still need the epoch.
+  assert.match(
+    screen,
+    /if \(cancelled \|\| workspaceEpoch !== workspaceEpochRef\.current \|\| event\.type === 'ping'\) return;/,
+  );
 });
 
 // The composer is a text field the user may be mid-sentence in, and the Files

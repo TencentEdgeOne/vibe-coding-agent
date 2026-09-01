@@ -2,12 +2,12 @@ import {
   getActivityHistory,
   getChatTask,
   getHistory,
-} from '../_memory';
+} from '../_memory.ts';
 import {
   conversationExportFilename,
   buildTranscriptJsonl,
-} from '../../shared/conversation-export';
-import { resolveConversationIdPreferQuery } from '../utils/_request';
+} from '../../shared/conversation-export.ts';
+import { resolveConversationIdPreferQuery } from '../utils/_request.ts';
 
 export async function runTranscriptPipeline(context: any): Promise<Response> {
   const { conversationId } = resolveConversationIdPreferQuery(context);

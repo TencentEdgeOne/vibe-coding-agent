@@ -1,12 +1,8 @@
-import type { BuildResult, BuildStatus, ProjectState, ScaffoldLog } from '../_types';
-import { debugLog } from '../utils/_debug';
-import { detectFatalToolError } from '../utils/_text';
-import { runCommandCapturingExit, runSandboxCommand } from './_commands';
-import { runMakersCompatibilityCheck } from './_makers-compat';
-
-function shellQuote(value: string) {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-}
+import type { BuildResult, BuildStatus, ProjectState, ScaffoldLog } from '../_types.ts';
+import { detectFatalToolError } from '../utils/_text.ts';
+import { runCommandCapturingExit, runSandboxCommand } from './_commands.ts';
+import { runMakersCompatibilityCheck } from './_makers-compat.ts';
+import { shellQuote } from '../../shared/shell.ts';
 
 // Models used to pass `${appDir}/file` into write_project_file, which joined
 // appDir again and created appDir/appDir/... . Lift that nested tree back to
@@ -52,11 +48,6 @@ export async function repairNestedAppDirLayout(
   );
 
   if (result.exitCode !== 0) {
-    debugLog(context, '[nested-appdir-repair]', {
-      ok: false,
-      stderr: result.stderr,
-      stdout: result.stdout,
-    });
     return false;
   }
 
@@ -98,8 +89,6 @@ export async function ensureProjectScaffold(
   if (existing.exitCode !== 0) {
     throw new Error(existing.stderr || existing.stdout || 'Workspace inspection failed.');
   }
-  debugLog(context, '[sandbox-info]', { available: Boolean(context.sandbox.getInfo()) });
-
   // One conversation_id maps to one long-lived project. Reuse existing business
   // files without overwriting them.
   if (existing.stdout.trim()) {

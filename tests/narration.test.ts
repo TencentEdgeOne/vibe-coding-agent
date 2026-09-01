@@ -102,9 +102,9 @@ test('assistant replay after tool reset does not re-emit the same trailing block
 // to, and a deploy URL one character short still looks like a deploy URL.
 test('a delta that repeats the preceding characters is still text', () => {
   let state = emptyState();
-  const url = 'https://vibe-coding-e2b8952eaf-yy3vnimd.test-global.qcdntest.cn?eo_token=7d44f02fce5648fdb18832f92dbd1caa';
+  const url = 'https://demo-preview-yy3vnimd.example.com?eo_token=example-token-aa';
 
-  for (const delta of ['站点已上线。', 'https://vibe-coding-e2b8952eaf-y', 'y', '3vnimd', '.test-global.qcdntest.cn?eo_token=7d44f02fce5648fdb18832f92dbd1ca', 'a']) {
+  for (const delta of ['站点已上线。', 'https://demo-preview-y', 'y', '3vnimd', '.example.com?eo_token=example-token-a', 'a']) {
     const out = apply(state, delta);
     assert.equal(out.text, delta, `dropped delta ${JSON.stringify(delta)}`);
     state = out.state;

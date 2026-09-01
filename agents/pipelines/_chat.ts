@@ -1,7 +1,7 @@
-import { runCodingAgent } from '../_agent';
-import { AUTO_FIX_MAX_ATTEMPTS } from '../_constants';
-import { getHistory, saveProjectState } from '../_memory';
-import { getFileTree, runVerification } from '../_project';
+import { runCodingAgent } from '../_agent.ts';
+import { AUTO_FIX_MAX_ATTEMPTS } from '../_constants.ts';
+import { getHistory, saveProjectState } from '../_memory.ts';
+import { getFileTree, runVerification } from '../_project.ts';
 import type {
   AgentProgressEvent,
   BuildStatus,
@@ -9,11 +9,11 @@ import type {
   FileTreeItem,
   ScaffoldLog,
   StreamSend,
-} from '../_types';
-import { buildAutoFixPrompt } from '../utils/_build-errors';
-import { toAppRelPath } from '../utils/_paths';
-import { sanitizeAssistantText } from '../utils/_text';
-import { resolveConversationId } from '../utils/_request';
+} from '../_types.ts';
+import { buildAutoFixPrompt } from '../utils/_build-errors.ts';
+import { toAppRelPath } from '../utils/_paths.ts';
+import { sanitizeAssistantText } from '../utils/_text.ts';
+import { resolveConversationId } from '../utils/_request.ts';
 import {
   FILE_PUSH_MAX_BYTES,
   FILE_PUSH_TURN_BUDGET_BYTES,
@@ -26,10 +26,10 @@ import {
   stripReturnedPreviewLinks,
   utf8ByteLength,
   withLiveDeploymentUrl,
-} from './_helpers';
-import { createTurnLifecycle } from './_turn-lifecycle';
-import { prepareProjectWorkspace } from './_workspace';
-import { isMakersDeployUrl } from '../../shared/makers-deploy';
+} from './_helpers.ts';
+import { createTurnLifecycle } from './_turn-lifecycle.ts';
+import { prepareProjectWorkspace } from './_workspace.ts';
+import { isMakersDeployUrl } from '../../shared/makers-deploy.ts';
 
 export async function runChatPipeline(
   context: any,

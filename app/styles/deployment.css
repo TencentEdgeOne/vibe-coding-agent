@@ -117,20 +117,6 @@
   white-space: nowrap;
 }
 
-.workspace-deployment-progress {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--warn);
-  font-size: var(--fs-2xs);
-  line-height: 15px;
-}
-
-.workspace-deployment-progress svg {
-  width: 11px;
-  height: 11px;
-}
-
 .workspace-deployment-actions {
   display: flex;
   align-items: center;

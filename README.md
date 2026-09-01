@@ -1,4 +1,4 @@
-# Web Dev Agent
+# Vibe Coding Agent CLI
 
 > A sandbox-based web development agent built with the Claude Agent SDK on EdgeOne Makers.
 
@@ -8,7 +8,13 @@
 
 ## Overview
 
-Web Dev Agent turns natural-language requests into runnable web projects. For each conversation, it prepares an isolated temporary sandbox workspace where it creates or edits project files, installs dependencies, publishes a live preview, and feeds verification results back into the agent loop. Use it for coding-style Makers templates where users need a generated app, a visible preview, and a file browser in one workflow.
+> **Which Vibe Coding template is this?** This one drives the EdgeOne CLI from inside the
+> sandbox, so a generated project gets a live in-sandbox preview (`edgeone makers dev`) and
+> deploys with `edgeone makers deploy`. The sibling template deploys through the Makers SDK
+> from outside the sandbox and has no sandbox preview. Pick this one if you want users to see
+> the generated app running before it goes live.
+
+Vibe Coding Agent CLI turns natural-language requests into runnable web projects. For each conversation, it prepares an isolated temporary sandbox workspace where it creates or edits project files, installs dependencies, publishes a live preview, and feeds verification results back into the agent loop. Use it for coding-style Makers templates where users need a generated app, a visible preview, and a file browser in one workflow.
 
 - **Temporary sandbox workspace** — creates and edits project code inside the current conversation's temporary sandbox
 - **Makers-compatible generation** — static sites, Cloud Functions, Edge Functions, AI agent endpoints under `agents/`, and similar layouts that Makers can preview locally
@@ -25,12 +31,9 @@ Web Dev Agent turns natural-language requests into runnable web projects. For ea
 | `AI_GATEWAY_API_KEY` | Yes | Model gateway API key. Use your Makers Models API Key, or any OpenAI-compatible provider key. |
 | `AI_GATEWAY_BASE_URL` | Yes | Gateway base URL. For Makers Models, use `https://ai-gateway.edgeone.link/v1`. |
 | `AI_GATEWAY_MODEL` | No | Model ID. Defaults to `@makers/deepseek-v4-flash` (a built-in Makers model). |
-| `WEB_DEV_AGENT_DEBUG` | No | Set to `true` or `1` to enable redacted server-side debug logs. Defaults to off. |
 | `EDGEONE_PAGES_API_TOKEN` | No | Main Makers API token. It stays in the Agent Runtime and mints a per-project temporary tenant token that is injected into direct sandbox CLI calls. Needed for live deploys and credentialed local backends such as Blob. Do not commit it. |
 | `MAKERS_SUB_TOKEN_TTL_SECONDS` | No | Temporary tenant-token lifetime. Defaults to `3600`; accepted range is 900–86400 seconds. |
 | `MAKERS_DEPLOY_PROJECT_NAME` | No | Pins every conversation to one Makers project. Leave unset: preview and deploy then use a project derived from the conversation, so later turns reach the same site and two users never collide over one name. |
-| `MAKERS_API_ENV` | No | Makers deployment the token belongs to: `prod` (default), `pre`, or `test`. One switch drives both the token issuer and the sandbox CLI, so the credential is always verified by the environment that minted it. |
-| `MAKERS_API_REGION` | No | Region of that deployment: `china` (default) or `global`. Production tokens resolve their own region, so this only matters for `pre` and `test`. |
 
 This template follows the OpenAI-compatible standard — point these at Makers Models or any compatible provider.
 
@@ -61,35 +64,50 @@ The agent prefers `AI_GATEWAY_*` variables. It also accepts Anthropic-compatible
 
 ## Local Development
 
-**Prerequisites:** Node.js, npm
+**Prerequisites:** Node.js, npm, and the EdgeOne CLI (`npm install -g edgeone`).
 
 ```bash
 npm install
-cp .env.example .env
-edgeone makers dev
+cp .env.example .env    # then fill in AI_GATEWAY_API_KEY
+edgeone makers dev      # serves the app on http://localhost:8088
 ```
 
-Open `http://localhost:8088/agent-metrics` for the local observability panel.
+`edgeone login` is only needed when the generated project uses a credentialed backend
+such as Blob; a purely static preview runs without signing in.
+
+Open `http://localhost:8088/agent-metrics` for the local observability panel the CLI serves.
+
+Run `npm test` for the test suite and `npm run typecheck` before sending a change.
 
 ## Project Structure
 
 ```text
-web-dev-agent/
 ├── app/                    # Next.js frontend UI
 │   ├── layout.tsx          # App metadata and root layout
-│   ├── page.tsx            # Chat, progress, preview, and file browser UI
-│   └── globals.css         # Global styles
-├── agents/                 # EdgeOne Makers agent routes and pipeline
+│   ├── page.tsx            # Entry screen
+│   ├── i18n.ts             # UI copy, Chinese and English
+│   ├── features/           # Workspace: chat, progress, preview, file browser
+│   ├── components/         # Shared feature components
+│   ├── hooks/ lib/ types/  # Frontend helpers
+│   └── globals.css styles/ # Styles
+├── agents/                 # EdgeOne Makers agent routes and pipelines
 │   ├── chat.ts             # POST /chat: create + stream; GET /chat: reconnect
-│   ├── file.ts             # /file route
+│   ├── resume.ts           # /resume: restore a conversation on reload
+│   ├── stop.ts             # /stop: cancel the running turn
+│   ├── file.ts             # /file: read one project file
+│   ├── status.ts download.ts transcript.ts
 │   ├── _agent.ts           # Claude Agent SDK integration
 │   ├── _constants.ts       # Runtime constants
 │   ├── _memory.ts          # Conversation history and project state
-│   ├── _pipelines.ts       # Chat and file-read pipelines
-│   ├── _project.ts         # Sandbox project, preview, and verification helpers
+│   ├── _prompt.ts          # System prompt
 │   ├── _types.ts           # Shared TypeScript types
+│   ├── pipelines/          # Chat, deploy, resume, and file-read pipelines
+│   ├── project/            # Sandbox project, preview, deploy, verification
 │   ├── tools/              # Custom scaffold/write tools and direct CLI lifecycle observer
-│   └── utils/              # Path, text, and build-error helpers
+│   └── utils/              # Path, text, narration, and build-error helpers
+├── shared/                 # Helpers used by both app/ and agents/
+├── components/ lib/        # UI primitives and utilities
+├── tests/                  # node:test suites, run with npm test
 ├── .claude/skills/         # Vendored, sandbox-adapted Makers skills
 ├── edgeone.json            # Agent runtime configuration
 ├── next.config.ts          # Next.js configuration for the template app
@@ -121,4 +139,4 @@ The file route is `/file?path=<relative-path>` and uses the same conversation co
 
 ## License
 
-MIT
+MIT — see [LICENSE](./LICENSE).

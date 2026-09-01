@@ -1,15 +1,12 @@
 import {
   ARCHIVE_EXCLUDED_DIRECTORIES,
   DOWNLOAD_ARCHIVE_MAX_BYTES,
-} from '../_constants';
-import type { LegacyProjectSnapshot, ProjectState } from '../_types';
-import { safeSegment } from '../utils/_paths';
-import { runSandboxCommand } from './_commands';
-import { assertResettableProjectPath } from './_state';
-
-function shellQuote(value: string) {
-  return `'${value.replace(/'/g, "'\\''")}'`;
-}
+} from '../_constants.ts';
+import type { LegacyProjectSnapshot, ProjectState } from '../_types.ts';
+import { safeSegment } from '../utils/_paths.ts';
+import { runSandboxCommand } from './_commands.ts';
+import { assertResettableProjectPath } from './_state.ts';
+import { shellQuote } from '../../shared/shell.ts';
 
 type ProjectArchiveResult =
   | {

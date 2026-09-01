@@ -5,7 +5,7 @@ import {
   getLegacyProjectSnapshot,
   getProjectState,
   saveProjectState,
-} from '../_memory';
+} from '../_memory.ts';
 import {
   assertPreviewServerReady,
   getFileTree,
@@ -15,14 +15,14 @@ import {
   runSandboxCommand,
   separateLegacyMakersDeployment,
   startPreviewServer,
-} from '../_project';
-import type { FileTreeItem, PersistedActivity, PersistedActivityTurn, ProjectState } from '../_types';
-import { createSSEResponse, sseEvent } from '../_shared';
-import { isMakersDeployUrl } from '../../shared/makers-deploy';
-import { isMakersDeployCommand, isMakersDevCommand } from '../../shared/tool-phase';
-import { getRequestQueryParam, resolveConversationId } from '../utils/_request';
-import { ensureProjectDependencies, withTimeout } from './_helpers';
-import { loadResumeFileContents } from './_resume-files';
+} from '../_project.ts';
+import type { FileTreeItem, PersistedActivity, PersistedActivityTurn, ProjectState } from '../_types.ts';
+import { createSSEResponse, sseEvent } from '../_shared.ts';
+import { isMakersDeployUrl } from '../../shared/makers-deploy.ts';
+import { isMakersDeployCommand, isMakersDevCommand } from '../../shared/tool-phase.ts';
+import { getRequestQueryParam, resolveConversationId } from '../utils/_request.ts';
+import { ensureProjectDependencies, withTimeout } from './_helpers.ts';
+import { loadResumeFileContents } from './_resume-files.ts';
 
 function isMakersPreviewState(state: ProjectState) {
   return state.previewKind === 'makers' || isMakersDeployUrl(state.previewUrl);

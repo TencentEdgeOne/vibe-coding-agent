@@ -1,12 +1,12 @@
-import { clearLegacyProjectSnapshot, getProjectState } from '../_memory';
+import { clearLegacyProjectSnapshot, getProjectState } from '../_memory.ts';
 import {
   createProjectState,
   getFileTree,
   resetProjectWorkspace,
   restorePersistedProject,
   separateLegacyMakersDeployment,
-} from '../_project';
-import type { ProjectState, StreamSend } from '../_types';
+} from '../_project.ts';
+import type { ProjectState, StreamSend } from '../_types.ts';
 
 /** Restore or reset the volatile sandbox before an agent turn starts. */
 export async function prepareProjectWorkspace(

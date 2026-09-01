@@ -2,7 +2,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { tool as defineClaudeTool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import type { ClaudeMcpTool } from '../_types';
+import type { ClaudeMcpTool } from '../_types.ts';
 
 export const MAKERS_REFERENCE_SKILL_NAMES = [
   'makers-agents',

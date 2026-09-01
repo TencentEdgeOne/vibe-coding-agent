@@ -2,9 +2,9 @@ import {
   BLOCKED_PROJECT_WRITE_EXTENSIONS,
   BLOCKED_PROJECT_WRITE_FILENAMES,
   BLOCKED_PROJECT_WRITE_SEGMENTS,
-} from '../_constants';
+} from '../_constants.ts';
 
-export { normalizeRelPath, toAppRelPath } from './_relpath';
+export { normalizeRelPath, toAppRelPath } from './_relpath.ts';
 
 // Normalize conversation IDs before using them in sandbox paths so paths remain
 // stable across runtime environments.

@@ -1,6 +1,5 @@
-import { runSandboxCommand } from '../_project';
-import type { ProjectState } from '../_types';
-import { debugLog } from '../utils/_debug';
+import { runSandboxCommand } from '../_project.ts';
+import type { ProjectState } from '../_types.ts';
 export {
   compactUserFacingReply,
   withLiveDeploymentUrl,
@@ -142,10 +141,6 @@ export async function extendExistingSandboxTimeout(context: any) {
 
   try {
     await sandbox.extendTimeout(SANDBOX_EXTENSION_SECONDS);
-    debugLog(context, '[sandbox]', {
-      stage: 'extend-timeout',
-      seconds: SANDBOX_EXTENSION_SECONDS,
-    });
   } catch (error) {
     console.warn('[sandbox]', {
       stage: 'extend-timeout-failed',
@@ -166,7 +161,10 @@ export async function persistProjectSnapshot(
     await context.sandbox.persist({ path: state.appDir });
     return true;
   } catch (error) {
-    debugLog(context, '[snapshot]', {
+    // Losing a snapshot silently means the next resume rebuilds from an older
+    // workspace with nothing to explain the gap.
+    console.warn('[snapshot]', {
+      stage: 'persist-failed',
       conversationIdPresent: Boolean(conversationId),
       message: error instanceof Error ? error.message : String(error),
     });
@@ -209,7 +207,8 @@ export function createProjectCheckpointController(
         }
       })
       .catch((error) => {
-        debugLog(context, '[checkpoint]', {
+        console.warn('[checkpoint]', {
+          stage: 'persist-failed',
           message: error instanceof Error ? error.message : String(error),
         });
       });

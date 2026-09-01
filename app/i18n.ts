@@ -2,7 +2,7 @@
 
 export type Locale = 'zh' | 'en';
 
-export const LANGUAGE_STORAGE_KEY = 'web-dev-agent-language';
+export const LANGUAGE_STORAGE_KEY = 'vibe-coding-agent-cli-language';
 
 export type HomeFeatureIcon = 'agent' | 'functions' | 'storage' | 'build';
 

@@ -1,6 +1,6 @@
-import { getProjectState } from '../_memory';
-import { readFileFromSandbox } from '../_project';
-import type { FileTreeItem } from '../_types';
+import { getProjectState } from '../_memory.ts';
+import { readFileFromSandbox } from '../_project.ts';
+import type { FileTreeItem } from '../_types.ts';
 import { selectResumeCacheFiles } from '../../shared/resume-file-cache.ts';
 
 const RESUME_FILE_READ_BATCH_SIZE = 12;

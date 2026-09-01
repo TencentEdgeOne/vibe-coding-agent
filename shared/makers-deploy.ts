@@ -4,6 +4,7 @@
  */
 
 import type { DeploymentInfo } from './protocol.ts';
+import { shellQuote } from './shell.ts';
 import { MAKERS_CLI_UNAVAILABLE_MESSAGE, isEdgeoneCliUnavailable } from './tool-phase.ts';
 
 export function buildMakersDeployCommand(projectName: string, requestedCommand = '') {
@@ -207,6 +208,3 @@ export function redactSecret(text: string, secret: string) {
   return text.split(secret).join('[redacted]');
 }
 
-export function shellQuote(value: string) {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-}

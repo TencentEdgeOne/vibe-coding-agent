@@ -7,6 +7,7 @@ import {
   buildPreviewProxyScript,
   parseMakersDevExitCode,
   previewCanonicalRedirect,
+  previewProxyRevision,
   rewritePreviewProxyPath,
 } from '../shared/makers-dev.ts';
 import {
@@ -79,6 +80,54 @@ test('preview proxy strips the prefix and forwards HTTP and WebSocket upgrades',
   assert.match(script, /function rewritePath/);
   assert.match(script, /x-edgeone-preview-proxy/);
   assert.doesNotThrow(() => new Function(script));
+});
+
+// makers dev forwards to its function runtime through http-proxy with xfwd,
+// which appends to x-forwarded-proto instead of replacing it. Passing the
+// gateway's value through makes the runtime build "http,http://host/path",
+// throw ERR_INVALID_URL, and then fail again inside its own error handler, so
+// no response is ever written: the preview hangs while a direct curl (which
+// sends no such header) still answers 200.
+test('the preview proxy does not forward the gateway x-forwarded-proto', () => {
+  const script = buildPreviewProxyScript(
+    PREVIEW_SERVER_PORT,
+    MAKERS_DEV_PORT,
+    PREVIEW_PATH_PREFIX,
+  );
+  assert.match(script, /delete headers\['x-forwarded-proto'\]/);
+  // Both the HTTP and the WebSocket upgrade path have to be sanitized.
+  assert.equal(script.match(/const headers = forwardHeaders\(req\);/g)?.length, 2);
+  assert.doesNotThrow(() => new Function(script));
+});
+
+// Nothing else notices a stale proxy: it passes every health probe while still
+// mangling requests, and the warm path reuses it because it is healthy. Without
+// this the fix above would never reach a sandbox that is already running one.
+test('a preview proxy from an older agent is replaced rather than reused', () => {
+  const revision = previewProxyRevision(
+    PREVIEW_SERVER_PORT,
+    MAKERS_DEV_PORT,
+    PREVIEW_PATH_PREFIX,
+  );
+  const script = buildPreviewProxyScript(
+    PREVIEW_SERVER_PORT,
+    MAKERS_DEV_PORT,
+    PREVIEW_PATH_PREFIX,
+  );
+  assert.match(script, new RegExp(`'x-edgeone-preview-proxy': '${revision}'`));
+
+  const command = buildMakersDevBackgroundCommand({
+    makersPort: MAKERS_DEV_PORT,
+    previewPort: PREVIEW_SERVER_PORT,
+    previewPath: PREVIEW_PATH_PREFIX,
+    projectName: 'vibe-coding-playground',
+  });
+  assert.match(command, new RegExp(`x-edgeone-preview-proxy: ${revision}`));
+
+  // The revision has to follow the script, or the check passes on a proxy the
+  // agent would no longer write.
+  const changed = previewProxyRevision(PREVIEW_SERVER_PORT, MAKERS_DEV_PORT, '/other');
+  assert.notEqual(changed, revision);
 });
 
 test('makers-dev runs behind the prefix-stripping preview proxy', () => {

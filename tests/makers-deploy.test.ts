@@ -10,8 +10,8 @@ import {
   parseMakersDeployJson,
   readMakersDeployOutcome,
   redactSecret,
-  shellQuote,
 } from '../shared/makers-deploy.ts';
+import { shellQuote } from '../shared/shell.ts';
 import { resolveMakersProjectName } from '../agents/project/_makers-deploy.ts';
 import type { ProjectState } from '../agents/_types.ts';
 

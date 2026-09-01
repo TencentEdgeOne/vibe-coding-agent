@@ -121,8 +121,8 @@ test('the landing platform cards stay in sync across languages', () => {
 // The browser sees the same token-sized chunks the runtime does, so the same
 // rule applies: a short chunk is text, never a replay to skip.
 test('streamed chunks are appended even when they repeat what came before', () => {
-  const url = 'https://vibe-coding-e2b8952eaf-yy3vnimd.test-global.qcdntest.cn?eo_token=7d44f02fce5648fdb18832f92dbd1caa';
-  const activities = ['站点已上线。https://vibe-coding-e2b8952eaf-y', 'y', '3vnimd.test-global.qcdntest.cn?eo_token=7d44f02fce5648fdb18832f92dbd1ca', 'a']
+  const url = 'https://demo-preview-yy3vnimd.example.com?eo_token=example-token-aa';
+  const activities = ['站点已上线。https://demo-preview-y', 'y', '3vnimd.example.com?eo_token=example-token-a', 'a']
     .reduce<ReturnType<typeof appendNarrationChunk>>(
       (current, chunk) => appendNarrationChunk(current, chunk),
       [],

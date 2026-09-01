@@ -185,9 +185,7 @@ Available values:
   "buildCommand": "npm run build",  // your frontend build command
   "outputDirectory": "dist",
   "cloudFunctions": {
-    "nodejs": {
-      "includeFiles": []
-    }
+    "includeFiles": []
   },
   "agents": {
     "framework": "claude-agent-sdk"

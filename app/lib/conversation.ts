@@ -1,6 +1,6 @@
 import type { ChatMessage } from '../types/workspace';
 
-const CONVERSATION_STORAGE_KEY = 'web-dev-agent-conversation-id';
+const CONVERSATION_STORAGE_KEY = 'vibe-coding-agent-cli-conversation-id';
 
 export function createConversationId() {
   return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'

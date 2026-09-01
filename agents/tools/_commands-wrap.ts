@@ -11,6 +11,7 @@ import {
 } from '../_constants.ts';
 import { assertMakersProjectCompatible } from '../project/_makers-compat.ts';
 import {
+  previewFailureWarrantsRestart,
   publishRunningPreview,
   startPreviewServer,
 } from '../project/_preview.ts';
@@ -188,7 +189,7 @@ async function prepareMakersCommand(
     lifecycle.state,
     masterToken,
   );
-  const env = buildSandboxMakersEnv(lifecycle.context, sandboxToken);
+  const env = buildSandboxMakersEnv(sandboxToken);
   // Whatever name the model typed is replaced here. It has no way to know
   // which project belongs to this conversation, and a name it invents to dodge
   // a collision would strand the site somewhere nobody can find again.
@@ -358,12 +359,16 @@ export function wrapSandboxTools(
             let preview;
             try {
               preview = await publishRunningPreview(lifecycle.context, lifecycle.state);
-            } catch {
-              // A warm makers-dev process can briefly serve the old agent
-              // bundle after a file edit. Reuse the resume path's smoke-test
-              // fallback, which restarts the same direct CLI command once.
+            } catch (error) {
+              // The smoke test now retries through the rebuild window itself, so
+              // reaching here means the server never answered — restart it once.
+              // A generated agent that answers wrongly is reported as-is instead:
+              // its reply already proves the server and proxy work.
+              if (!previewFailureWarrantsRestart(error)) throw error;
               await startPreviewServer(lifecycle.context, lifecycle.state);
-              preview = await publishRunningPreview(lifecycle.context, lifecycle.state);
+              preview = await publishRunningPreview(lifecycle.context, lifecycle.state, {
+                routesAlreadyVerified: true,
+              });
             }
             lifecycle.onPreviewReady?.(preview);
             return appendText(result, JSON.stringify({

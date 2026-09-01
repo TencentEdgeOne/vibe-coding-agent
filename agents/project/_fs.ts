@@ -4,16 +4,16 @@ import {
   PREVIEW_BINARY_EXTENSIONS,
   PREVIEW_BATCH_MAX_BYTES,
   PREVIEW_MAX_BYTES,
-} from '../_constants';
-import type { FileTreeItem, ProjectState } from '../_types';
+} from '../_constants.ts';
+import type { FileTreeItem, ProjectState } from '../_types.ts';
 import {
   capBatchReadResults,
   truncateUtf8,
   type PreviewReadResult,
-} from '../utils/_file-preview';
-import { readFileExtension } from '../utils/_paths';
-import { runSandboxCommand } from './_commands';
-import { repairNestedAppDirLayout } from './_scaffold';
+} from '../utils/_file-preview.ts';
+import { readFileExtension } from '../utils/_paths.ts';
+import { runSandboxCommand } from './_commands.ts';
+import { repairNestedAppDirLayout } from './_scaffold.ts';
 
 export async function getFileTree(context: any, state: ProjectState): Promise<FileTreeItem[]> {
   // Heal sessions that still have the mistaken appDir/appDir/... layout before

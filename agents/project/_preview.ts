@@ -5,13 +5,19 @@ import {
   PREVIEW_SERVER_PORT,
 } from '../_constants.ts';
 import type { ProjectState } from '../_types.ts';
-import { debugLog } from '../utils/_debug.ts';
 import {
+  GENERATED_API_SMOKE,
+  GENERATED_CHAT_SMOKE,
+  SMOKE_EXIT,
+  buildGeneratedApiSmokeScript,
+  buildGeneratedChatSmokeScript,
   buildMakersDevBackgroundCommand,
   buildMakersDevLaunchCommand,
   parseMakersDevExitCode,
 } from '../../shared/makers-dev.ts';
-import { redactSecret, shellQuote } from '../../shared/makers-deploy.ts';
+import { makersFileSemantic } from '../../shared/makers-file-semantics.ts';
+import { redactSecret } from '../../shared/makers-deploy.ts';
+import { shellQuote } from '../../shared/shell.ts';
 import {
   MAKERS_CLI_UNAVAILABLE_ERROR_CODE,
   MAKERS_CLI_UNAVAILABLE_MESSAGE,
@@ -26,20 +32,14 @@ import {
   resolveSandboxMakersToken,
 } from './_makers-token.ts';
 
+// Where Makers mounts generated HTTP handlers; both are optional in a project.
+const CLOUD_FUNCTION_DIRECTORIES = ['cloud-functions', 'edge-functions'];
+
 export async function resolvePublicLinks(context: any) {
   const previewHost = context.sandbox.getHost(PREVIEW_PUBLIC_PORT);
   const accessToken = context.sandbox.envdAccessToken;
   const previewBaseUrl = normalizePublicUrl(previewHost);
   const sandboxDebugUrl = normalizePublicUrl(context.sandbox.browser?.liveUrl);
-  debugLog(context, '[preview-link]', {
-    internalPort: PREVIEW_SERVER_PORT,
-    publicPort: PREVIEW_PUBLIC_PORT,
-    makersDevPort: MAKERS_DEV_PORT,
-    proxyPath: PREVIEW_PATH_PREFIX,
-    hasPreviewHost: Boolean(previewBaseUrl),
-    hasEnvdAccessToken: Boolean(accessToken),
-    hasSandboxDebugUrl: Boolean(sandboxDebugUrl),
-  });
 
   const previewUrl = (previewBaseUrl && accessToken)
     ? buildPublicPreviewUrl(previewBaseUrl, accessToken)
@@ -117,18 +117,13 @@ export async function startPreviewServer(context: any, state: ProjectState) {
   );
   if (warm.exitCode === 0) {
     try {
-      await assertGeneratedAgentChatReady(context, state);
-      debugLog(context, '[preview-reuse]', {
-        framework: 'makers-dev',
-        makersDevPort: MAKERS_DEV_PORT,
-        proxyPort: PREVIEW_SERVER_PORT,
-      });
+      await assertGeneratedRoutesReady(context, state);
       return previewServerInfo(launchCommand);
     } catch (error) {
+      // A warm port that fails to answer is a stale server, not a preview. One
+      // that answers wrongly is a code bug the restart would only delay.
+      if (!previewFailureWarrantsRestart(error)) throw error;
       forceRestart = true;
-      debugLog(context, '[preview-reuse-fallback]', {
-        message: error instanceof Error ? error.message : String(error),
-      });
     }
   }
 
@@ -148,7 +143,7 @@ export async function startPreviewServer(context: any, state: ProjectState) {
     {
       cwd: state.appDir,
       timeout: 110,
-      env: buildSandboxMakersEnv(context, sandboxToken),
+      env: buildSandboxMakersEnv(sandboxToken),
     },
   );
   const startOutput = [startResult.stdout, startResult.stderr].filter(Boolean).join('\n');
@@ -168,14 +163,7 @@ export async function startPreviewServer(context: any, state: ProjectState) {
     );
   }
 
-  await assertGeneratedAgentChatReady(context, state);
-
-  debugLog(context, '[preview-start]', {
-    framework: 'makers-dev',
-    makersDevPort: MAKERS_DEV_PORT,
-    proxyPort: PREVIEW_SERVER_PORT,
-    readyPath: PREVIEW_PATH_PREFIX,
-  });
+  await assertGeneratedRoutesReady(context, state);
 
   return previewServerInfo(launchCommand);
 }
@@ -193,6 +181,90 @@ function previewServerInfo(launchCommand: string) {
   };
 }
 
+class GeneratedChatSmokeError extends Error {
+  readonly kind: 'transport' | 'application';
+
+  constructor(message: string, kind: 'transport' | 'application') {
+    super(message);
+    this.name = 'GeneratedChatSmokeError';
+    this.kind = kind;
+  }
+}
+
+/**
+ * Restarting makers dev only helps when nothing answered, or answered wrong at
+ * the transport level. Unknown failures keep the old behaviour and restart.
+ */
+export function previewFailureWarrantsRestart(error: unknown) {
+  return !(error instanceof GeneratedChatSmokeError) || error.kind === 'transport';
+}
+
+/**
+ * Both functional gates for a generated preview, cheapest first: a route that
+ * 500s fails before the chat probe spends a model call on the same server.
+ */
+async function assertGeneratedRoutesReady(context: any, state: ProjectState) {
+  await assertGeneratedApiRoutesReady(context, state);
+  await assertGeneratedAgentChatReady(context, state);
+}
+
+function smokeFailure(exitCode: number | undefined, detail: string, guidance: string) {
+  if (exitCode === SMOKE_EXIT.application) {
+    return new GeneratedChatSmokeError(`${detail}\n${guidance}`, 'application');
+  }
+  return new GeneratedChatSmokeError(detail, 'transport');
+}
+
+/**
+ * Probe the routes the generated project actually declares. Cloud functions get
+ * no other functional gate: assertPreviewServerReady only proves the proxy and
+ * the home page answer, so without this a project whose API throws on every
+ * request still publishes a preview that looks fine until the user clicks.
+ */
+async function assertGeneratedApiRoutesReady(context: any, state: ProjectState) {
+  // Scoped to the function directories rather than the whole file tree: this runs
+  // on every preview publish, and getFileTree also repairs the app-dir layout.
+  const listing = await runSandboxCommand(
+    context,
+    `find ${CLOUD_FUNCTION_DIRECTORIES.join(' ')} -type f 2>/dev/null | head -50 || true`,
+    { cwd: state.appDir, timeout: 10 },
+  );
+  const paths = (listing.stdout || '')
+    .split('\n')
+    .map((line) => line.trim().replace(/^\.\//, ''))
+    .filter(Boolean);
+  const routes = [...new Set(
+    paths
+      .map((path) => makersFileSemantic({ path, type: 'file' }))
+      .filter((semantic) => semantic?.capability === 'cloud-function'
+        || semantic?.capability === 'edge-function')
+      .map((semantic) => semantic?.route)
+      // Dynamic and catch-all routes have no probeable form: there is no id to
+      // invent for /api/:id, and a wildcard says nothing about what is mounted.
+      .filter((route): route is string => typeof route === 'string'
+        && route.length > 0
+        && !route.includes(':')
+        && !route.includes('*')),
+  )];
+  if (routes.length === 0) return;
+
+  const smoke = await runSandboxCommand(
+    context,
+    buildGeneratedApiSmokeScript({
+      baseUrl: `http://127.0.0.1:${PREVIEW_SERVER_PORT}${PREVIEW_PATH_PREFIX}`.replace(/\/$/, ''),
+      routes,
+    }),
+    { cwd: state.appDir, timeout: GENERATED_API_SMOKE.commandTimeoutSeconds },
+  );
+  if (smoke.exitCode === 0) return;
+
+  throw smokeFailure(
+    smoke.exitCode,
+    smoke.stderr || smoke.stdout || 'Generated API route smoke test failed.',
+    "The preview server itself is healthy: the route answered with a server error or never answered at all, so fix the generated function. Only 5xx and hangs are treated as failures — 401, 403, 404 and 405 all pass. Do not probe external gateways or runtime internals.",
+  );
+}
+
 async function assertGeneratedAgentChatReady(context: any, state: ProjectState) {
   const hasChatAgent = await Promise.all([
     context.sandbox.files.exists(`${state.appDir}/agents/chat.ts`),
@@ -205,50 +277,40 @@ async function assertGeneratedAgentChatReady(context: any, state: ProjectState) 
     message: 'Reply with OK.',
     messages: [{ role: 'user', content: 'Reply with OK.' }],
   });
+  // Fresh per probe: a fixed id accumulates history in the generated app's own
+  // store, so every later probe pays for a longer prompt and gets a less
+  // predictable reply to assert on.
+  const smokeConversationId = `preview-smoke-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   const smoke = await runSandboxCommand(
     context,
-    [
-      'rm -f /tmp/agent-chat-smoke-body /tmp/agent-chat-smoke-headers',
-      [
-        'curl -sS -N --max-time 45',
-        "--noproxy '*'",
-        '-D /tmp/agent-chat-smoke-headers',
-        '-o /tmp/agent-chat-smoke-body',
-        `-X POST ${shellQuote(endpoint)}`,
-        `-H ${shellQuote('Content-Type: application/json')}`,
-        `-H ${shellQuote('makers-conversation-id: preview-smoke-test')}`,
-        `--data ${shellQuote(payload)}`,
-      ].join(' '),
-      'status=$?',
-      'http=$(awk \'NR==1 {print $2}\' /tmp/agent-chat-smoke-headers 2>/dev/null)',
-      'if [ "$status" -ne 0 ] || [ "$http" != "200" ]; then',
-      '  echo "Generated /chat endpoint did not return HTTP 200." >&2',
-      '  cat /tmp/agent-chat-smoke-body >&2 2>/dev/null || true',
-      '  exit 1',
-      'fi',
-      'if ! grep -q \'data:\' /tmp/agent-chat-smoke-body || ! grep -q \'\\[DONE\\]\' /tmp/agent-chat-smoke-body; then',
-      '  echo "Generated /chat endpoint did not return a complete SSE stream." >&2',
-      '  cat /tmp/agent-chat-smoke-body >&2 2>/dev/null || true',
-      '  exit 1',
-      'fi',
-      'if grep -Eq \'"(event|type)"[[:space:]]*:[[:space:]]*"(error|error_message)"\' /tmp/agent-chat-smoke-body; then',
-      '  echo "Generated /chat endpoint returned an SSE error event." >&2',
-      '  cat /tmp/agent-chat-smoke-body >&2 2>/dev/null || true',
-      '  exit 1',
-      'fi',
-    ].join('\n'),
-    { cwd: state.appDir, timeout: 55 },
+    buildGeneratedChatSmokeScript({
+      endpoint,
+      payload,
+      conversationId: smokeConversationId,
+    }),
+    { cwd: state.appDir, timeout: GENERATED_CHAT_SMOKE.commandTimeoutSeconds },
   );
-  if (smoke.exitCode !== 0) {
-    throw new Error(
-      `${smoke.stderr || smoke.stdout || 'Generated /chat endpoint smoke test failed.'}\nFix the generated agent or frontend configuration, then rerun edgeone makers dev. Do not probe external gateways or runtime internals.`,
-    );
-  }
+  if (smoke.exitCode === 0) return;
+
+  const detail = smoke.stderr || smoke.stdout || 'Generated /chat endpoint smoke test failed.';
+  throw smokeFailure(
+    smoke.exitCode,
+    detail,
+    "The preview server itself is healthy: fix the generated agent's response, and makers dev will pick it up on save. Restarting the dev server will not change this. Do not probe external gateways or runtime internals.",
+  );
 }
 
-export async function publishRunningPreview(context: any, state: ProjectState) {
+export async function publishRunningPreview(
+  context: any,
+  state: ProjectState,
+  options: { routesAlreadyVerified?: boolean } = {},
+) {
   await assertPreviewServerReady(context);
-  await assertGeneratedAgentChatReady(context, state);
+  // The chat probe is a real model call against the generated agent, so skip the
+  // whole gate when startPreviewServer just ran it.
+  if (!options.routesAlreadyVerified) {
+    await assertGeneratedRoutesReady(context, state);
+  }
   const links = await resolvePublicLinks(context);
   if (!links.previewUrl) {
     throw new Error(`Makers dev is ready, but the sandbox did not return a public URL for port ${PREVIEW_PUBLIC_PORT}.`);

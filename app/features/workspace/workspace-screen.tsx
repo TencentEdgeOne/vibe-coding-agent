@@ -168,6 +168,10 @@ export function WorkspaceScreen() {
   const hasLivePreviewRef = useRef(false);
   const isMakersPreviewRef = useRef(false);
   const chatAbortControllerRef = useRef<AbortController | null>(null);
+  // Resume runs from a mount-only effect, so unmount was the one thing that could
+  // stop it. Starting a new project has to reach it too, or its late events
+  // restore the previous conversation on top of the fresh one.
+  const resumeAbortControllerRef = useRef<AbortController | null>(null);
   const activeTurnIdRef = useRef('');
   const stoppingRef = useRef(false);
   // Invalidates callbacks from an aborted workspace after "Stop and start new"
@@ -274,6 +278,7 @@ export function WorkspaceScreen() {
     // Progressive resume: paint chat history as soon as store data returns, then
     // bootstrap the sandbox (restore + npm install + preview) in the background.
     let cancelled = false;
+    const workspaceEpoch = workspaceEpochRef.current;
     const existing = getStoredConversationId();
     if (!existing) {
       return;
@@ -382,8 +387,12 @@ export function WorkspaceScreen() {
       });
 
       setMessages(nextMessages);
+      // Authoritative: this payload always carries the conversation's stored
+      // deployment, so an absent one means there is none to show. Setting only on
+      // presence left a card from an earlier session on screen indefinitely —
+      // startNewProject was the one place that ever cleared it.
+      setDeployment(data.deployment ?? null);
       if (data.deployment) {
-        setDeployment(data.deployment);
         setResultPanelOpen(true);
       }
       if (data.hasProject || data.needsWorkspace || activeTask) {
@@ -411,6 +420,9 @@ export function WorkspaceScreen() {
       if (data.download?.url) {
         setDownload(data.download);
       }
+      // Set-only on purpose, unlike applyHistory: the workspace phase has an error
+      // fallback that reports a restore failure without the deployment field, and
+      // clearing on that would drop the card history just restored.
       if (data.deployment) {
         setDeployment(data.deployment);
         setResultPanelOpen(true);
@@ -446,6 +458,7 @@ export function WorkspaceScreen() {
     };
 
     const resumeController = new AbortController();
+    resumeAbortControllerRef.current = resumeController;
     (async () => {
       let handedOffToActiveStream = false;
       try {
@@ -456,7 +469,7 @@ export function WorkspaceScreen() {
         }
 
         await consumeEventStream<ResumeStreamEvent>(response, (event) => {
-          if (cancelled || event.type === 'ping') return;
+          if (cancelled || workspaceEpoch !== workspaceEpochRef.current || event.type === 'ping') return;
 
           if (event.type === 'resume_history' && event.data?.ok) {
             const historyData = event.data;
@@ -509,10 +522,15 @@ export function WorkspaceScreen() {
           // if that phase already arrived, otherwise the home screen.
         }
       } finally {
+        // The probe is over either way, but a superseded workspace no longer owns
+        // the panels: clearing them here would undo what the new project's first
+        // turn has already set.
         if (!cancelled) {
           setResumeChecked(true);
-          setWorkspaceRestoring(false);
-          if (!handedOffToActiveStream) setFilesRefreshing(false);
+          if (workspaceEpoch === workspaceEpochRef.current) {
+            setWorkspaceRestoring(false);
+            if (!handedOffToActiveStream) setFilesRefreshing(false);
+          }
         }
       }
     })();
@@ -520,6 +538,9 @@ export function WorkspaceScreen() {
     return () => {
       cancelled = true;
       resumeController.abort();
+      if (resumeAbortControllerRef.current === resumeController) {
+        resumeAbortControllerRef.current = null;
+      }
     };
   }, []);
 
@@ -1409,6 +1430,8 @@ export function WorkspaceScreen() {
   function startNewProject() {
     workspaceEpochRef.current += 1;
     chatAbortControllerRef.current = null;
+    resumeAbortControllerRef.current?.abort();
+    resumeAbortControllerRef.current = null;
     activeTurnIdRef.current = '';
     stoppingRef.current = false;
     loadingRef.current = false;

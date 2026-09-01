@@ -1,29 +1,11 @@
-import { PREVIEW_BATCH_MAX_FILES } from '../_constants';
-import { getProjectState } from '../_memory';
-import { readFileFromSandbox, readFilesFromSandbox } from '../_project';
-import { debugLog } from '../utils/_debug';
-import { toAppRelPath } from '../utils/_paths';
-import {
-  getRequestDebugSnapshot,
-  getRequestHeader,
-  getRequestQueryParam,
-  maskConversationId,
-  resolveConversationId,
-} from '../utils/_request';
-import { utf8ByteLength } from './_helpers';
+import { PREVIEW_BATCH_MAX_FILES } from '../_constants.ts';
+import { getProjectState } from '../_memory.ts';
+import { readFileFromSandbox, readFilesFromSandbox } from '../_project.ts';
+import { toAppRelPath } from '../utils/_paths.ts';
+import { getRequestQueryParam, resolveConversationId } from '../utils/_request.ts';
 
 export async function runFileReadPipeline(context: any): Promise<Response> {
-  const contextConversationId = String(context.conversation_id || '');
-  const pagesHeaderConversationId = getRequestHeader(context, 'makers-conversation-id');
-  const headerConversationId = getRequestHeader(context, 'conversationId');
-  const { conversationId, source: conversationSource } = resolveConversationId(context);
-  const diagnosticBase = {
-    contextConversationId: maskConversationId(contextConversationId),
-    pagesHeaderConversationId: maskConversationId(pagesHeaderConversationId),
-    headerConversationId: maskConversationId(headerConversationId),
-    selectedConversationId: maskConversationId(conversationId),
-    selectedConversationSource: conversationSource,
-  };
+  const { conversationId } = resolveConversationId(context);
   const pathParam = getRequestQueryParam(context, 'path');
   const pathsParam = getRequestQueryParam(context, 'paths');
   const relPath = pathParam.value;
@@ -45,13 +27,6 @@ export async function runFileReadPipeline(context: any): Promise<Response> {
   );
 
   if (!conversationId) {
-    debugLog(context, '[file-read]', {
-      ...diagnosticBase,
-      rawPath: isBatch ? batchPaths : relPath,
-      pathSource: isBatch ? pathsParam.source : pathParam.source,
-      normalizedPath: null,
-      error: 'missing conversation_id',
-    });
     return json({ ok: false, error: 'missing conversation_id' }, 400);
   }
   if (isBatch && batchPaths.length > PREVIEW_BATCH_MAX_FILES) {
@@ -64,56 +39,16 @@ export async function runFileReadPipeline(context: any): Promise<Response> {
   const state = await getProjectState(context, conversationId);
   const normalizedPaths = requestedPaths.map((path) => toAppRelPath(path, state.appDir));
   if (normalizedPaths.some((path) => !path)) {
-    debugLog(context, '[file-read]', {
-      ...diagnosticBase,
-      rawPath: isBatch ? batchPaths : relPath,
-      pathSource: isBatch ? pathsParam.source : pathParam.source,
-      normalizedPath: null,
-      error: 'invalid path',
-      request: getRequestDebugSnapshot(context),
-    });
     return json({ ok: false, error: 'invalid path' }, 400);
   }
   const paths = [...new Set(normalizedPaths as string[])];
 
-  debugLog(context, '[file-read]', {
-    ...diagnosticBase,
-    rawPath: isBatch ? batchPaths : relPath,
-    pathSource: isBatch ? pathsParam.source : pathParam.source,
-    normalizedPath: isBatch ? paths : paths[0],
-    appDir: state.appDir,
-    stage: 'before-read',
-  });
-
   if (isBatch) {
     const files = await readFilesFromSandbox(context, state, paths);
-    const responseBytes = files.reduce(
-      (total, file) => total + (file.ok && file.content ? utf8ByteLength(file.content) : 0),
-      0,
-    );
-    debugLog(context, '[file-read]', {
-      ...diagnosticBase,
-      normalizedPath: paths,
-      appDir: state.appDir,
-      requested: paths.length,
-      succeeded: files.filter((file) => file.ok).length,
-      responseBytes,
-      stage: 'after-batch-read',
-    });
     return json({ ok: true, files });
   }
 
   const norm = paths[0];
   const res = await readFileFromSandbox(context, state, norm);
-  debugLog(context, '[file-read]', {
-    ...diagnosticBase,
-    normalizedPath: norm,
-    appDir: state.appDir,
-    ok: res.ok,
-    error: res.error,
-    size: res.size,
-    truncated: res.truncated,
-    stage: 'after-read',
-  });
   return json({ path: norm, ...res });
 }

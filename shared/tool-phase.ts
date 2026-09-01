@@ -139,7 +139,14 @@ function hasExitCodeEcho(cmd: string) {
 
 export function withExitCodeEcho(cmd: string) {
   const trimmed = cmd.trim();
-  if (!trimmed || hasExitCodeEcho(trimmed) || !isVerificationCommand(trimmed)) {
+  // Installs are echoed too: the sandbox reports a non-zero shell exit as
+  // SANDBOX_UNKNOWN_ERROR and discards the output, so a failed `npm install`
+  // otherwise reaches the model with the resolver error stripped off.
+  if (
+    !trimmed
+    || hasExitCodeEcho(trimmed)
+    || !(isVerificationCommand(trimmed) || isInstallCommand(trimmed))
+  ) {
     return trimmed;
   }
   if (/\bnohup\b/.test(trimmed) || /&\s*$/.test(trimmed)) {

@@ -15,9 +15,22 @@
 
 ## Dependencies
 
-```bash
-npm install deepagents@^1.9.0 @langchain/openai @langchain/core zod
+Copy this `dependencies` block into `package.json` as written, then run `npm install`:
+
+```json
+{
+  "dependencies": {
+    "deepagents": "^1.13.0",
+    "@langchain/core": "^1.2.9",
+    "@langchain/openai": ">=1.5.0 <1.5.9",
+    "zod": "^3.25.76"
+  }
+}
 ```
+
+> **Do not widen these ranges to `latest`.** `deepagents` requires `@langchain/core@^1.2.9` as a peer, so an older `@langchain/core` (the widely-known `0.3.x` line) fails resolution with `ERESOLVE`. The `@langchain/openai` cap keeps the tree on `openai@6.x`; from `@langchain/openai@1.5.9` onward it pulls `openai@7`, which declares `engines.node >= 22` and does not match the Node 20.x runtime.
+>
+> `@langchain/langgraph`, `@langchain/langgraph-checkpoint`, `@langchain/langgraph-sdk`, `langchain`, and `langsmith` are peers of `deepagents` and are resolved automatically — do not declare them yourself.
 
 > **Note**: `deepagents` is a platform-provided package bundled with the EdgeOne Makers agent runtime. It is automatically available in the deployed environment.
 `edgeone.json`:

@@ -1,9 +1,9 @@
 import { tool as defineClaudeTool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import { ensureProjectScaffold } from '../_project';
-import type { ClaudeMcpTool, ProjectState, ScaffoldLog } from '../_types';
-import { getBlockedProjectWriteReason, toAppRelPath } from '../utils/_paths';
-import { stringifyToolResult } from '../utils/_text';
+import { ensureProjectScaffold } from '../_project.ts';
+import type { ClaudeMcpTool, ProjectState, ScaffoldLog } from '../_types.ts';
+import { getBlockedProjectWriteReason, toAppRelPath } from '../utils/_paths.ts';
+import { stringifyToolResult } from '../utils/_text.ts';
 
 const writeProjectFileInputSchema = {
   path: z.string().describe(

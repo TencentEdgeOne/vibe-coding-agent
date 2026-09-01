@@ -7,8 +7,6 @@
     }
   },
   "cloudFunctions": {
-    "nodejs": {
-      "includeFiles": []
-    }
+    "includeFiles": []
   }
 }

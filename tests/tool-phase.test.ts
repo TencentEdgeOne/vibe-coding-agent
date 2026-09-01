@@ -36,13 +36,18 @@ test('detects install, preview, and verification commands', () => {
   assert.equal(isVerificationCommand('npm run dev'), false);
 });
 
-test('appends EXIT echo to verification commands once', () => {
+test('appends EXIT echo to install and verification commands once', () => {
   assert.equal(withExitCodeEcho('npm run build'), 'npm run build; echo EXIT:$?');
   assert.equal(
     withExitCodeEcho('npx tsc -b 2>&1; echo "EXIT:$?"'),
     'npx tsc -b 2>&1; echo "EXIT:$?"',
   );
-  assert.equal(withExitCodeEcho('npm install'), 'npm install');
+  assert.equal(withExitCodeEcho('npm install'), 'npm install; echo EXIT:$?');
+  assert.equal(
+    withExitCodeEcho('cd app && npm install'),
+    'cd app && npm install; echo EXIT:$?',
+  );
+  assert.equal(withExitCodeEcho('npm run dev'), 'npm run dev');
   assert.equal(parseEchoedExitCode('error TS6133\nEXIT:1\n'), 1);
   assert.equal(parseEchoedExitCode('{"stdout":"built\\nEXIT:0\\n","exitCode":0}'), 0);
   assert.equal(stripEchoedExit('error TS6133\nEXIT:1\n'), 'error TS6133');

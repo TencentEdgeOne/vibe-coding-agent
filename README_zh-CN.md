@@ -1,4 +1,4 @@
-# Web Dev Agent
+# Vibe Coding Agent CLI
 
 > 一个基于 Claude Agent SDK 和 EdgeOne Makers 的沙箱 Web 开发 Agent。
 
@@ -8,7 +8,11 @@
 
 ## 概览
 
-Web Dev Agent 可以把自然语言需求转换为可运行的 Web 项目。每个会话会准备一个隔离的临时沙箱工作区，在其中创建或修改项目文件、安装依赖、发布实时预览，并把验证结果反馈回 Agent 循环。它适合需要生成应用、查看预览、浏览文件的一体化 Coding 类 Makers 模板。
+> **这是哪个 Vibe Coding 模板？** 本模板在沙箱内驱动 EdgeOne CLI，生成的项目可以直接获得沙箱内实时预览
+> （`edgeone makers dev`），并通过 `edgeone makers deploy` 部署。另一个同名模板在沙箱外经由 Makers SDK
+> 部署，不支持沙箱预览。如果你希望用户在正式上线前先看到生成的应用跑起来，就用这一个。
+
+Vibe Coding Agent CLI 可以把自然语言需求转换为可运行的 Web 项目。每个会话会准备一个隔离的临时沙箱工作区，在其中创建或修改项目文件、安装依赖、发布实时预览，并把验证结果反馈回 Agent 循环。它适合需要生成应用、查看预览、浏览文件的一体化 Coding 类 Makers 模板。
 
 - **临时沙箱工作区** — 在当前会话对应的临时沙箱中创建和修改项目代码
 - **适配 Makers 的生成** — 静态站、Cloud Functions、Edge Functions、`agents/` AI 接口等可在 Makers 本地预览的布局
@@ -25,12 +29,9 @@ Web Dev Agent 可以把自然语言需求转换为可运行的 Web 项目。每�
 | `AI_GATEWAY_API_KEY` | 是 | 模型网关 API Key。使用 Makers Models API Key，或任意 OpenAI 兼容供应商的 Key。 |
 | `AI_GATEWAY_BASE_URL` | 是 | 网关 Base URL。使用 Makers Models 时填写 `https://ai-gateway.edgeone.link/v1`。 |
 | `AI_GATEWAY_MODEL` | 否 | 模型 ID。默认值为 `@makers/deepseek-v4-flash`（Makers 内置模型）。 |
-| `WEB_DEV_AGENT_DEBUG` | 否 | 设置为 `true` 或 `1` 时启用脱敏的服务端调试日志。默认关闭。 |
 | `EDGEONE_PAGES_API_TOKEN` | 否 | Makers 主 API Token。它只保留在 Agent Runtime 中，为直接沙箱 CLI 调用签发并注入按项目隔离的临时 tenant token。线上部署以及 Blob 等带凭证的本地后端需要配置。不要提交到仓库。 |
 | `MAKERS_SUB_TOKEN_TTL_SECONDS` | 否 | 临时 tenant token 有效期，默认 `3600`，取值范围为 900–86400 秒。 |
 | `MAKERS_DEPLOY_PROJECT_NAME` | 否 | 把所有会话固定到同一个 Makers 项目。建议留空：留空时预览与部署都按会话派生出独立项目名，后续轮次落在同一个站点，不同用户也不会撞名。 |
-| `MAKERS_API_ENV` | 否 | Token 所属的 Makers 环境：`prod`（默认）、`pre`、`test`。同一个开关同时驱动令牌签发方与沙箱 CLI，保证凭证由签发它的环境校验。 |
-| `MAKERS_API_REGION` | 否 | 该环境的地域：`china`（默认）或 `global`。生产 Token 能自行识别地域，因此该项只在 `pre` 与 `test` 下生效。 |
 
 本模板遵循 OpenAI 兼容标准，可以将这些变量指向 Makers Models 或任意兼容供应商。
 
@@ -61,35 +62,49 @@ Agent 会优先使用 `AI_GATEWAY_*` 变量。需要时也可以使用 Anthropic
 
 ## 本地开发
 
-**前置依赖：** Node.js、npm
+**前置依赖：** Node.js、npm，以及 EdgeOne CLI（`npm install -g edgeone`）。
 
 ```bash
 npm install
-cp .env.example .env
-edgeone makers dev
+cp .env.example .env    # 然后填入 AI_GATEWAY_API_KEY
+edgeone makers dev      # 在 http://localhost:8088 提供服务
 ```
 
-打开 `http://localhost:8088/agent-metrics` 查看本地可观测面板。
+只有当生成的项目使用 Blob 等需要凭证的后端时才需要 `edgeone login`；纯静态预览无需登录。
+
+打开 `http://localhost:8088/agent-metrics` 查看 CLI 提供的本地可观测面板。
+
+提交改动前请运行 `npm test` 和 `npm run typecheck`。
 
 ## 项目结构
 
 ```text
-web-dev-agent/
 ├── app/                    # Next.js 前端界面
 │   ├── layout.tsx          # 应用元数据和根布局
-│   ├── page.tsx            # 对话、进度、预览和文件浏览界面
-│   └── globals.css         # 全局样式
+│   ├── page.tsx            # 入口界面
+│   ├── i18n.ts             # 中英文界面文案
+│   ├── features/           # 工作区：对话、进度、预览、文件浏览
+│   ├── components/         # 复用的功能组件
+│   ├── hooks/ lib/ types/  # 前端辅助逻辑
+│   └── globals.css styles/ # 样式
 ├── agents/                 # EdgeOne Makers Agent 路由和流水线
 │   ├── chat.ts             # POST /chat：创建并流式返回；GET /chat：重连
-│   ├── file.ts             # /file 路由
+│   ├── resume.ts           # /resume：刷新后恢复会话
+│   ├── stop.ts             # /stop：中止当前轮次
+│   ├── file.ts             # /file：读取单个项目文件
+│   ├── status.ts download.ts transcript.ts
 │   ├── _agent.ts           # Claude Agent SDK 集成
 │   ├── _constants.ts       # 运行时常量
 │   ├── _memory.ts          # 对话历史和项目状态
-│   ├── _pipelines.ts       # 对话和文件读取流水线
-│   ├── _project.ts         # 沙箱项目、预览和验证辅助逻辑
+│   ├── _prompt.ts          # 系统提示词
 │   ├── _types.ts           # 共享 TypeScript 类型
+│   ├── pipelines/          # 对话、部署、恢复、文件读取流水线
+│   ├── project/            # 沙箱项目、预览、部署、验证
 │   ├── tools/              # 自定义 scaffold/write 工具及直接 CLI 生命周期观察器
-│   └── utils/              # 路径、文本和构建错误辅助逻辑
+│   └── utils/              # 路径、文本、叙述和构建错误辅助逻辑
+├── shared/                 # app/ 与 agents/ 共用的辅助逻辑
+├── components/ lib/        # UI 基础组件和工具函数
+├── tests/                  # node:test 用例，通过 npm test 运行
 ├── .claude/skills/         # 适配沙箱后的 Makers skills
 ├── edgeone.json            # Agent 运行时配置
 ├── next.config.ts          # 模板应用的 Next.js 配置
@@ -121,4 +136,4 @@ Agent 在 `agents/` 下以会话模式运行。带有相同 `conversation_id` �
 
 ## 许可证
 
-MIT
+MIT，详见 [LICENSE](./LICENSE)。

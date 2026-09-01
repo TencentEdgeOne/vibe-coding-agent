@@ -5,7 +5,6 @@ import {
   Copy,
   ExternalLink,
   LoaderCircle,
-  Rocket,
 } from 'lucide-react';
 import type { UiCopy } from '@/app/i18n';
 import type { DeploymentInfo } from '@/app/types/workspace';
@@ -74,12 +73,8 @@ export function DeploymentStatus({
             {deployment.error || copy.failed}
           </span>
         )}
-        {deployment.status === 'running' && (
-          <span className="workspace-deployment-progress">
-            <Rocket aria-hidden="true" />
-            {copy.running}
-          </span>
-        )}
+        {/* Nothing while it runs: the heading already carries the spinner and
+            the same sentence, and this column is where the URL lands. */}
       </div>
 
       {deployment.status === 'success' && deployment.url && (

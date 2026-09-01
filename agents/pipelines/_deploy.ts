@@ -1,33 +1,33 @@
-import { saveProjectState } from '../_memory';
-import { getFileTree, runSandboxCommand } from '../_project';
-import { assertMakersProjectCompatible } from '../project/_makers-compat';
-import { resolveMakersProjectName } from '../project/_makers-deploy';
+import { saveProjectState } from '../_memory.ts';
+import { getFileTree, runSandboxCommand } from '../_project.ts';
+import { assertMakersProjectCompatible } from '../project/_makers-compat.ts';
+import { resolveMakersProjectName } from '../project/_makers-deploy.ts';
 import {
   buildSandboxMakersEnv,
   resolveMakersMasterToken,
   resolveSandboxMakersToken,
-} from '../project/_makers-token';
+} from '../project/_makers-token.ts';
 import type {
   AgentProgressEvent,
   DeploymentInfo,
   StreamSend,
-} from '../_types';
+} from '../_types.ts';
 import {
   buildMakersDeployCommand,
   describeMakersDeployment,
   readMakersDeployOutcome,
   redactSecret,
-} from '../../shared/makers-deploy';
-import { resolveConversationId } from '../utils/_request';
+} from '../../shared/makers-deploy.ts';
+import { resolveConversationId } from '../utils/_request.ts';
 import {
   createProjectCheckpointController,
   ensureProjectDependencies,
   extendExistingSandboxTimeout,
   previewLinkFromState,
   withLiveDeploymentUrl,
-} from './_helpers';
-import { createTurnLifecycle } from './_turn-lifecycle';
-import { prepareProjectWorkspace } from './_workspace';
+} from './_helpers.ts';
+import { createTurnLifecycle } from './_turn-lifecycle.ts';
+import { prepareProjectWorkspace } from './_workspace.ts';
 
 /** Used when an API caller asks to publish without wording the request itself. */
 export const DEFAULT_DEPLOY_REQUEST = 'Deploy this project';
@@ -200,7 +200,7 @@ export async function runDeployPipeline(
       buildMakersDeployCommand(resolveMakersProjectName(context, state)),
       {
         cwd: state.appDir,
-        env: buildSandboxMakersEnv(context, sandboxToken),
+        env: buildSandboxMakersEnv(sandboxToken),
         timeout: DEPLOY_TIMEOUT_SECONDS,
       },
     );

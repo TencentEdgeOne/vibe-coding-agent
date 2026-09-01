@@ -1,7 +1,7 @@
-import { abortLiveChatTask, markChatTaskStopped } from './_chat-tasks';
-import { getProjectState, saveActivityTurn, saveProjectState } from './_memory';
-import { persistProjectSnapshot } from './pipelines/_helpers';
-import type { PersistedActivity } from './_types';
+import { abortLiveChatTask, markChatTaskStopped } from './_chat-tasks.ts';
+import { getProjectState, saveActivityTurn, saveProjectState } from './_memory.ts';
+import { persistProjectSnapshot } from './pipelines/_helpers.ts';
+import type { PersistedActivity } from './_types.ts';
 
 export async function onRequest(context: any) {
   const conversationId = String(context?.request?.body?.conversation_id || '').trim();

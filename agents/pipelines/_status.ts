@@ -1,6 +1,6 @@
-import { getChatTask } from '../_memory';
-import { isExportTaskDone, resolveExportTaskStatus } from '../../shared/conversation-export';
-import { resolveConversationIdPreferQuery } from '../utils/_request';
+import { getChatTask } from '../_memory.ts';
+import { isExportTaskDone, resolveExportTaskStatus } from '../../shared/conversation-export.ts';
+import { resolveConversationIdPreferQuery } from '../utils/_request.ts';
 
 export async function runStatusPipeline(context: any): Promise<Response> {
   const { conversationId } = resolveConversationIdPreferQuery(context);

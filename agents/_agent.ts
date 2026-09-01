@@ -12,15 +12,15 @@ import {
   GATEWAY_QUOTA_PROMPT_HEADER,
   MAKERS_SKILL_NAMES,
   SANDBOX_MCP_SERVER_NAME,
-} from './_constants';
-import { wrapSandboxTools } from './tools/_commands-wrap';
+} from './_constants.ts';
+import { wrapSandboxTools } from './tools/_commands-wrap.ts';
 import {
   buildProjectScaffoldTool,
   buildWriteProjectFileTool,
-} from './tools/_project-tools';
-import { buildLoadMakersSkillTool } from './tools/_makers-skills';
-import { buildPrompt } from './_prompt';
-import { resolveMakersProjectName } from './project/_makers-deploy';
+} from './tools/_project-tools.ts';
+import { buildLoadMakersSkillTool } from './tools/_makers-skills.ts';
+import { buildPrompt } from './_prompt.ts';
+import { resolveMakersProjectName } from './project/_makers-deploy.ts';
 import type {
   AgentProgressEvent,
   CodingAgentResult,
@@ -29,26 +29,25 @@ import type {
   PreviewKind,
   ProjectState,
   ScaffoldLog,
-} from './_types';
+} from './_types.ts';
 import {
   detectFatalToolError,
   sanitizeAssistantText,
   truncateForStream,
-} from './utils/_text';
-import { debugLog, isDebugEnabled } from './utils/_debug';
-import { summarizeToolInput, summarizeToolOutput } from './utils/_activity';
+} from './utils/_text.ts';
+import { summarizeToolInput, summarizeToolOutput } from './utils/_activity.ts';
 import {
   resolveNarrationEmit,
   sanitizeNarrationText,
   type NarrationEmitState,
-} from './utils/_narration';
+} from './utils/_narration.ts';
 import {
   isInstallCommand,
   isMakersDeployCommand,
   isPreviewCommand,
   parseEchoedExitCode,
   shortenToolName,
-} from './utils/_tool-phase';
+} from './utils/_tool-phase.ts';
 
 function pickEnvValue(context: any, key: string) {
   const value = context?.env?.[key];
@@ -146,44 +145,6 @@ function parseToolInputJson(rawJson: string, fallback: unknown) {
   } catch {
     return fallback ?? {};
   }
-}
-
-function summarizeSdkMessage(event: SDKMessage): Record<string, unknown> {
-  if (event.type === 'stream_event') {
-    const streamEvent = (event as any).event;
-    return {
-      type: event.type,
-      uuid: typeof event.uuid === 'string' ? event.uuid : '',
-      eventType: streamEvent?.type,
-      index: typeof streamEvent?.index === 'number' ? streamEvent.index : undefined,
-      deltaType: streamEvent?.delta?.type,
-      blockType: streamEvent?.content_block?.type,
-      toolName: typeof streamEvent?.content_block?.name === 'string'
-        ? streamEvent.content_block.name
-        : undefined,
-    };
-  }
-
-  if (event.type === 'assistant') {
-    const blocks = (event as any).message?.content;
-    return {
-      type: event.type,
-      uuid: typeof (event as any).uuid === 'string' ? (event as any).uuid : '',
-      blocks: Array.isArray(blocks)
-        ? blocks.map((block: any) => ({
-            type: block?.type,
-            id: typeof block?.id === 'string' ? block.id : undefined,
-            name: typeof block?.name === 'string' ? block.name : undefined,
-          }))
-        : [],
-    };
-  }
-
-  return {
-    type: event.type,
-    uuid: typeof (event as any).uuid === 'string' ? (event as any).uuid : '',
-    subtype: typeof (event as any).subtype === 'string' ? (event as any).subtype : undefined,
-  };
 }
 
 type ToolProgressPhase = 'scaffold' | 'code' | 'install' | 'preview' | 'link';
@@ -400,10 +361,12 @@ export async function runCodingAgent(
       env: sdkEnv,
       cwd: process.cwd(),
       settingSources: ['project'],
-      debug: isDebugEnabled(context),
       abortController: sdkAbortController,
+      // The subprocess writes here only when something is wrong, and the turn
+      // fails without saying which layer broke. Unconditional: a flag nobody
+      // set is a log nobody has when it matters.
       stderr: (data: string) => {
-        debugLog(context, '[claude-code stderr]', data.trimEnd());
+        console.warn('[claude-code]', data.trimEnd());
       },
     };
 
@@ -513,7 +476,6 @@ export async function runCodingAgent(
         sdkAbortController.abort();
         break;
       }
-      debugLog(context, '[agent-event]', summarizeSdkMessage(event));
       // Forward structured tool progress and high-level model narration. Tool
       // input JSON and non-text stream deltas stay out of the UI.
       if (event.type === 'stream_event') {
@@ -641,9 +603,6 @@ export async function runCodingAgent(
             }
           }
         }
-      }
-      if (event.type === 'system' && event.subtype === 'init') {
-        debugLog(context, '[agent-init]', { mcpServers: event.mcp_servers });
       }
       if (event.type === 'result') {
         resultMessage = event;

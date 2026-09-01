@@ -4,7 +4,6 @@ import test from 'node:test';
 import {
   buildSandboxMakersEnv,
   ensureMakersTenantId,
-  resolveMakersEndpoint,
   resolveMakersSubTokenTtl,
   resolveSandboxMakersToken,
 } from '../agents/project/_makers-token.ts';
@@ -42,90 +41,35 @@ test('temporary token TTL defaults to one hour and rejects unsafe ranges', () =>
   );
 });
 
-test('production stays on the endpoints both ends already default to', () => {
-  assert.deepEqual(resolveMakersEndpoint({ env: {} }), {
-    apiEnv: 'prod',
-    region: '',
-    baseUrl: '',
-  });
-  assert.deepEqual(buildSandboxMakersEnv({ env: {} }, 'tenant-token'), {
-    PAGES_SOURCE: 'skills',
-    EDGEONE_PAGES_API_TOKEN: 'tenant-token',
-    PAGES_BLOB_STS_ENV: 'prod',
-  });
-  assert.deepEqual(buildSandboxMakersEnv({ env: {} }), {
-    PAGES_SOURCE: 'skills',
-    PAGES_BLOB_STS_ENV: 'prod',
-  });
-});
-
-// The token issuer and the sandbox CLI verify against separate hosts. When only
-// one of them is switched, the sandbox reports a bare "Your token is not valid"
-// with nothing pointing at the split, so a single variable has to move both.
-test('a non-production environment moves the issuer and the sandbox together', () => {
-  const testContext = { env: { MAKERS_API_ENV: 'test' } };
-  assert.deepEqual(resolveMakersEndpoint(testContext), {
-    apiEnv: 'test',
-    region: 'china',
-    baseUrl: 'https://eo-test.qcloud.com/v1',
-  });
-  assert.deepEqual(buildSandboxMakersEnv(testContext, 'tenant-token'), {
-    PAGES_SOURCE: 'skills',
-    EDGEONE_PAGES_API_TOKEN: 'tenant-token',
-    API_ENV: 'test',
-    EDGEONE_PAGES_API_REGION: 'china',
-    PAGES_BLOB_STS_ENV: 'test',
-  });
-
-  // Hosts mirror the CLI's own URL tables. A china test credential sent to the
-  // global test host comes back as "The Token usage region is incorrect", so
-  // the region has to be pinned rather than left to the CLI's own detection.
-  assert.equal(
-    resolveMakersEndpoint({
-      env: { MAKERS_API_ENV: 'test', MAKERS_API_REGION: 'global' },
-    }).baseUrl,
-    'https://test-api.edgeone.ai/v1',
-  );
-  assert.equal(
-    resolveMakersEndpoint({ env: { MAKERS_API_ENV: 'pre' } }).baseUrl,
-    'https://pre-api.edgeone.ai/v1',
-  );
-  assert.equal(
-    resolveMakersEndpoint({
-      env: { MAKERS_API_ENV: 'prod', MAKERS_API_REGION: 'china' },
-    }).baseUrl,
-    'https://pages-api.cloud.tencent.com/v1',
-  );
-});
-
 // A generated store reaches production through a credential baked into the
 // deployed artifact, but reaches preview through a live exchange scoped to
-// PAGES_BLOB_STS_ENV. Leaving that variable to the sandbox CLI's compiled
-// default is what makes a guestbook read fine on the live site and fail in
-// preview with "credential exchange failed (code=-1): Invalid credential".
-test('blob storage credentials follow the same environment as the API', () => {
-  for (const [apiEnv, expected] of [
-    ['test', 'test'],
-    ['pre', 'prod'],
-    ['prod', 'prod'],
-  ] as const) {
-    assert.equal(
-      buildSandboxMakersEnv({ env: { MAKERS_API_ENV: apiEnv } }).PAGES_BLOB_STS_ENV,
-      expected,
-      `MAKERS_API_ENV=${apiEnv} must pin the blob storage environment to ${expected}`,
-    );
-  }
+// PAGES_BLOB_STS_ENV. Left to the sandbox CLI's compiled default, that is what
+// makes a guestbook read fine on the live site and fail in preview with
+// "credential exchange failed (code=-1): Invalid credential".
+test('the sandbox is handed the credential and the storage environment, nothing else', () => {
+  assert.deepEqual(buildSandboxMakersEnv('tenant-token'), {
+    PAGES_SOURCE: 'skills',
+    EDGEONE_PAGES_API_TOKEN: 'tenant-token',
+    PAGES_BLOB_STS_ENV: 'prod',
+  });
+  assert.deepEqual(buildSandboxMakersEnv(), {
+    PAGES_SOURCE: 'skills',
+    PAGES_BLOB_STS_ENV: 'prod',
+  });
 });
 
-test('unknown environment and region values fail before a token is minted', () => {
-  assert.throws(
-    () => resolveMakersEndpoint({ env: { MAKERS_API_ENV: 'staging' } }),
-    /prod, pre, test/,
-  );
-  assert.throws(
-    () => resolveMakersEndpoint({ env: { MAKERS_API_REGION: 'apac' } }),
-    /china or global/,
-  );
+// The token issuer and the sandbox CLI verify against separate hosts, and a
+// switch that moves only one of them surfaces as a bare "Your token is not
+// valid" with nothing pointing at the split. Both ends default to production,
+// so the way to keep them together is to leave nothing to configure.
+test('no environment switch is left for a deployment to get wrong', async () => {
+  const tokenSource = await readFile('agents/project/_makers-token.ts', 'utf8');
+
+  for (const name of ['MAKERS_API_ENV', 'MAKERS_API_REGION', 'EDGEONE_PAGES_API_REGION']) {
+    assert.doesNotMatch(tokenSource, new RegExp(name), `${name} must not come back`);
+  }
+  // No host either: the SDK probes China first and caches whichever answers.
+  assert.doesNotMatch(tokenSource, /baseUrl/);
 });
 
 // "…tenant token: Automatic region detection failed." trips the activity
@@ -193,9 +137,9 @@ test('direct CLI calls route the runtime credential through one resolver', async
   // deploy calls are intercepted on the generic sandbox commands tool. Neither
   // may reach past the resolver for a credential of its own.
   assert.match(previewSource, /resolveSandboxMakersToken\(context, state, masterToken\)/);
-  assert.match(previewSource, /env: buildSandboxMakersEnv\(context, sandboxToken\)/);
+  assert.match(previewSource, /env: buildSandboxMakersEnv\(sandboxToken\)/);
   assert.match(commandSource, /resolveSandboxMakersToken\(/);
-  assert.match(commandSource, /buildSandboxMakersEnv\(lifecycle\.context, sandboxToken\)/);
+  assert.match(commandSource, /buildSandboxMakersEnv\(sandboxToken\)/);
   for (const source of [previewSource, commandSource]) {
     assert.doesNotMatch(source, /issueSandboxMakersSubToken/);
   }

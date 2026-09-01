@@ -99,33 +99,6 @@ export function getRequestQueryParam(context: any, name: string): {
   return { value: '', source: 'none' };
 }
 
-export function getRequestDebugSnapshot(context: any): Record<string, unknown> {
-  const request = context?.request || {};
-  const snapshot: Record<string, unknown> = {
-    requestKeys: Object.keys(request).slice(0, 24),
-  };
-  for (const field of ['url', 'path', 'pathname', 'search', 'queryString', 'rawUrl', 'originalUrl']) {
-    if (typeof request[field] === 'string' && request[field]) {
-      snapshot[field] = request[field].slice(0, 300);
-    }
-  }
-  for (const field of ['query', 'params', 'searchParams']) {
-    const value = request[field];
-    if (value && typeof value === 'object') {
-      snapshot[field] = typeof value.entries === 'function'
-        ? Object.fromEntries(Array.from(value.entries() as Iterable<[PropertyKey, unknown]>).slice(0, 20))
-        : Object.keys(value).slice(0, 20);
-    }
-  }
-  return snapshot;
-}
-
-export function maskConversationId(value: string): string {
-  if (!value) return '<empty>';
-  if (value.length <= 12) return `${value.slice(0, 2)}...${value.slice(-2)}`;
-  return `${value.slice(0, 6)}...${value.slice(-6)}`;
-}
-
 /**
  * Resolve conversation id from the dual-channel routing shape used by Makers:
  * context.conversation_id → makers-conversation-id → conversationId header,

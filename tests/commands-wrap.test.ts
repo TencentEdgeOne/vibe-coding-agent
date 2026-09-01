@@ -35,7 +35,7 @@ test('wraps verification commands with EXIT echo without marking protocol error'
   assert.equal(result.isError, undefined);
 });
 
-test('does not wrap install commands', async () => {
+test('wraps install commands so a failed resolve keeps its output', async () => {
   let received = '';
   const commandsTool = {
     name: 'commands',
@@ -50,7 +50,7 @@ test('does not wrap install commands', async () => {
   const [wrapped] = wrapSandboxTools([commandsTool]);
   const result = await wrapped.handler({ command: 'npm install' }, {});
 
-  assert.equal(received, 'npm install');
+  assert.equal(received, 'npm install; echo EXIT:$?');
   assert.equal(result.isError, undefined);
 });
 
