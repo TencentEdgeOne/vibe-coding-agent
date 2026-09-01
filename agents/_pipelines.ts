@@ -5,3 +5,4 @@ export {
   runProjectResumePipeline,
 } from './pipelines/_resume';
 export { runChatPipeline } from './pipelines/_chat';
+export { runProjectPublishPipeline } from './pipelines/_publish';

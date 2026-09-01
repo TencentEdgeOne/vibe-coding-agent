@@ -14,6 +14,10 @@ export type ProjectState = {
   sandboxDebugUrl?: string;
   /** Latched once publish_preview succeeds; survives live URL invalidation so resume can restart preview. */
   previewPublished?: boolean;
+  /** Pages project reused for header Publish across turns in this conversation. */
+  makersProjectId?: string;
+  /** Last signed preview URL from a successful Publish. Expires. */
+  makersPreviewUrl?: string;
 };
 
 // A base64 archive of the whole project, persisted outside the volatile sandbox so

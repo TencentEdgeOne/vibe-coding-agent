@@ -55,10 +55,14 @@ import type {
   ChatStreamEvent,
   FileTree,
   LinkInfo,
+  PublishResult,
+  PublishStage,
+  PublishStreamEvent,
   ResumeData,
   ResumeStreamEvent,
 } from '@/app/types/workspace';
 import { HomeStage } from './components/home-stage';
+import { PublishDialog } from './components/publish-dialog';
 import { SiteHeader } from './components/site-header';
 import { consumeEventStream } from './sse';
 import {
@@ -66,6 +70,7 @@ import {
   fetchProjectArchive,
   fetchResumePreview,
   openResumeStream,
+  publishProject,
   startChatTask,
   stopChatTask,
 } from './workspace-api';
@@ -120,6 +125,13 @@ export function WorkspaceScreen() {
   const [preview, setPreview] = useState<LinkInfo | null>(null);
   const [download, setDownload] = useState<LinkInfo | null>(null);
   const [downloadBusy, setDownloadBusy] = useState(false);
+  const [publishBusy, setPublishBusy] = useState(false);
+  const [publishDialogOpen, setPublishDialogOpen] = useState(false);
+  const [publishError, setPublishError] = useState<string | null>(null);
+  const [publishResult, setPublishResult] = useState<PublishResult | null>(null);
+  const [publishStage, setPublishStage] = useState<PublishStage | null>(null);
+  const [publishCopied, setPublishCopied] = useState(false);
+  const [lastPublishUrl, setLastPublishUrl] = useState<string | null>(null);
   const [build, setBuild] = useState<BuildInfo | null>(null);
   const [loading, setLoading] = useState(false);
   const [sandboxTab, setSandboxTab] = useState<'preview' | 'files'>('preview');
@@ -1303,6 +1315,85 @@ export function WorkspaceScreen() {
     }
   }
 
+  async function handlePublish() {
+    if (!conversationId || !hasWorkspace || !download?.url || loading || publishBusy) {
+      return;
+    }
+
+    setPublishBusy(true);
+    setPublishError(null);
+    setPublishResult(null);
+    setPublishStage('packaging');
+    setPublishCopied(false);
+    setPublishDialogOpen(true);
+
+    try {
+      const { domain } = extractProjectName();
+      const response = await publishProject(conversationId, domain);
+      const contentType = response.headers.get('content-type') || '';
+      if (!response.body || !contentType.includes('text/event-stream')) {
+        const data = await response.json().catch(() => null) as { error?: string } | null;
+        setPublishError(data?.error || `${response.status}`);
+        return;
+      }
+
+      let gotResult = false;
+      let gotError = false;
+      await consumeEventStream<PublishStreamEvent>(response, (event) => {
+        if (event.type === 'ping') return;
+        if (event.type === 'status' && event.stage) {
+          setPublishStage(event.stage);
+          return;
+        }
+        if (event.type === 'result' && event.data) {
+          gotResult = true;
+          setPublishResult({
+            ok: event.data.ok,
+            previewUrl: event.data.previewUrl,
+            projectId: event.data.projectId,
+            deploymentId: event.data.deploymentId,
+          });
+          if (event.data.previewUrl) {
+            setLastPublishUrl(event.data.previewUrl);
+          }
+          return;
+        }
+        if (event.type === 'error') {
+          gotError = true;
+          setPublishError(event.error || t.workspace.publishFailedTitle);
+        }
+      });
+      if (!gotResult && !gotError) {
+        setPublishError(t.workspace.publishFailedTitle);
+      }
+    } catch (error) {
+      setPublishError(error instanceof Error ? error.message : t.response.unknownError);
+    } finally {
+      setPublishBusy(false);
+    }
+  }
+
+  function handleOpenPublishUrl() {
+    const url = publishResult?.previewUrl || lastPublishUrl;
+    if (url) {
+      window.open(url, '_blank', 'noopener,noreferrer');
+    }
+  }
+
+  async function handleCopyPublishUrl() {
+    const url = publishResult?.previewUrl;
+    if (!url || !navigator.clipboard) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      setPublishCopied(true);
+      window.setTimeout(() => setPublishCopied(false), 1600);
+    } catch {
+      setPublishCopied(false);
+    }
+  }
+
   // Placeholder for "claim deployment" (plan §3.1). Until the platform drop/claim API
   // is ready, this opens the EdgeOne console (plan's option A: finish the claim there).
   function handleClaimDeploy() {
@@ -1370,6 +1461,14 @@ export function WorkspaceScreen() {
     setLoading(false);
     setPreview(null);
     setDownload(null);
+    setDownloadBusy(false);
+    setPublishBusy(false);
+    setPublishDialogOpen(false);
+    setPublishError(null);
+    setPublishResult(null);
+    setPublishStage(null);
+    setPublishCopied(false);
+    setLastPublishUrl(null);
     setBuild(null);
     setFileTree(null);
     setFilesRefreshing(false);
@@ -1433,6 +1532,9 @@ export function WorkspaceScreen() {
         hasWorkspace={hasWorkspace}
         canDownload={Boolean(download?.url)}
         downloadBusy={downloadBusy}
+        loading={loading}
+        publishBusy={publishBusy}
+        lastPublishUrl={lastPublishUrl}
         contactUrl={contactUrl}
         showDeploy={CLAIM_DEPLOY_ENABLED}
         showExportTranscript={process.env.NODE_ENV === 'development'}
@@ -1441,6 +1543,8 @@ export function WorkspaceScreen() {
         onDownload={() => void handleDownload()}
         onNewProject={handleNewProject}
         onDeploy={handleClaimDeploy}
+        onPublish={() => void handlePublish()}
+        onOpenLastPublish={handleOpenPublishUrl}
         onExportTranscript={handleExportTranscript}
       />
       <Dialog open={newProjectConfirmOpen} onOpenChange={setNewProjectConfirmOpen}>
@@ -1463,6 +1567,19 @@ export function WorkspaceScreen() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <PublishDialog
+        copy={t}
+        open={publishDialogOpen}
+        busy={publishBusy}
+        stage={publishStage}
+        error={publishError}
+        result={publishResult}
+        copied={publishCopied}
+        onOpenChange={setPublishDialogOpen}
+        onRetry={() => void handlePublish()}
+        onCopy={() => void handleCopyPublishUrl()}
+        onOpen={handleOpenPublishUrl}
+      />
       {!hasWorkspace && (
         <HomeStage
           copy={t}

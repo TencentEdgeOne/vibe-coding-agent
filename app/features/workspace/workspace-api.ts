@@ -116,3 +116,11 @@ export function fetchProjectArchive(url: string, conversationId: string) {
       : {},
   });
 }
+
+export function publishProject(conversationId: string, siteDomain: string) {
+  return fetch('/publish', {
+    method: 'POST',
+    headers: conversationHeaders(conversationId),
+    body: JSON.stringify({ siteDomain }),
+  });
+}

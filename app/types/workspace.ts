@@ -7,6 +7,9 @@ export type {
   ChatStreamEvent,
   FileTree,
   LinkInfo,
+  PublishResult,
+  PublishStage,
+  PublishStreamEvent,
   ResumeData,
   ResumeStreamEvent,
 } from '../../shared/protocol';

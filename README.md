@@ -23,6 +23,7 @@ Web Dev Agent turns natural-language requests into runnable web projects. For ea
 | `AI_GATEWAY_API_KEY` | Yes | Model gateway API key. Use your Makers Models API Key, or any OpenAI-compatible provider key. |
 | `AI_GATEWAY_BASE_URL` | Yes | Gateway base URL. For Makers Models, use `https://ai-gateway.edgeone.link/v1`. |
 | `AI_GATEWAY_MODEL` | No | Model ID. Defaults to `@makers/deepseek-v4-flash` (a built-in Makers model). |
+| `MAKERS_API_TOKEN` | Yes (Publish) | Makers API token used by the header **Publish** action to deploy the generated project to EdgeOne Pages. Region is inferred from the site hostname (`.dev` vs `.cool`), not from an environment variable. |
 | `WEB_DEV_AGENT_DEBUG` | No | Set to `true` or `1` to enable redacted server-side debug logs. Defaults to off. |
 
 This template follows the OpenAI-compatible standard — point these at Makers Models or any compatible provider.
@@ -74,6 +75,7 @@ web-dev-agent/
 │   └── globals.css         # Global styles
 ├── agents/                 # EdgeOne Makers agent routes and pipeline
 │   ├── chat.ts             # POST /chat: create + stream; GET /chat: reconnect
+│   ├── publish.ts          # POST /publish: pack sandbox and deploy with makers-sdk
 │   ├── file.ts             # /file route
 │   ├── _agent.ts           # Claude Agent SDK integration
 │   ├── _constants.ts       # Runtime constants

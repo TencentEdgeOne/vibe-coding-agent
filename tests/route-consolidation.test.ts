@@ -78,3 +78,78 @@ test('workspace persistence uses the sandbox SDK and metadata snapshots are read
   assert.doesNotMatch(memory, /listConversations/);
   assert.doesNotMatch(memory, /deleteConversation/);
 });
+
+test('publish is a dedicated agent route with a private pipeline', async () => {
+  const route = await readFile('agents/publish.ts', 'utf8');
+  const pipeline = await readFile('agents/pipelines/_publish.ts', 'utf8');
+  const client = await readFile('app/features/workspace/workspace-api.ts', 'utf8');
+  const screen = await readFile('app/features/workspace/workspace-screen.tsx', 'utf8');
+
+  assert.match(route, /onRequestPost/);
+  assert.match(route, /runProjectPublishPipeline/);
+  const sseCall = pipeline.lastIndexOf('return createSSEResponse');
+  const packCall = pipeline.indexOf('await createProjectArchive');
+  assert.ok(sseCall >= 0 && packCall > sseCall, 'packaging must start after the SSE stream opens');
+  assert.match(pipeline, /type: 'status'/);
+  assert.match(pipeline, /stage: 'packaging'/);
+  assert.match(pipeline, /stage: 'uploading'/);
+  assert.match(pipeline, /stage: 'deploying'/);
+  assert.match(pipeline, /onStatusChange/);
+  assert.match(pipeline, /rewritePublishZip/);
+  assert.match(pipeline, /resolveMakersPublishTarget/);
+  assert.match(pipeline, /makersProjectId/);
+  assert.match(pipeline, /context\.env/);
+  assert.match(pipeline, /MAKERS_API_TOKEN/);
+  assert.doesNotMatch(pipeline, /process\.env/);
+  assert.doesNotMatch(pipeline, /MAKERS_REGION/);
+  assert.match(client, /fetch\('\/publish'/);
+  assert.match(client, /makers-conversation-id/);
+  assert.match(client, /siteDomain/);
+  assert.match(screen, /extractProjectName\(\)/);
+  await assert.rejects(access('agents/pipelines/publish.ts'));
+  await access('agents/pipelines/_publish.ts');
+  await access('agents/publish.ts');
+});
+
+test('publish button sits left of contact and disables while the agent is running', async () => {
+  const header = await readFile('app/features/workspace/components/site-header.tsx', 'utf8');
+  const screen = await readFile('app/features/workspace/workspace-screen.tsx', 'utf8');
+
+  const publishIndex = header.indexOf('onPublish');
+  const contactIndex = header.indexOf("isZh ? '联系我们' : 'Contact'");
+  assert.ok(publishIndex >= 0 && contactIndex > publishIndex);
+  assert.match(header, /disabled=\{publishDisabled\}/);
+  assert.match(header, /loading \|\| publishBusy/);
+  assert.match(header, /title=\{publishTitleText\}/);
+  assert.match(header, /publishDisabledAgentRunning/);
+  assert.match(header, /republishLabel/);
+  assert.match(header, /onOpenLastPublish/);
+  assert.match(header, /Globe/);
+  assert.doesNotMatch(header, /showDeploy &&[\s\S]{0,80}onPublish/);
+  assert.match(screen, /showDeploy=\{CLAIM_DEPLOY_ENABLED\}/);
+  assert.match(screen, /onPublish=\{\(\) => void handlePublish\(\)\}/);
+  assert.doesNotMatch(screen, /showDeploy=\{true\}/);
+  assert.match(screen, /<PublishDialog/);
+  assert.match(screen, /const url = publishResult\?\.previewUrl/);
+  assert.match(screen, /clipboard\.writeText\(url\)/);
+  assert.doesNotMatch(screen, /makersPreviewUrl/);
+  assert.match(screen, /setLastPublishUrl\(null\)/);
+  const dialog = await readFile('app/features/workspace/components/publish-dialog.tsx', 'utf8');
+  assert.match(dialog, /displayPublishOrigin/);
+  assert.match(dialog, /publish-origin-link/);
+  assert.match(dialog, /href=\{previewUrl\}/);
+  assert.match(dialog, /publishRetry/);
+  assert.doesNotMatch(dialog, /eo_token/);
+  const publishBtn = header.indexOf('site-publish-button');
+  const globe = header.indexOf('<Globe');
+  assert.ok(publishBtn >= 0 && globe > publishBtn && contactIndex > globe);
+
+  const i18n = await readFile('app/i18n.ts', 'utf8');
+  assert.match(i18n, /republishLabel/);
+  assert.match(i18n, /publishRetry/);
+  assert.match(i18n, /publishCannotClose/);
+  assert.match(i18n, /publishDisabledNoProject/);
+  assert.match(i18n, /publishStagePackaging/);
+  assert.doesNotMatch(i18n, /签名参数/);
+});
+

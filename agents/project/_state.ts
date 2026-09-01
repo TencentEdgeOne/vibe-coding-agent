@@ -41,6 +41,8 @@ export async function resetProjectWorkspace(
   state.previewUrl = undefined;
   state.sandboxDebugUrl = undefined;
   state.previewPublished = undefined;
+  state.makersProjectId = undefined;
+  state.makersPreviewUrl = undefined;
   return appDirExists;
 }
 

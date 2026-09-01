@@ -267,7 +267,7 @@ export function buildPrompt(
     'Prefer the smallest complete change, preserving the existing project structure and style. Do not refactor anything unrelated to the user request.',
     'Next.js projects must use the standard App Router structure. Use next.config.js or next.config.mjs for configuration; do not generate next.config.ts.',
     "Next.js projects must support basePath: process.env.EDGEONE_PREVIEW_BASE_PATH || '' in next.config.js or next.config.mjs. Do not hard-code /preview into business routes.",
-    `Vite projects must support sandbox preview under ${PREVIEW_PATH_PREFIX}: use base ${PREVIEW_PATH_PREFIX}; server.host='0.0.0.0'; server.port=${PREVIEW_SERVER_PORT}; server.strictPort=true; server.allowedHosts=true; server.hmr={ protocol:'wss', clientPort:443 }; legacy.skipWebSocketTokenCheck=true; do not set server.hmr.path.`,
+    `Vite projects must support sandbox preview under ${PREVIEW_PATH_PREFIX}: server.host='0.0.0.0'; server.port=${PREVIEW_SERVER_PORT}; server.strictPort=true; server.allowedHosts=true; server.hmr={ protocol:'wss', clientPort:443 }; legacy.skipWebSocketTokenCheck=true; do not set server.hmr.path. Do not hard-code base: '${PREVIEW_PATH_PREFIX}' (or any /preview prefix) in the project vite.config — the sandbox overlay injects that for live preview. Production and Makers publish must keep Vite base at '/'.`,
     'Vite React projects must install @vitejs/plugin-react and configure plugins: [react()] to preserve React Fast Refresh.',
     'Do not hard-code temporary sandbox preview domains in vite.config.',
     'If you generate a TypeScript project, ensure imports, types, and routing APIs can pass build or verification.',

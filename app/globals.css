@@ -1338,6 +1338,10 @@ input::placeholder {
     display: none;
   }
 
+  .site-publish-button {
+    display: inline-flex;
+  }
+
   .workspace-topbar {
     align-items: center;
     padding: 0 8px;
@@ -1491,6 +1495,116 @@ input::placeholder {
 .contact-dialog-footer a:last-child:hover,
 .contact-dialog-footer button:last-child:hover {
   background: #1f57e0;
+}
+
+.site-publish-button {
+  gap: 6px;
+  padding: 0 10px;
+}
+
+.site-publish-button svg {
+  width: 13px;
+  height: 13px;
+}
+
+.publish-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 18px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.publish-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #9aa0a8;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.publish-step.is-active {
+  color: #17181c;
+  font-weight: 600;
+}
+
+.publish-step.is-done {
+  color: #34373d;
+}
+
+.publish-step.is-error {
+  color: #b42318;
+  font-weight: 600;
+}
+
+.publish-step-mark {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  place-items: center;
+  border: 1px solid #e8eaee;
+  border-radius: 999px;
+  background: #fff;
+}
+
+.publish-step.is-done .publish-step-mark,
+.publish-step.is-active .publish-step-mark {
+  border-color: #2f6bff;
+  color: #2f6bff;
+}
+
+.publish-step.is-error .publish-step-mark {
+  border-color: #b42318;
+  color: #b42318;
+}
+
+.publish-step-mark svg {
+  width: 11px;
+  height: 11px;
+  stroke-width: 2.4;
+}
+
+.publish-step-spinner {
+  width: 10px;
+  height: 10px;
+  border: 2px solid rgba(47, 107, 255, 0.24);
+  border-top-color: #2f6bff;
+  border-radius: 999px;
+  animation: spin 0.7s linear infinite;
+}
+
+.publish-origin-link {
+  display: inline-block;
+  margin: 16px 0 0;
+  color: #2f6bff;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  text-decoration: none;
+}
+
+.publish-origin-link:hover {
+  text-decoration: underline;
+}
+
+.publish-dialog-footer {
+  justify-content: space-between;
+}
+
+.publish-cannot-close {
+  margin: 0;
+  width: 100%;
+  color: #6b7280;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 /* Selected mode stays visually stable on hover, click, and keyboard focus. */

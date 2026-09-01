@@ -21,6 +21,11 @@ test('frontend never imports the agent runtime', async () => {
       /(?:from\s+|import\s*)['"][^'"]*agents\//,
       `${file} crosses the app → agents boundary; move the contract to shared/`,
     );
+    assert.doesNotMatch(
+      source,
+      /@edgeone\/makers-sdk/,
+      `${file} must not import the Node-only Makers SDK`,
+    );
   }
 });
 

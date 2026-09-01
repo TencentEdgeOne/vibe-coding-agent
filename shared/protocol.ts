@@ -175,3 +175,18 @@ export type ResumeStreamEvent =
     }
   | { type: 'error'; error?: string }
   | { type: 'ping'; ts?: number };
+
+export type PublishResult = {
+  ok?: boolean;
+  previewUrl?: string;
+  projectId?: string;
+  deploymentId?: string;
+};
+
+export type PublishStage = 'packaging' | 'uploading' | 'deploying';
+
+export type PublishStreamEvent =
+  | { type: 'status'; stage?: PublishStage; status?: string }
+  | { type: 'result'; data?: PublishResult }
+  | { type: 'error'; error?: string }
+  | { type: 'ping'; ts?: number };
