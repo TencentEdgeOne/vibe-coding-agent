@@ -4,7 +4,9 @@ import type { FormEvent, KeyboardEvent } from 'react';
 import { Sparkles } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
+import { ModelPicker } from '@/app/components/model-picker';
 import type { Locale, UiCopy } from '@/app/i18n';
+import type { ModelOption } from '../../../../shared/models';
 
 type HomeStageProps = {
   copy: UiCopy;
@@ -13,6 +15,9 @@ type HomeStageProps = {
   placeholder: string;
   canSend: boolean;
   loading: boolean;
+  models: readonly ModelOption[];
+  model: string;
+  onModelChange: (model: string) => void;
   onInputChange: (value: string) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onSend: () => void;
@@ -25,6 +30,9 @@ export function HomeStage({
   placeholder,
   canSend,
   loading,
+  models,
+  model,
+  onModelChange,
   onInputChange,
   onSubmit,
   onSend,
@@ -48,7 +56,7 @@ export function HomeStage({
         </h1>
         <p className="mt-3 text-[15px] text-muted-foreground">{copy.home.subtitle}</p>
 
-        <Card className="mt-8 gap-0 rounded-[10px] border-border p-4 text-left shadow-none transition-[border-color,box-shadow] focus-within:border-primary focus-within:shadow-[0_0_0_3px_rgba(47,107,255,0.12)]">
+        <Card className="home-composer mt-8 gap-0 overflow-visible rounded-[10px] border-border p-4 text-left shadow-none transition-[border-color,box-shadow] focus-within:border-primary focus-within:shadow-[0_0_0_3px_rgba(47,107,255,0.12)]">
           <form onSubmit={onSubmit}>
             <Textarea
               value={input}
@@ -58,12 +66,22 @@ export function HomeStage({
               rows={3}
               className="min-h-[104px] resize-none border-0 bg-transparent px-1 py-1 text-[14px] leading-relaxed shadow-none focus-visible:ring-0"
             />
-            <div className="mt-3 flex items-center gap-2.5">
+            <div className="mt-2 flex items-center justify-end gap-2">
+              {/* Sits with the submit button rather than among the example chips:
+                  both are about how this run happens, the chips are about what to
+                  ask for. */}
+              <ModelPicker
+                models={models}
+                value={model}
+                ariaLabel={copy.workspace.modelLabel}
+                disabled={loading}
+                onChange={onModelChange}
+              />
               <button
                 type="submit"
                 disabled={!canSend}
                 aria-label={copy.home.fastBuild}
-                className="ml-auto inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-4 text-xs font-semibold text-primary-foreground transition-colors hover:bg-[var(--brand-deep)] disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-4 text-xs font-semibold text-primary-foreground transition-colors hover:bg-[var(--brand-deep)] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {loading ? (
                   <span className="size-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />

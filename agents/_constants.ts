@@ -7,7 +7,7 @@ export const HISTORY_FETCH_LIMIT = 50;
 export const AUTO_FIX_MAX_ATTEMPTS = 1;
 export const BUILD_ERROR_PROMPT_LIMIT = 12000;
 export const BUILD_RELATED_PATH_LIMIT = 12;
-export const DEFAULT_MODEL = '@makers/deepseek-v4-flash';
+export { DEFAULT_MODEL } from '../shared/models.ts';
 export const DEFAULT_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 export const GATEWAY_QUOTA_BYPASS_HEADER = 'X-Gateway-Quota-Bypass: true';
 export const GATEWAY_QUOTA_PROMPT_HEADER = 'X-Prompt-Log: true';

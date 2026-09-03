@@ -87,6 +87,8 @@ export type ResumeData = {
   download?: LinkInfo;
   activityHistory?: PersistedActivityTurn[];
   activeTask?: ActiveChatTask | null;
+  /** Model chosen for this conversation; '' or absent means the deployment default. */
+  model?: string;
   error?: string;
 };
 

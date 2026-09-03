@@ -41,6 +41,8 @@ export type ChatTaskStatus = 'queued' | 'running' | 'completed' | 'failed' | 'st
 export type ChatTask = {
   id: string;
   message: string;
+  /** Model this turn runs on. Absent means the deployment's configured default. */
+  model?: string;
   resetProject: boolean;
   status: ChatTaskStatus;
   createdAt: number;

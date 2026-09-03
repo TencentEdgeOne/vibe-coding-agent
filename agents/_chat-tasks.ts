@@ -2,7 +2,9 @@ import { runChatPipeline } from './_pipelines';
 import {
   appendTurn,
   getChatTask,
+  getModelPreference,
   saveChatTask,
+  saveModelPreference,
 } from './_memory';
 import type { ChatTask, ChatTaskStatus, StreamSend } from './_types';
 import { createSSEResponse, sseEvent } from './_shared';
@@ -159,10 +161,17 @@ function isTaskActive(task: ChatTask | null) {
   return task?.status === 'queued' || task?.status === 'running';
 }
 
+type ChatTaskOptions = {
+  resetProject?: boolean;
+  turnId?: string;
+  /** Already validated against this deployment's catalogue; '' means no choice. */
+  model?: string;
+};
+
 async function createChatTask(
   context: any,
   message: string,
-  options: { resetProject?: boolean; turnId?: string } = {},
+  options: ChatTaskOptions = {},
 ) {
   const conversationId = getConversationId(context);
   if (!conversationId) {
@@ -192,14 +201,24 @@ async function createChatTask(
   // second time.
   await appendTurn(context, conversationId, 'user', message);
 
+  // A request without a choice inherits the conversation's, so the model only
+  // changes when someone changes it. Recording it on the task is what makes a
+  // reconnect replay the run that actually happened.
+  const requestedModel = (options.model || '').trim();
+  const model = requestedModel || await getModelPreference(context, conversationId);
+
   const task: ChatTask = {
     id: taskId,
     message,
+    ...(model ? { model } : {}),
     resetProject: options.resetProject === true,
     status: 'queued',
     createdAt: Date.now(),
   };
   await saveChatTask(context, conversationId, task);
+  if (requestedModel) {
+    await saveModelPreference(context, conversationId, requestedModel);
+  }
   return { ok: true as const, conversationId, task };
 }
 
@@ -238,6 +257,7 @@ async function executeLiveTask(context: any, liveTask: LiveChatTask) {
       resetProject: liveTask.task.resetProject,
       turnId: liveTask.task.id,
       userMessagePersisted: true,
+      model: liveTask.task.model,
     });
   } catch (runError) {
     error = runError instanceof Error ? runError.message : 'Request processing failed.';
@@ -380,7 +400,7 @@ function createLiveTaskStreamResponse(
 export async function createChatTaskAndStreamResponse(
   context: any,
   message: string,
-  options: { resetProject?: boolean; turnId?: string } = {},
+  options: ChatTaskOptions = {},
 ) {
   const result = await createChatTask(context, message, options);
   if (!result.ok) {

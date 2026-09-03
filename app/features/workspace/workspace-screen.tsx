@@ -67,6 +67,7 @@ import { SiteHeader } from './components/site-header';
 import { consumeEventStream } from './sse';
 import {
   fetchChatTaskStream,
+  fetchModelCatalog,
   fetchProjectArchive,
   fetchResumePreview,
   openResumeStream,
@@ -74,6 +75,7 @@ import {
   startChatTask,
   stopChatTask,
 } from './workspace-api';
+import type { ModelOption } from '../../../shared/models';
 
 // Refresh before the sandbox credential is likely to expire. A gateway auth
 // response is a JSON document, so it must never be allowed to replace the user
@@ -113,6 +115,10 @@ export function WorkspaceScreen() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [conversationId, setConversationId] = useState<string | null>(null);
+  // Empty until /models answers, which keeps the picker hidden rather than
+  // briefly showing a menu the server has not confirmed it accepts.
+  const [models, setModels] = useState<ModelOption[]>([]);
+  const [model, setModel] = useState('');
   // Resume-on-load: rehydrate the last conversation's workspace after a refresh.
   // `resumeChecked` gates the first render. It MUST init to a constant (not from
   // localStorage): SSR has no localStorage, so deriving it there would mismatch the
@@ -260,6 +266,24 @@ export function WorkspaceScreen() {
   }, []);
 
   useEffect(() => {
+    const controller = new AbortController();
+    // The runtime turns away any agent route without a conversation, but this
+    // one answers from deployment config and ignores it. On the home screen
+    // there is no conversation yet, and caching one to get past the gate would
+    // send the next refresh into restoring something never written.
+    const routingId = getStoredConversationId() || createConversationId();
+    void fetchModelCatalog(routingId, controller.signal).then((catalog) => {
+      if (controller.signal.aborted || !catalog?.ok || !Array.isArray(catalog.models)) return;
+      setModels(catalog.models);
+      // Only seeds the selection. A conversation being resumed overwrites this
+      // with its own choice, and that runs after /models either way because it
+      // waits on the network too.
+      setModel((current) => current || catalog.defaultModel || '');
+    });
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
     // Progressive resume: paint chat history as soon as store data returns, then
     // bootstrap the sandbox (restore + npm install + preview) in the background.
     let cancelled = false;
@@ -279,6 +303,11 @@ export function WorkspaceScreen() {
       }
       if (data.conversation_id) {
         setConversationId(data.conversation_id);
+      }
+      // Absent until someone picks one, in which case the deployment default
+      // seeded from /models is already the right answer.
+      if (data.model) {
+        setModel(data.model);
       }
       const activityHistory = Array.isArray(data.activityHistory) ? data.activityHistory : [];
       let nextMessages: ChatMessage[] = activityHistory.length > 0
@@ -1170,6 +1199,7 @@ export function WorkspaceScreen() {
         message: trimmed,
         turnId: assistantMessageId,
         resetProject: isStartingFromHome,
+        ...(model ? { model } : {}),
         signal: requestAbortController.signal,
       });
       await attachChatStream({
@@ -1588,6 +1618,9 @@ export function WorkspaceScreen() {
           placeholder={typedPlaceholder}
           canSend={canSend}
           loading={loading}
+          models={models}
+          model={model}
+          onModelChange={setModel}
           onInputChange={setInput}
           onSubmit={handleSubmit}
           onSend={() => void sendMessage(input)}
@@ -1607,6 +1640,9 @@ export function WorkspaceScreen() {
           loading={loading}
           canSend={canSend}
           compact
+          models={models}
+          model={model}
+          onModelChange={setModel}
           copy={{
             running: t.workspace.activityRunning,
             completed: t.workspace.activityCompleted,
@@ -1617,6 +1653,7 @@ export function WorkspaceScreen() {
             placeholder: t.workspace.changePlaceholder,
             send: t.workspace.send,
             stop: t.workspace.stop,
+            modelLabel: t.workspace.modelLabel,
             toolActions: t.workspace.toolActions,
           }}
           onInputChange={setInput}

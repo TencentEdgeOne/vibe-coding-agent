@@ -32,7 +32,13 @@ export async function runChatPipeline(
   context: any,
   message: string,
   send: StreamSend,
-  options: { resetProject?: boolean; turnId?: string; userMessagePersisted?: boolean } = {},
+  options: {
+    resetProject?: boolean;
+    turnId?: string;
+    userMessagePersisted?: boolean;
+    /** Validated model for this turn; '' or absent runs the configured default. */
+    model?: string;
+  } = {},
 ) {
   const { conversationId } = resolveConversationId(context);
   const abortSignal = context?.request?.signal as AbortSignal | undefined;
@@ -243,6 +249,8 @@ export async function runChatPipeline(
     handleProjectFilesChanged,
     handlePreviewReady,
     abortSignal,
+    message,
+    { model: options.model },
   );
 
   if (modelResult.stopped || abortSignal?.aborted) {
@@ -429,6 +437,9 @@ export async function runChatPipeline(
       handlePreviewReady,
       abortSignal,
       message,
+      // Repairing on a different model than the one that wrote the code would
+      // make a failed build hard to attribute to either.
+      { model: options.model },
     );
     if (autoFixResult.stopped || abortSignal?.aborted) {
       const stoppedReply = buildStoppedReply(message);

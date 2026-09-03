@@ -3,6 +3,7 @@ import {
   getChatTask,
   getHistory,
   getLegacyProjectSnapshot,
+  getModelPreference,
   getProjectState,
   saveProjectState,
 } from '../_memory';
@@ -101,12 +102,13 @@ async function readResumeStage(context: any): Promise<ResumeStage> {
 // Fast path: store reads only. No sandbox restore / npm install / preview.
 // Lets the UI paint chat history immediately after a refresh.
 async function loadProjectResumeHistory(context: any, conversationId: string) {
-  const [messages, activityHistory, snapshot, chatTask, state] = await Promise.all([
+  const [messages, activityHistory, snapshot, chatTask, state, model] = await Promise.all([
     getHistory(context, conversationId),
     getActivityHistory(context, conversationId),
     getLegacyProjectSnapshot(context, conversationId),
     getChatTask(context, conversationId),
     getProjectState(context, conversationId),
+    getModelPreference(context, conversationId),
   ]);
 
   // Prefer a durable snapshot, but also open the workspace when the turn clearly
@@ -139,6 +141,9 @@ async function loadProjectResumeHistory(context: any, conversationId: string) {
     hasProject,
     hasPreview,
     needsWorkspace: hasProject,
+    // Empty until someone picks a model, which leaves the composer on whatever
+    // the /models route reports as this deployment's default.
+    model,
   };
 }
 

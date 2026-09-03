@@ -2,6 +2,7 @@ import {
   createChatTaskAndStreamResponse,
   createChatTaskStreamResponse,
 } from './_chat-tasks';
+import { resolveRequestedModel } from './_models';
 
 /** Create a durable task and stream it over the same HTTP request. */
 export async function onRequestPost(context: any) {
@@ -21,6 +22,9 @@ export async function onRequestPost(context: any) {
     return await createChatTaskAndStreamResponse(context, message, {
       resetProject: body?.resetProject === true,
       turnId: String(body?.turnId || '').trim() || undefined,
+      // Anything this deployment does not offer resolves to '', so a client
+      // cannot name an arbitrary model and have it billed through the gateway.
+      model: resolveRequestedModel(context, body?.model),
     });
   } catch (error) {
     return new Response(JSON.stringify({

@@ -23,10 +23,12 @@ import {
   presentToolActivity,
   type ToolAction,
 } from '../lib/tool-activity';
+import { ModelPicker } from './model-picker';
 import type {
   ActivityStatus,
   AssistantActivity,
 } from '../../shared/protocol';
+import type { ModelOption } from '../../shared/models';
 
 export type ConversationMessage = {
   id: string;
@@ -46,6 +48,7 @@ type ConversationCopy = {
   placeholder: string;
   send: string;
   stop: string;
+  modelLabel: string;
   toolActions: Record<ToolAction, string>;
 };
 
@@ -220,6 +223,9 @@ export function AgentConversation({
   canSend,
   compact,
   copy,
+  models,
+  model,
+  onModelChange,
   onInputChange,
   onSubmit,
   onStop,
@@ -230,6 +236,9 @@ export function AgentConversation({
   canSend: boolean;
   compact: boolean;
   copy: ConversationCopy;
+  models: readonly ModelOption[];
+  model: string;
+  onModelChange: (model: string) => void;
   onInputChange: (value: string) => void;
   onSubmit: () => void;
   onStop: () => void;
@@ -256,7 +265,7 @@ export function AgentConversation({
   };
 
   return (
-    <div className={`agent-conversation min-w-0 w-full overflow-hidden ${compact ? 'agent-conversation-compact' : ''}`}>
+    <div className={`agent-conversation min-w-0 w-full ${compact ? 'agent-conversation-compact' : ''}`}>
       <div
         ref={scrollRef}
         className="conversation-scroll"
@@ -287,6 +296,15 @@ export function AgentConversation({
           }}
           placeholder={copy.placeholder}
           rows={1}
+        />
+        {/* Locked mid-run: the turn already went out on a model, and letting the
+            control move would show one name while another was answering. */}
+        <ModelPicker
+          models={models}
+          value={model}
+          ariaLabel={copy.modelLabel}
+          disabled={loading}
+          onChange={onModelChange}
         />
         {loading ? (
           <button type="button" className="composer-stop" onClick={onStop} title={copy.stop} aria-label={copy.stop}>

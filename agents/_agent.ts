@@ -9,7 +9,6 @@ import {
   buildReplyLanguageReminder,
 } from '../shared/reply-language.ts';
 import {
-  DEFAULT_MODEL,
   DEFAULT_PATH,
   GATEWAY_CONVERSATION_ID_HEADER_NAME,
   GATEWAY_QUOTA_BYPASS_HEADER,
@@ -19,6 +18,7 @@ import {
   PREVIEW_SERVER_PORT,
   SANDBOX_MCP_SERVER_NAME,
 } from './_constants';
+import { resolveConfiguredModel } from './_models';
 import { wrapSandboxToolsForVerification } from './tools/_commands-wrap';
 import {
   buildPreviewLinkTool,
@@ -310,6 +310,9 @@ export async function runCodingAgent(
   // Defaults to `userMessage`; internal prompts (auto-fix) pass the original
   // user request so the answer keeps that user's language.
   languageAnchorMessage: string = userMessage,
+  // An object rather than another positional argument: the list above is long
+  // enough that a new slot would be easy to fill in the wrong order.
+  runOptions: { model?: string } = {},
 ): Promise<CodingAgentResult> {
   // Prefer AI Gateway for model access, with backward-compatible Anthropic / DeepSeek config.
   const apiKey = pickEnvValue(context, 'AI_GATEWAY_API_KEY')
@@ -317,10 +320,10 @@ export async function runCodingAgent(
     || pickEnvValue(context, 'DEEPSEEK_API_KEY');
   const authToken = pickEnvValue(context, 'ANTHROPIC_AUTH_TOKEN')
     || pickEnvValue(context, 'DEEPSEEK_API_KEY');
-  const model = pickEnvValue(context, 'AI_GATEWAY_MODEL')
-    || pickEnvValue(context, 'ANTHROPIC_MODEL')
-    || pickEnvValue(context, 'DEEPSEEK_MODEL')
-    || DEFAULT_MODEL;
+  // A model picked in the composer outranks the deployment default. The choice
+  // was checked against this deployment's catalogue before it got here, so an
+  // unrecognized ID arrives as '' and the configured model still runs.
+  const model = (runOptions.model || '').trim() || resolveConfiguredModel(context);
   const baseURL = pickEnvValue(context, 'AI_GATEWAY_BASE_URL')
     || pickEnvValue(context, 'ANTHROPIC_BASE_URL')
     || pickEnvValue(context, 'DEEPSEEK_BASE_URL')

@@ -71,6 +71,47 @@ export async function saveChatTask(context: any, conversationId: string, task: C
   });
 }
 
+/**
+ * The model this conversation last ran on. Persisted so a refresh can restore
+ * the picker, and so a turn that arrives without an explicit choice still runs
+ * on the model the conversation has been using rather than silently reverting
+ * to the deployment default.
+ */
+export async function getModelPreference(
+  context: any,
+  conversationId: string,
+): Promise<string> {
+  try {
+    const conversation = await context.store.getConversation({ conversationId });
+    const stored = conversation?.metadata?.modelPreference;
+    return typeof stored === 'string' ? stored.trim() : '';
+  } catch (error: any) {
+    if (error?.code !== 'MemoryNotFoundError') {
+      throw error;
+    }
+    return '';
+  }
+}
+
+export async function saveModelPreference(
+  context: any,
+  conversationId: string,
+  model: string,
+) {
+  try {
+    await context.store.updateConversation({
+      conversationId,
+      metadata: { modelPreference: model },
+    });
+  } catch (error: any) {
+    // Same first-turn race as saveProjectState: until appendMessage creates the
+    // conversation, updateConversation has nothing to merge into.
+    if (error?.code !== 'MemoryNotFoundError') {
+      throw error;
+    }
+  }
+}
+
 export async function appendTurn(
   context: any,
   conversationId: string,

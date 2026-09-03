@@ -142,6 +142,7 @@ input::placeholder {
   min-width: 0;
   min-height: 0;
   flex-direction: column;
+  overflow: visible;
   background: transparent;
 }
 
@@ -425,7 +426,10 @@ input::placeholder {
 }
 
 .conversation-composer {
-  display: flex;
+  display: grid;
+  position: relative;
+  overflow: visible;
+  grid-template-columns: 1fr auto;
   align-items: flex-end;
   gap: 7px;
   margin: 0 14px 14px;
@@ -444,7 +448,7 @@ input::placeholder {
   min-width: 0;
   min-height: 32px;
   max-height: 120px;
-  flex: 1;
+  grid-column: 1 / -1;
   resize: none;
   border: 0;
   outline: 0;
@@ -461,6 +465,7 @@ input::placeholder {
   width: 32px;
   height: 32px;
   flex: 0 0 32px;
+  grid-column: 2;
   place-items: center;
   border-radius: 7px;
   transition:
@@ -486,6 +491,133 @@ input::placeholder {
   background: var(--brand-deep);
   box-shadow: 0 6px 14px -8px rgba(47, 107, 255, 0.65);
   transform: translateY(-1px);
+}
+
+/* Model switcher, shared by this composer and the home one. Copied from the CLI
+   template: no pill border, because those are prompts to send and this is a
+   setting that persists, and next to each other they must not read alike. */
+.model-picker {
+  display: inline-flex;
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.model-picker-trigger {
+  display: inline-flex;
+  max-width: 180px;
+  height: 26px;
+  align-items: center;
+  gap: 3px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+  padding: 0 8px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-family: inherit;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.model-picker-trigger:hover:not(:disabled),
+.model-picker-trigger[aria-expanded='true'] {
+  background: #f0f1f3;
+  color: #4d5561;
+}
+
+.model-picker-trigger:focus-visible {
+  outline: 0;
+  background: #f0f1f3;
+  box-shadow: 0 0 0 3px rgba(47, 107, 255, 0.12);
+}
+
+.model-picker-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-picker-trigger svg {
+  flex: 0 0 auto;
+  opacity: 0.7;
+}
+
+/* Opens upward in both composers, which is where the picker sits in each. */
+.model-picker-menu {
+  position: absolute;
+  z-index: 20;
+  bottom: calc(100% + 6px);
+  left: 0;
+  min-width: 190px;
+  max-height: 264px;
+  overflow-y: auto;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  padding: 4px;
+  list-style: none;
+  box-shadow: 0 4px 14px -6px rgba(17, 24, 39, 0.16);
+}
+
+.model-picker-menu:focus {
+  outline: 0;
+}
+
+.model-picker-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  padding: 6px 8px;
+  color: #4d5561;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* One highlight, driven by whichever input the user is currently using, so the
+   keyboard and the pointer cannot disagree about which row is next. */
+.model-picker-option.is-active {
+  background: var(--accent);
+  color: var(--foreground);
+}
+
+.model-picker-option[aria-selected='true'] {
+  font-weight: 500;
+}
+
+/* Held rather than hidden, so every label starts at the same x. */
+.model-picker-check {
+  flex: 0 0 auto;
+  opacity: 0;
+  color: var(--brand);
+}
+
+.model-picker-option[aria-selected='true'] .model-picker-check {
+  opacity: 1;
+}
+
+.model-picker-option-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-picker-disabled {
+  opacity: 0.45;
+}
+
+.model-picker-disabled .model-picker-trigger {
+  cursor: not-allowed;
+}
+
+/* Row two of the composer grid, opposite the send button. */
+.conversation-composer .model-picker {
+  justify-self: start;
+  grid-column: 1;
 }
 
 @keyframes workspace-panel-pop {
@@ -1117,6 +1249,10 @@ input::placeholder {
   height: 28px;
   flex-basis: 28px;
   border-radius: 50%;
+}
+
+.conversation-composer .model-picker {
+  grid-column: 1;
 }
 
 .workspace-result-panel {

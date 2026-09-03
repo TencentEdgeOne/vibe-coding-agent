@@ -2,6 +2,7 @@ import type {
   PersistedActivityTurn,
   ResumeData,
 } from '../../../shared/protocol';
+import type { ModelOption } from '../../../shared/models';
 
 function conversationHeaders(conversationId: string): HeadersInit {
   return {
@@ -50,11 +51,35 @@ export function fetchResumePreview(conversationId: string) {
   return fetchTimedResumeStage(conversationId, 'preview');
 }
 
+/**
+ * The models this deployment offers. Fetched rather than bundled: the list is
+ * assembled from server environment the browser cannot read, and the server
+ * validates against the same list, so building one here could only drift.
+ *
+ * Takes a conversation ID because the runtime rejects every agent route without
+ * one, not because the answer depends on the conversation — it does not.
+ */
+export function fetchModelCatalog(conversationId: string, signal?: AbortSignal) {
+  return fetch('/models', {
+    method: 'GET',
+    headers: conversationHeaders(conversationId),
+    signal,
+  })
+    .then((response) => readJson<{
+      ok?: boolean;
+      models?: ModelOption[];
+      defaultModel?: string;
+    }>(response))
+    .catch(() => null);
+}
+
 export function startChatTask(options: {
   conversationId: string;
   message: string;
   turnId: string;
   resetProject: boolean;
+  /** Omitted runs the deployment default; the server drops anything it does not offer. */
+  model?: string;
   signal?: AbortSignal;
 }) {
   return fetch('/chat', {
@@ -64,6 +89,7 @@ export function startChatTask(options: {
       message: options.message,
       turnId: options.turnId,
       ...(options.resetProject ? { resetProject: true } : {}),
+      ...(options.model ? { model: options.model } : {}),
     }),
     signal: options.signal,
   });
