@@ -250,7 +250,7 @@ export async function runChatPipeline(
     handlePreviewReady,
     abortSignal,
     message,
-    { model: options.model },
+    { model: options.model, resetSession: shouldResetProject },
   );
 
   if (modelResult.stopped || abortSignal?.aborted) {

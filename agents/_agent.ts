@@ -19,6 +19,12 @@ import {
   SANDBOX_MCP_SERVER_NAME,
 } from './_constants';
 import { resolveConfiguredModel } from './_models';
+import { getFileTree } from './_project';
+import {
+  buildExistingProjectGuidance,
+  formatExistingFilePaths,
+  resolveAgentSdkSession,
+} from './_session';
 import { wrapSandboxToolsForVerification } from './tools/_commands-wrap';
 import {
   buildPreviewLinkTool,
@@ -226,11 +232,20 @@ export function buildPrompt(
   // internal turns such as auto-fix, where the prompt is machine-written English
   // but the answer still belongs to whoever asked the original question.
   languageAnchorMessage: string = userMessage,
+  contextOptions: {
+    sessionResumed?: boolean;
+    existingFiles?: string[];
+  } = {},
 ) {
   const recentHistory = history
     .slice(-8)
     .map((item) => `${item.role === 'user' ? 'User' : 'Assistant'}: ${item.content}`)
     .join('\n');
+  const existingProjectGuidance = buildExistingProjectGuidance({
+    isNewProject,
+    sessionResumed: contextOptions.sessionResumed === true,
+    existingFiles: contextOptions.existingFiles,
+  });
 
   return [
     'You are a Web Dev Agent that creates and modifies runnable web projects in a remote sandbox.',
@@ -246,7 +261,7 @@ export function buildPrompt(
     `Before calling ensure_project_scaffold, do not read, write, or execute anything under ${state.appDir}.`,
     `Never pass absolute paths (starting with /). For write_project_file, path must be relative to ${state.appDir} itself — correct: package.json, src/App.tsx, index.html. Wrong: ${state.appDir}/package.json or /${state.appDir}/src/App.tsx. Prefer write_project_file, not raw files_write/files_list.`,
     'Do not use the cloud function local filesystem as the project workspace, and do not modify business files outside the project directory.',
-    'If ensure_project_scaffold returns created=false, inspect the existing code first, then make the smallest complete change needed for the user request.',
+    existingProjectGuidance,
     [
       'If ensure_project_scaffold returns created=true, complete these steps in order:',
       '1. Choose a modular tech stack and a small multi-file layout. Prefer Vite + React/TS (or plain HTML split into index.html + css/ + js/modules) over a single giant HTML file. Do not put styles, scripts, and markup into one large index.html unless the user explicitly asks for a single-file page.',
@@ -312,7 +327,7 @@ export async function runCodingAgent(
   languageAnchorMessage: string = userMessage,
   // An object rather than another positional argument: the list above is long
   // enough that a new slot would be easy to fill in the wrong order.
-  runOptions: { model?: string } = {},
+  runOptions: { model?: string; resetSession?: boolean } = {},
 ): Promise<CodingAgentResult> {
   // Prefer AI Gateway for model access, with backward-compatible Anthropic / DeepSeek config.
   const apiKey = pickEnvValue(context, 'AI_GATEWAY_API_KEY')
@@ -452,6 +467,18 @@ export async function runCodingAgent(
     const sdkAbortController = new AbortController();
     const abortSdkQuery = () => sdkAbortController.abort();
     abortSignal?.addEventListener('abort', abortSdkQuery, { once: true });
+    const sdkSession = await resolveAgentSdkSession(context, conversationId, {
+      reset: runOptions.resetSession === true,
+      cwd: process.cwd(),
+    });
+    let existingFiles: string[] = [];
+    if (!sdkSession.sessionResumed && !isNewProject) {
+      try {
+        existingFiles = formatExistingFilePaths(await getFileTree(context, state));
+      } catch {
+        existingFiles = [];
+      }
+    }
     const sdkOptions: Parameters<typeof query>[0]['options'] = {
       model,
       permissionMode: 'dontAsk',
@@ -472,6 +499,10 @@ export async function runCodingAgent(
         isNewProject,
         mcpServerName,
         languageAnchorMessage,
+        {
+          sessionResumed: sdkSession.sessionResumed,
+          existingFiles,
+        },
       ),
       env: sdkEnv,
       // publish_preview starts the internal port 3000 service, verifies /preview/
@@ -483,6 +514,10 @@ export async function runCodingAgent(
       stderr: (data: string) => {
         debugLog(context, '[claude-code stderr]', data.trimEnd());
       },
+      ...(sdkSession.sessionStore
+        ? { sessionStore: sdkSession.sessionStore, sessionStoreFlush: 'eager' as const }
+        : {}),
+      ...sdkSession.binding,
     };
 
     if (executablePath) {
