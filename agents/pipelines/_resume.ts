@@ -10,6 +10,7 @@ import {
 import {
   assertPreviewServerReady,
   getFileTree,
+  previewTargetsMatch,
   resolvePublicLinks,
   restorePersistedProject,
   rewritePreviewAccessToken,
@@ -187,13 +188,14 @@ async function republishPreviewOnResume(context: any, state: ProjectState) {
       ? context.sandbox.envdAccessToken
       : '';
 
-    // Prefer rotating the token on the URL the iframe already used. Fresh
-    // getHost() can mint a LazySandbox host whose /preview/ proxy is not ready,
-    // which shows up in the panel as {"error":"Not Found",...}.
-    if (state.previewUrl && accessToken) {
+    // Prefer rotating the token on the URL the iframe already used. Only do so
+    // when that URL still targets the current sandbox host; a recycled sandbox
+    // can otherwise produce a host/token mismatch and AUTHENTICATION_FAILED.
+    const warmLinks = await resolvePublicLinks(context);
+    if (state.previewUrl && accessToken && warmLinks.previewUrl
+      && previewTargetsMatch(state.previewUrl, warmLinks.previewUrl)) {
       const rewritten = rewritePreviewAccessToken(state.previewUrl, accessToken);
       if (rewritten) {
-        const warmLinks = await resolvePublicLinks(context);
         state.previewUrl = rewritten;
         state.sandboxDebugUrl = warmLinks.sandboxDebugUrl || state.sandboxDebugUrl;
         return {
@@ -204,7 +206,6 @@ async function republishPreviewOnResume(context: any, state: ProjectState) {
       }
     }
 
-    const warmLinks = await resolvePublicLinks(context);
     if (warmLinks.previewUrl) {
       state.previewUrl = warmLinks.previewUrl;
       state.sandboxDebugUrl = warmLinks.sandboxDebugUrl;

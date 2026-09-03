@@ -12,6 +12,7 @@ export {
   type FileReadResult,
 } from './project/_fs';
 export {
+  previewTargetsMatch,
   resolvePublicLinks,
   rewritePreviewAccessToken,
   startPreviewServer,

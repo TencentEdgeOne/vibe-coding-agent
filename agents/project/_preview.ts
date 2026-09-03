@@ -10,8 +10,8 @@ import { runSandboxCommand } from './_commands';
 export async function resolvePublicLinks(context: any) {
   const previewHost = context.sandbox.getHost(PREVIEW_PUBLIC_PORT);
   const accessToken = context.sandbox.envdAccessToken;
-  const previewBaseUrl = normalizePublicUrl(previewHost);
   const sandboxDebugUrl = normalizePublicUrl(context.sandbox.browser?.liveUrl);
+  const previewBaseUrl = publicUrlOrigin(sandboxDebugUrl) || normalizePublicUrl(previewHost);
   debugLog(context, '[preview-link]', {
     internalPort: PREVIEW_SERVER_PORT,
     publicPort: PREVIEW_PUBLIC_PORT,
@@ -31,6 +31,15 @@ export async function resolvePublicLinks(context: any) {
   };
 }
 
+function publicUrlOrigin(value: string | undefined) {
+  if (!value) return undefined;
+  try {
+    return new URL(value).origin;
+  } catch {
+    return undefined;
+  }
+}
+
 function normalizePublicUrl(value: unknown) {
   if (typeof value !== 'string') {
     return undefined;
@@ -42,6 +51,19 @@ function normalizePublicUrl(value: unknown) {
   }
 
   return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+}
+
+export function previewTargetsMatch(a: string, b: string) {
+  try {
+    const left = new URL(a);
+    const right = new URL(b);
+    return left.protocol === right.protocol
+      && left.hostname === right.hostname
+      && left.port === right.port
+      && left.pathname === right.pathname;
+  } catch {
+    return false;
+  }
 }
 
 function buildPublicPreviewUrl(baseUrl: string, token: string) {
