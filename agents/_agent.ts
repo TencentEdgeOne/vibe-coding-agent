@@ -28,7 +28,6 @@ import {
 import { wrapSandboxToolsForVerification } from './tools/_commands-wrap';
 import {
   buildPreviewLinkTool,
-  buildProjectScaffoldTool,
   buildPublishPreviewTool,
   buildWriteProjectFileTool,
 } from './tools/_project-tools';
@@ -37,7 +36,6 @@ import type {
   CodingAgentResult,
   ConversationMessage,
   ProjectState,
-  ScaffoldLog,
 } from './_types';
 import {
   detectFatalToolError,
@@ -189,16 +187,13 @@ function summarizeSdkMessage(event: SDKMessage): Record<string, unknown> {
   };
 }
 
-type ToolProgressPhase = 'scaffold' | 'code' | 'install' | 'preview' | 'link';
+type ToolProgressPhase = 'code' | 'install' | 'preview' | 'link';
 
 function inferToolProgress(name: string, input: unknown): {
   phaseHint?: ToolProgressPhase;
   fileCount?: number;
 } {
   const toolName = shortenToolName(name);
-  if (toolName === 'ensure_project_scaffold') {
-    return { phaseHint: 'scaffold' };
-  }
   if (toolName === 'publish_preview' || toolName === 'get_preview_link') {
     return { phaseHint: 'preview' };
   }
@@ -256,19 +251,20 @@ export function buildPrompt(
     'If the user asks who you are, what you are, or what kind of agent you are, answer directly, in the reply language, that you are the Vibe Coding Agent sample on EdgeOne Makers, an out-of-the-box Agent template that helps create and modify runnable web projects. Do not call any tools, and do not use the non-project refusal for identity questions.',
     'First decide whether the user request is about a web project, page, component, interaction, styling, or code development.',
     'If the user request is not related to project development, reply with only this message, written in the reply language: I can only help create or modify web projects. Please describe the page or feature you want to build. Do not call any tools.',
-    'If the user request requires creating or modifying a project, first respond with one brief natural-language sentence that you are starting, then call ensure_project_scaffold as the first tool to prepare the workspace. Do not call any other tool before ensure_project_scaffold — including files_list, files_make_dir, files_write, commands, or write_project_file.',
-    'That first sentence must be concise, user-visible progress narration, not a plan, and written in the reply language. For an English request it reads like: I will prepare the workspace first, then start building.',
-    `Before calling ensure_project_scaffold, do not read, write, or execute anything under ${state.appDir}.`,
+    'If the user request requires creating or modifying a project, first respond with one brief natural-language sentence that you are starting, then begin writing files with write_project_file. Do not call files_list, files_make_dir, files_write, or commands before the first write_project_file.',
+    'That first sentence must be concise, user-visible progress narration, not a plan, and written in the reply language. For an English request it reads like: I will start building now.',
     `Never pass absolute paths (starting with /). For write_project_file, path must be relative to ${state.appDir} itself — correct: package.json, src/App.tsx, index.html. Wrong: ${state.appDir}/package.json or /${state.appDir}/src/App.tsx. Prefer write_project_file, not raw files_write/files_list.`,
     'Do not use the cloud function local filesystem as the project workspace, and do not modify business files outside the project directory.',
     existingProjectGuidance,
-    [
-      'If ensure_project_scaffold returns created=true, complete these steps in order:',
-      '1. Choose a modular tech stack and a small multi-file layout. Prefer Vite + React/TS (or plain HTML split into index.html + css/ + js/modules) over a single giant HTML file. Do not put styles, scripts, and markup into one large index.html unless the user explicitly asks for a single-file page.',
-      `2. Write the project incrementally with write_project_file. Each call must contain exactly one complete file: {"path":"src/App.tsx","content":"complete file contents"} — path relative to ${state.appDir}, never "${state.appDir}/src/App.tsx". Keep each file focused and reasonably small so the user sees steady progress. Typical order: package.json/config → styles → small components/modules → entry/App → thin index.html if needed. Call it once per file, in dependency order, and wait for each tool result before the next call. Never send multiple write_project_file calls in the same assistant message.`,
-      `3. Install dependencies inside ${state.appDir} (cd ${state.appDir} && npm install by default for Node/frontend projects; pnpm/yarn only when explicitly requested; python -m pip install -r requirements.txt for Python). Do not invent nested ${state.appDir}/${state.appDir} paths.`,
-      `4. Call the publish_preview tool. It starts the internal service on port ${PREVIEW_SERVER_PORT}, verifies that ${PREVIEW_PATH_PREFIX} is HTTP-ready, and generates the public preview with sandbox.getHost(${PREVIEW_PUBLIC_PORT}) + ${PREVIEW_PATH_PREFIX} + envdAccessToken. Do not hand-write background npm run dev commands.`,
-    ].join('\n'),
+    isNewProject
+      ? [
+        `The workspace at ${state.appDir} is empty and already prepared. Complete these steps in order:`,
+        '1. Choose a modular tech stack and a small multi-file layout. Prefer Vite + React/TS (or plain HTML split into index.html + css/ + js/modules) over a single giant HTML file. Do not put styles, scripts, and markup into one large index.html unless the user explicitly asks for a single-file page.',
+        `2. Write the project incrementally with write_project_file. Each call must contain exactly one complete file: {"path":"src/App.tsx","content":"complete file contents"} — path relative to ${state.appDir}, never "${state.appDir}/src/App.tsx". Keep each file focused and reasonably small so the user sees steady progress. Typical order: package.json/config → styles → small components/modules → entry/App → thin index.html if needed. Call it once per file, in dependency order, and wait for each tool result before the next call. Never send multiple write_project_file calls in the same assistant message.`,
+        `3. Install dependencies inside ${state.appDir} (cd ${state.appDir} && npm install by default for Node/frontend projects; pnpm/yarn only when explicitly requested; python -m pip install -r requirements.txt for Python). Do not invent nested ${state.appDir}/${state.appDir} paths.`,
+        `4. Call the publish_preview tool. It starts the internal service on port ${PREVIEW_SERVER_PORT}, verifies that ${PREVIEW_PATH_PREFIX} is HTTP-ready, and generates the public preview with sandbox.getHost(${PREVIEW_PUBLIC_PORT}) + ${PREVIEW_PATH_PREFIX} + envdAccessToken. Do not hand-write background npm run dev commands.`,
+      ].join('\n')
+      : '',
     'Structure code for progressive delivery: split UI, styles, and logic across multiple files/modules instead of one monolithic HTML/JS blob. Avoid thousand-line files when they can be split into components, hooks, utils, and stylesheets. Prefer several medium files over one oversized HTML/JS file so each write_project_file finishes quickly and improves streaming UX.',
     'Do not write only placeholder pages. Generated files must be complete, internally consistent, and directly installable and runnable.',
     'Always use write_project_file for UTF-8 project source and configuration files, including one-file edits to existing projects. Do not use files_write, write_files, or shell commands to create or replace text source files.',
@@ -295,7 +291,7 @@ export function buildPrompt(
     'Do not include preview buttons, preview links, preview URLs, or sandboxDebugUrl in the final response. The preview is shown only in the right preview panel.',
     'Do not take screenshots.',
     'Do not include emoji in the response.',
-    isNewProject ? 'The project workspace may not have been prepared yet.' : 'This conversation has already prepared a project workspace.',
+    isNewProject ? 'The project workspace is empty and ready for new files.' : 'This conversation has already prepared a project workspace.',
     recentHistory ? `Recent conversation:\n${recentHistory}` : '',
     `Current user request: ${userMessage}`,
     buildReplyLanguageReminder(languageAnchorMessage),
@@ -312,9 +308,8 @@ export async function runCodingAgent(
   history: ConversationMessage[],
   state: ProjectState,
   isNewProject: boolean,
-  onScaffoldLog?: (log: ScaffoldLog) => void,
   onProgress?: (event: AgentProgressEvent) => void,
-  // Fires after the scaffold succeeds (no argument) and after every
+  // Fires after an existing workspace is ready (no argument) and after every
   // write_project_file (with the file just written, so the pipeline can stream
   // its content to the frontend instead of making it fetch the file back).
   onProjectFilesChanged?: (file?: { path: string; content: string }) => void | Promise<void>,
@@ -409,16 +404,6 @@ export async function runCodingAgent(
       !isBrowserSandboxToolName(toolName) && !isGenericProjectWriteToolName(toolName));
     let projectTouched = false;
     let previewTouched = false;
-    let wasCreated = false;
-    const scaffoldTool = buildProjectScaffoldTool(
-      context,
-      state,
-      onScaffoldLog,
-      ({ created }) => {
-        projectTouched = true;
-        wasCreated = created;
-      },
-    );
     const handlePreviewPublished = (preview: { url?: string; sandboxDebugUrl?: string }) => {
       previewTouched = true;
       if (preview.url) {
@@ -445,14 +430,12 @@ export async function runCodingAgent(
     );
     const mcpTools = [
       ...sandboxTools,
-      scaffoldTool,
       writeProjectFileTool,
       publishPreviewTool,
       previewLinkTool,
     ];
     const mcpAllowedTools = [
       ...sandboxAllowedTools,
-      `mcp__${mcpServerName}__ensure_project_scaffold`,
       `mcp__${mcpServerName}__write_project_file`,
       `mcp__${mcpServerName}__publish_preview`,
       `mcp__${mcpServerName}__get_preview_link`,
@@ -472,6 +455,13 @@ export async function runCodingAgent(
       cwd: process.cwd(),
     });
     let existingFiles: string[] = [];
+    if (!isNewProject) {
+      try {
+        await onProjectFilesChanged?.();
+      } catch (err) {
+        console.warn('[workspace-ready] onProjectFilesChanged failed', err);
+      }
+    }
     if (!sdkSession.sessionResumed && !isNewProject) {
       try {
         existingFiles = formatExistingFilePaths(await getFileTree(context, state));
@@ -545,9 +535,6 @@ export async function runCodingAgent(
       currentTextBlock: '',
       emittedNarration: '',
     };
-    const SCAFFOLD_TOOL_NAME = `mcp__${mcpServerName}__ensure_project_scaffold`;
-    // Push file_tree immediately at most once per turn after scaffold, avoiding duplicate find calls.
-    let scaffoldHandled = false;
 
     const emitNarration = (rawText: string, uuid: string, complete = false) => {
       const resolved = resolveNarrationEmit(narrationState, rawText, complete);
@@ -728,20 +715,6 @@ export async function runCodingAgent(
                   endedAt: Date.now(),
                 },
               });
-              // Once ensure_project_scaffold succeeds, notify the outer pipeline to
-              // push file_tree so the Files panel does not wait for the whole runCodingAgent turn.
-              if (
-                !scaffoldHandled
-                && toolName === SCAFFOLD_TOOL_NAME
-                && b.is_error !== true
-              ) {
-                scaffoldHandled = true;
-                try {
-                  await onProjectFilesChanged?.();
-                } catch (err) {
-                  console.warn('[scaffold-done] onProjectFilesChanged failed', err);
-                }
-              }
               // Detect sandbox infrastructure failures only on is_error=true tool
               // results, avoiding false positives from normal text containing "Not Found".
               if (b.is_error === true && !fatalError) {
@@ -777,7 +750,7 @@ export async function runCodingAgent(
         error: null,
         projectTouched,
         previewTouched,
-        wasCreated,
+        wasCreated: isNewProject && projectTouched,
         stopped: true,
       };
     }
@@ -796,7 +769,7 @@ export async function runCodingAgent(
         error: fatalError,
         projectTouched,
         previewTouched,
-        wasCreated,
+        wasCreated: isNewProject && projectTouched,
         fatal: true,
       };
     }
@@ -808,7 +781,7 @@ export async function runCodingAgent(
         error: 'The model stream ended without returning a result.',
         projectTouched,
         previewTouched,
-        wasCreated,
+        wasCreated: isNewProject && projectTouched,
       };
     }
 
@@ -821,7 +794,7 @@ export async function runCodingAgent(
           : 'Model execution failed.',
         projectTouched,
         previewTouched,
-        wasCreated,
+        wasCreated: isNewProject && projectTouched,
       };
     }
 
@@ -831,7 +804,7 @@ export async function runCodingAgent(
       error: null,
       projectTouched,
       previewTouched,
-      wasCreated,
+      wasCreated: isNewProject && projectTouched,
     };
   } catch(e) {
     if (abortSignal?.aborted || (e instanceof Error && e.name === 'AbortError')) {

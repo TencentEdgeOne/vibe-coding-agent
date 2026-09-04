@@ -75,8 +75,7 @@ export async function ensureProjectScaffold(
   onLog?: (log: ScaffoldLog) => void,
 ) {
   const sandbox = context.sandbox;
-  onLog?.({ stream: 'status', content: `Preparing the project workspace ${state.appDir}` });
-  
+
   await sandbox.files.makeDir(state.sessionDir);
   await sandbox.files.makeDir(state.appDir);
 
@@ -99,16 +98,8 @@ export async function ensureProjectScaffold(
   }
   debugLog(context, '[sandbox-info]', { available: Boolean(context.sandbox.getInfo()) });
 
-  // One conversation_id maps to one long-lived project. Reuse existing business
-  // files without overwriting them.
-  if (existing.stdout.trim()) {
-    onLog?.({ stream: 'status', content: 'Existing project workspace detected; skipping initialization.' });
-    return false;
-  }
-
-  onLog?.({ stream: 'status', content: 'Prepared an empty project workspace. Waiting for the agent to generate project files.' });
-  
-  return true;
+  // true when the workspace is empty and ready for the agent to write files.
+  return !existing.stdout.trim();
 }
 
 export async function runVerification(context: any, state: ProjectState): Promise<BuildResult> {

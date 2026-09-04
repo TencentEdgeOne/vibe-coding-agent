@@ -9,3 +9,9 @@ skills-lock.json
 plan*
 .codegraph
 .tef_dist/*
+
+# Tencent Cloud EdgeOne
+.env
+.edgeone/*
+.tef_dist/*
+  

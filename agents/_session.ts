@@ -63,7 +63,7 @@ export function buildExistingProjectGuidance(options: {
 
   if (options.sessionResumed) {
     return [
-      'If ensure_project_scaffold returns created=false, this turn continues the same Claude session.',
+      'This turn continues the same Claude session.',
       'Earlier turns already wrote and read the project files; those contents are still in this conversation.',
       'Do not call files_list to scan the project, and do not files_read files you already wrote or read.',
       'Only files_read a file when you need its current contents to edit it and that content is not already in this session.',
@@ -76,7 +76,7 @@ export function buildExistingProjectGuidance(options: {
     ? `Existing project files (paths only, no contents):\n${files.map((path) => `- ${path}`).join('\n')}`
     : '';
   const readRule = [
-    'If ensure_project_scaffold returns created=false, make the smallest complete change needed for the user request.',
+    'Make the smallest complete change needed for the user request.',
     'Do not files_list the whole project.',
     'Only files_read the files you will change for this request.',
   ].join(' ');

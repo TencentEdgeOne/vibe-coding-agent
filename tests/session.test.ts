@@ -174,6 +174,7 @@ test('resumed guidance forbids a full-project reread', () => {
     sessionResumed: true,
   });
   assert.doesNotMatch(guidance, /inspect the existing code first/);
+  assert.doesNotMatch(guidance, /ensure_project_scaffold/);
   assert.match(guidance, /Do not call files_list/);
   assert.match(guidance, /do not files_read files you already wrote or read/);
 });
@@ -185,6 +186,7 @@ test('unresumed follow-up guidance includes the file list and read-only-what-you
     existingFiles: ['src/App.tsx', 'src/styles.css'],
   });
   assert.doesNotMatch(guidance, /inspect the existing code first/);
+  assert.doesNotMatch(guidance, /ensure_project_scaffold/);
   assert.match(guidance, /Existing project files/);
   assert.match(guidance, /src\/App\.tsx/);
   assert.match(guidance, /Only files_read the files you will change/);
@@ -208,6 +210,7 @@ test('the agent prompt and query wire session resume instead of a full reread', 
 
   assert.match(promptBody, /buildExistingProjectGuidance/);
   assert.doesNotMatch(promptBody, /inspect the existing code first/);
+  assert.doesNotMatch(promptBody, /ensure_project_scaffold/);
   assert.match(agent, /resolveAgentSdkSession/);
   assert.match(agent, /sessionStore: sdkSession\.sessionStore/);
   assert.match(agent, /\.\.\.sdkSession\.binding/);

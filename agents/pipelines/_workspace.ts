@@ -1,6 +1,7 @@
 import { clearLegacyProjectSnapshot, getProjectState } from '../_memory';
 import {
   createProjectState,
+  ensureProjectScaffold,
   getFileTree,
   resetProjectWorkspace,
   restorePersistedProject,
@@ -53,8 +54,15 @@ export async function prepareProjectWorkspace(
       }
     }
 
-    await ensureWorkspaceDirectories(context, state);
-    if (hasProjectFiles) state.created = true;
+    const workspaceIsEmpty = await ensureProjectScaffold(context, state, (log) => {
+      send({
+        type: 'log',
+        phase: 'scaffold',
+        stream: log.stream,
+        message: log.content,
+      });
+    });
+    if (!workspaceIsEmpty) state.created = true;
   } catch (error) {
     send({
       type: 'log',
@@ -63,16 +71,11 @@ export async function prepareProjectWorkspace(
       message: error instanceof Error ? error.message : 'Snapshot restore check failed.',
     });
     try {
-      await ensureWorkspaceDirectories(context, state);
+      await ensureProjectScaffold(context, state);
     } catch {
-      // Scaffold reports the actionable error if directory creation still fails.
+      // Directory creation is retried here; write_project_file reports the next failure.
     }
   }
 
   return state;
-}
-
-async function ensureWorkspaceDirectories(context: any, state: ProjectState) {
-  await context.sandbox.files.makeDir(state.sessionDir);
-  await context.sandbox.files.makeDir(state.appDir);
 }

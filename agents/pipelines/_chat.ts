@@ -8,7 +8,6 @@ import type {
   AgentProgressEvent,
   BuildStatus,
   FileTreeItem,
-  ScaffoldLog,
   StreamSend,
 } from '../_types';
 import { buildAutoFixPrompt } from '../utils/_build-errors';
@@ -90,8 +89,6 @@ export async function runChatPipeline(
     : await getHistory(context, conversationId, {
       excludeLatestUserMessage: options.userMessagePersisted ? message : undefined,
     });
-  const isInitialProjectTurn = !state.created;
-  const hiddenScaffoldToolUseIds = new Set<string>();
   const activityTurnId = options.turnId
     || String(context?.run_id || `${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
@@ -117,30 +114,8 @@ export async function runChatPipeline(
   const recordProgress = turn.recordProgress;
   const finalizeTurn = turn.finalize;
 
-  const handleScaffoldLog = (log: ScaffoldLog) => {
-    if (!isInitialProjectTurn) {
-      return;
-    }
-    send({
-      type: 'log',
-      phase: 'scaffold',
-      stream: log.stream,
-      message: log.content,
-    });
-  };
   const forwardProgress = (event: AgentProgressEvent) => {
     // Forward structured progress events directly; the frontend renders by type.
-    if (
-      !isInitialProjectTurn
-      && event.type === 'tool_use'
-      && (event.data.name === 'ensure_project_scaffold' || event.data.name.endsWith('__ensure_project_scaffold'))
-    ) {
-      hiddenScaffoldToolUseIds.add(event.data.id);
-      return;
-    }
-    if (!isInitialProjectTurn && event.type === 'tool_result' && hiddenScaffoldToolUseIds.has(event.data.tool_use_id)) {
-      return;
-    }
     if (event.type === 'text_segment') {
       const text = state.previewUrl
         ? stripReturnedPreviewLinks(event.data.text, state.previewUrl, { preserveEdges: true })
@@ -206,7 +181,7 @@ export async function runChatPipeline(
     // Push the tree right after the content so its mtime stamps what was just
     // sent, and so the Files panel does not wait for the whole turn. Failures are
     // non-fatal because the final state is pushed again at turn completion.
-    await pushFileTree('Failed to read the file list after scaffold.');
+    await pushFileTree('Failed to read the file list after project files changed.');
     // Debounced store backup while the agent is still writing — covers the long
     // window where files live only in the volatile sandbox.
     checkpoint.schedule();
@@ -244,7 +219,6 @@ export async function runChatPipeline(
     history,
     state,
     !state.created,
-    handleScaffoldLog,
     forwardProgress,
     handleProjectFilesChanged,
     handlePreviewReady,
@@ -431,7 +405,6 @@ export async function runChatPipeline(
       ],
       state,
       false,
-      handleScaffoldLog,
       forwardProgress,
       handleProjectFilesChanged,
       handlePreviewReady,

@@ -2,12 +2,11 @@ import { tool as defineClaudeTool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import {
   assertPreviewServerReady,
-  ensureProjectScaffold,
   resolvePublicLinks,
   runSandboxCommand,
   startPreviewServer,
 } from '../_project';
-import type { ClaudeMcpTool, ProjectState, ScaffoldLog } from '../_types';
+import type { ClaudeMcpTool, ProjectState } from '../_types';
 import { getBlockedProjectWriteReason, toAppRelPath } from '../utils/_paths';
 import { stringifyToolResult } from '../utils/_text';
 
@@ -17,42 +16,6 @@ const writeProjectFileInputSchema = {
   ),
   content: z.string().describe('Complete UTF-8 contents for that one file.'),
 };
-
-export function buildProjectScaffoldTool(
-  context: any,
-  state: ProjectState,
-  onLog?: (log: ScaffoldLog) => void,
-  onResult?: (result: { created: boolean }) => void,
-) {
-  return defineClaudeTool(
-    'ensure_project_scaffold',
-    'Prepare or reuse the project workspace in the EdgeOne sandbox before any project file reads or writes.',
-    {},
-    async () => {
-      try {
-        const created = await ensureProjectScaffold(context, state, onLog);
-        state.created = true;
-        onResult?.({ created });
-        return {
-          content: [{
-            type: 'text' as const,
-            text: stringifyToolResult({
-              created,
-              appDir: state.appDir,
-              writePathHint: 'write_project_file path is relative to appDir (e.g. package.json, src/App.tsx), never prefix with appDir',
-            }),
-          }],
-        };
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        return {
-          content: [{ type: 'text' as const, text: message }],
-          isError: true,
-        };
-      }
-    },
-  ) as ClaudeMcpTool;
-}
 
 export function buildWriteProjectFileTool(
   context: any,
@@ -87,6 +50,7 @@ export function buildWriteProjectFileTool(
           await context.sandbox.files.makeDir(`${state.appDir}/${parent}`);
         }
         await context.sandbox.files.write(`${state.appDir}/${relPath}`, file.content);
+        state.created = true;
         await onResult?.({ written: relPath, content: file.content });
         return {
           content: [{
