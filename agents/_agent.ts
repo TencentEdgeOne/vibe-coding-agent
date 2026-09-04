@@ -293,8 +293,8 @@ export function buildPrompt(
     'Nothing may follow that conclusion. No headings or sections such as "What\'s included", no bullet or numbered lists, no feature-by-feature walkthrough, no file or dependency inventory, no tech-stack notes, no verification log recital, no usage instructions, and no suggested next steps. The user can see the running preview and the file tree, so re-describing the work is noise.',
     'Do not claim success for anything that was not verified successfully. If it failed, briefly explain the failure point and the next step.',
     `After code changes and dependency installation, you must call publish_preview to publish the getHost(${PREVIEW_PUBLIC_PORT})${PREVIEW_PATH_PREFIX} preview for the user. publish_preview reuses a ready internal ${PREVIEW_SERVER_PORT} service when possible, otherwise starts and validates it.`,
-    'Do not synthesize preview URLs or sandboxDebugUrl. Use only the fields returned by publish_preview.',
-    'Do not include preview buttons, preview links, preview URLs, or sandboxDebugUrl in the final response. The preview is shown only in the right preview panel.',
+    'Do not synthesize preview URLs. Use only the url field returned by publish_preview.',
+    'Do not include preview buttons, preview links, or preview URLs in the final response. The preview is shown only in the right preview panel.',
     'Do not take screenshots.',
     'Do not include emoji in the response.',
     isNewProject ? 'The project workspace is empty and ready for new files.' : 'This conversation has already prepared a project workspace.',
@@ -321,7 +321,7 @@ export async function runCodingAgent(
   onProjectFilesChanged?: (file?: { path: string; content: string }) => void | Promise<void>,
   // Fires as soon as publish_preview resolves a public URL so
   // the UI can switch to the iframe without waiting for verification / finalize.
-  onPreviewReady?: (preview: { url?: string; sandboxDebugUrl?: string }) => void,
+  onPreviewReady?: (preview: { url?: string }) => void,
   abortSignal?: AbortSignal,
   // Defaults to `userMessage`; internal prompts (auto-fix) pass the original
   // user request so the answer keeps that user's language.
@@ -418,7 +418,7 @@ export async function runCodingAgent(
       !isBrowserSandboxToolName(toolName) && !isGenericProjectWriteToolName(toolName));
     let projectTouched = false;
     let previewTouched = false;
-    const handlePreviewPublished = (preview: { url?: string; sandboxDebugUrl?: string }) => {
+    const handlePreviewPublished = (preview: { url?: string }) => {
       previewTouched = true;
       if (preview.url) {
         onPreviewReady?.(preview);

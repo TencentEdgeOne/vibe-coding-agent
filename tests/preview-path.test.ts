@@ -54,7 +54,7 @@ test('expired preview credentials never fall back to the stale iframe URL', asyn
 test('preview links use the browser live sandbox host when the SDK returns mismatched hosts', async () => {
   const preview = await readFile('agents/project/_preview.ts', 'utf8');
 
-  assert.match(preview, /publicUrlOrigin\(sandboxDebugUrl\)/);
+  assert.match(preview, /publicUrlOrigin\(browserLiveUrl\)/);
   assert.match(preview, /\|\| normalizePublicUrl\(previewHost\)/);
   assert.match(preview, /function previewTargetsMatch/);
   assert.match(preview, /left\.hostname === right\.hostname/);

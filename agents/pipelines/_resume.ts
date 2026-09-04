@@ -197,10 +197,8 @@ async function republishPreviewOnResume(context: any, state: ProjectState) {
         const rewritten = rewritePreviewAccessToken(state.previewUrl, accessToken);
         if (rewritten) {
           state.previewUrl = rewritten;
-          state.sandboxDebugUrl = warmLinks.sandboxDebugUrl || state.sandboxDebugUrl;
           return {
             url: rewritten,
-            sandboxDebugUrl: state.sandboxDebugUrl,
             restarted: false,
           };
         }
@@ -208,10 +206,8 @@ async function republishPreviewOnResume(context: any, state: ProjectState) {
 
       if (warmLinks.previewUrl) {
         state.previewUrl = warmLinks.previewUrl;
-        state.sandboxDebugUrl = warmLinks.sandboxDebugUrl;
         return {
           url: warmLinks.previewUrl,
-          sandboxDebugUrl: warmLinks.sandboxDebugUrl,
           restarted: false,
         };
       }
@@ -231,10 +227,8 @@ async function republishPreviewOnResume(context: any, state: ProjectState) {
     throw new Error('Preview server started but no public preview URL was available.');
   }
   state.previewUrl = links.previewUrl;
-  state.sandboxDebugUrl = links.sandboxDebugUrl;
   return {
     url: links.previewUrl,
-    sandboxDebugUrl: links.sandboxDebugUrl,
     // The dev server is a new process: whatever an open iframe shows is dead.
     restarted: true,
   };
@@ -309,7 +303,7 @@ async function runWorkspaceRestoreBody(context: any, conversationId: string) {
   // project often has a scaffold but is not previewable yet.
   const shouldRestartPreview = !generationActive && hasFileItems && hadPreview;
 
-  let preview: { url?: string; sandboxDebugUrl?: string; error?: string; restarted?: boolean } = {};
+  let preview: { url?: string; error?: string; restarted?: boolean } = {};
   if (shouldRestartPreview) {
     try {
       preview = await withTimeout(
@@ -320,7 +314,6 @@ async function runWorkspaceRestoreBody(context: any, conversationId: string) {
       state.previewPublished = true;
     } catch (error) {
       state.previewUrl = undefined;
-      state.sandboxDebugUrl = undefined;
       // Keep previewPublished so the next refresh retries instead of sticking to Files.
       // Keep the files panel usable; do not surface a hard preview error on resume.
       console.warn(
@@ -332,7 +325,6 @@ async function runWorkspaceRestoreBody(context: any, conversationId: string) {
   } else if (!generationActive && !hadPreview) {
     // Never-published / interrupted projects stay files-only.
     state.previewUrl = undefined;
-    state.sandboxDebugUrl = undefined;
   }
 
   try {

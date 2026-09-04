@@ -43,7 +43,6 @@ export type BuildInfo = {
 
 export type LinkInfo = {
   url?: string;
-  sandboxDebugUrl?: string;
   filename?: string;
   error?: string;
   /** Preview resume restarted the server, invalidating an already loaded iframe. */

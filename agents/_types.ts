@@ -11,7 +11,6 @@ export type ProjectState = {
   sessionDir: string;
   appDir: string;
   previewUrl?: string;
-  sandboxDebugUrl?: string;
   /** Latched once publish_preview succeeds; survives live URL invalidation so resume can restart preview. */
   previewPublished?: boolean;
   /** Pages project reused for header Publish across turns in this conversation. */

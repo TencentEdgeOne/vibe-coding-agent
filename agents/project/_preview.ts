@@ -10,25 +10,22 @@ import { runSandboxCommand } from './_commands';
 export async function resolvePublicLinks(context: any) {
   const previewHost = context.sandbox.getHost(PREVIEW_PUBLIC_PORT);
   const accessToken = context.sandbox.envdAccessToken;
-  const sandboxDebugUrl = normalizePublicUrl(context.sandbox.browser?.liveUrl);
-  const previewBaseUrl = publicUrlOrigin(sandboxDebugUrl) || normalizePublicUrl(previewHost);
+  const browserLiveUrl = normalizePublicUrl(context.sandbox.browser?.liveUrl);
+  const previewBaseUrl = publicUrlOrigin(browserLiveUrl) || normalizePublicUrl(previewHost);
   debugLog(context, '[preview-link]', {
     internalPort: PREVIEW_SERVER_PORT,
     publicPort: PREVIEW_PUBLIC_PORT,
     proxyPath: PREVIEW_PATH_PREFIX,
     hasPreviewHost: Boolean(previewBaseUrl),
     hasEnvdAccessToken: Boolean(accessToken),
-    hasSandboxDebugUrl: Boolean(sandboxDebugUrl),
+    hasBrowserLiveUrl: Boolean(browserLiveUrl),
   });
 
   const previewUrl = (previewBaseUrl && accessToken)
     ? buildPublicPreviewUrl(previewBaseUrl, accessToken)
     : undefined;
 
-  return {
-    previewUrl,
-    sandboxDebugUrl,
-  };
+  return { previewUrl };
 }
 
 function publicUrlOrigin(value: string | undefined) {

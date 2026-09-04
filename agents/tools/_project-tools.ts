@@ -73,12 +73,12 @@ export function buildWriteProjectFileTool(
 export function buildPublishPreviewTool(
   context: any,
   state: ProjectState,
-  onResult?: (result: { url?: string; sandboxDebugUrl?: string }) => void,
+  onResult?: (result: { url?: string }) => void,
   restartSignal?: PreviewRestartSignal,
 ) {
   return defineClaudeTool(
     'publish_preview',
-    'Publish the project preview. Reuse the running service on internal port 3000 when /preview/ is already HTTP-ready and this turn did not install dependencies or rewrite package.json / Vite / Next config. Otherwise start or restart the service, wait until /preview/ is ready, then return the public preview URL from sandbox.getHost(9000)/preview/ plus envdAccessToken and an optional sandboxDebugUrl. Do not synthesize either field.',
+    'Publish the project preview. Reuse the running service on internal port 3000 when /preview/ is already HTTP-ready and this turn did not install dependencies or rewrite package.json / Vite / Next config. Otherwise start or restart the service, wait until /preview/ is ready, then return the public preview URL from sandbox.getHost(9000)/preview/ plus envdAccessToken. Do not synthesize the URL.',
     {},
     async () => {
       return publishPreview(context, state, onResult, restartSignal);
@@ -89,7 +89,7 @@ export function buildPublishPreviewTool(
 async function publishPreview(
   context: any,
   state: ProjectState,
-  onResult?: (result: { url?: string; sandboxDebugUrl?: string }) => void,
+  onResult?: (result: { url?: string }) => void,
   restartSignal?: PreviewRestartSignal,
 ) {
   try {
@@ -103,26 +103,21 @@ async function publishPreview(
     }
     const links = await resolvePublicLinks(context);
     state.previewUrl = links.previewUrl;
-    state.sandboxDebugUrl = links.sandboxDebugUrl;
     // Durable signal for resume — do not clear this when a later live URL expires.
     state.previewPublished = true;
     onResult?.({
       url: state.previewUrl,
-      sandboxDebugUrl: state.sandboxDebugUrl,
     });
     return {
       content: [{
         type: 'text' as const,
         text: stringifyToolResult({
           url: state.previewUrl,
-          sandboxDebugUrl: state.sandboxDebugUrl,
-          reused,
         }),
       }],
     };
   } catch (error) {
     state.previewUrl = undefined;
-    state.sandboxDebugUrl = undefined;
     const message = error instanceof Error ? error.message : String(error);
     return {
       content: [{ type: 'text' as const, text: message }],

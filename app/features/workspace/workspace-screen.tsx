@@ -539,10 +539,9 @@ export function WorkspaceScreen() {
   useEffect(() => {
     const applyFreshPreviewUrl = (
       url: string,
-      sandboxDebugUrl?: string,
       options?: { remountIframe?: boolean },
     ): boolean => {
-      setPreview({ url, sandboxDebugUrl });
+      setPreview({ url });
       setPreviewRefreshFailed(false);
       previewRefreshedAtRef.current = Date.now();
 
@@ -609,7 +608,7 @@ export function WorkspaceScreen() {
         // escalates to full workspace restore when the sandbox has gone cold.
         const data = await fetchResumePreview(id);
         if (data?.ok && data.preview?.url) {
-          applyFreshPreviewUrl(data.preview.url, data.preview.sandboxDebugUrl, {
+          applyFreshPreviewUrl(data.preview.url, {
             // A restarted dev server invalidates whatever the frame is showing,
             // so that case always reloads even when the caller asked not to.
             remountIframe: willRemount || data.preview.restarted === true,
@@ -895,7 +894,6 @@ export function WorkspaceScreen() {
               ? {
                   ...nextPreview,
                   url: current.url,
-                  sandboxDebugUrl: nextPreview.sandboxDebugUrl ?? current.sandboxDebugUrl,
                 }
               : nextPreview,
           );

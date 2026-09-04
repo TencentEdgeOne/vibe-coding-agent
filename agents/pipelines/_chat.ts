@@ -189,12 +189,11 @@ export async function runChatPipeline(
 
   // Switch the iframe the moment publish_preview returns — do not wait for
   // verification / finalizeTurn, which can take several more seconds.
-  const handlePreviewReady = (preview: { url?: string; sandboxDebugUrl?: string }) => {
+  const handlePreviewReady = (preview: { url?: string }) => {
     if (!preview.url) {
       return;
     }
     state.previewUrl = preview.url;
-    state.sandboxDebugUrl = preview.sandboxDebugUrl;
     state.previewPublished = true;
     // Persist before the turn finishes so a refresh during verification still
     // resumes into the preview pane and restarts the live server.
@@ -204,7 +203,6 @@ export async function runChatPipeline(
       data: {
         preview: {
           url: preview.url,
-          sandboxDebugUrl: preview.sandboxDebugUrl,
         },
         download: { url: '/download', filename: 'source.zip' },
       },
@@ -240,7 +238,7 @@ export async function runChatPipeline(
         reply: stoppedReply,
         conversation_id: conversationId,
         build: { status: 'skipped' as BuildStatus },
-        preview: state.previewUrl ? { url: state.previewUrl, sandboxDebugUrl: state.sandboxDebugUrl } : {},
+        preview: state.previewUrl ? { url: state.previewUrl } : {},
       },
     });
     return;
@@ -295,7 +293,6 @@ export async function runChatPipeline(
         data: {
           preview: {
             url: state.previewUrl,
-            sandboxDebugUrl: state.sandboxDebugUrl,
           },
         },
       });
@@ -312,7 +309,6 @@ export async function runChatPipeline(
         build: { status: 'skipped' as BuildStatus },
         preview: {
           url: state.previewUrl,
-          sandboxDebugUrl: state.sandboxDebugUrl,
           ...(!state.previewUrl ? { error: 'The agent did not complete publish_preview.' } : {}),
         },
       },
@@ -425,7 +421,7 @@ export async function runChatPipeline(
           reply: stoppedReply,
           conversation_id: conversationId,
           build: { status: 'skipped' as BuildStatus },
-          preview: state.previewUrl ? { url: state.previewUrl, sandboxDebugUrl: state.sandboxDebugUrl } : {},
+          preview: state.previewUrl ? { url: state.previewUrl } : {},
         },
       });
       return;
@@ -488,7 +484,6 @@ export async function runChatPipeline(
       data: {
         preview: {
           url: state.previewUrl,
-          sandboxDebugUrl: state.sandboxDebugUrl,
         },
       },
     });
@@ -535,7 +530,6 @@ export async function runChatPipeline(
       download: downloadLink,
       preview: {
         url: state.previewUrl,
-        sandboxDebugUrl: state.sandboxDebugUrl,
         ...(!state.previewUrl ? { error: 'The agent did not complete publish_preview.' } : {}),
       },
     },

@@ -18,7 +18,9 @@ test('publish_preview reuses or restarts from the turn signal and returns a smal
   assert.match(tools, /restartSignal\?\.mustRestart === true/);
   assert.match(tools, /if \(!reused\) \{\s*await startPreviewServer/);
   assert.doesNotMatch(tools, /assertPreviewServerReady/);
-  assert.match(tools, /stringifyToolResult\(\{[\s\S]*reused,/);
+  assert.match(tools, /stringifyToolResult\(\{\s*url: state\.previewUrl,\s*\}\)/);
+  assert.doesNotMatch(tools, /sandboxDebugUrl/);
+  assert.doesNotMatch(tools, /\breused,/);
   assert.doesNotMatch(tools, /\bserver,/);
   assert.doesNotMatch(tools, /buildPreviewLinkTool/);
   assert.doesNotMatch(tools, /get_preview_link/);

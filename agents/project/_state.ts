@@ -39,7 +39,6 @@ export async function resetProjectWorkspace(
   await sandbox.files.makeDir(state.appDir);
   state.created = false;
   state.previewUrl = undefined;
-  state.sandboxDebugUrl = undefined;
   state.previewPublished = undefined;
   state.makersProjectId = undefined;
   state.makersPreviewUrl = undefined;
