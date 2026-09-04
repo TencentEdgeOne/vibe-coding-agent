@@ -23,7 +23,10 @@ function withWrappedCommand(args: unknown, wrapped: string) {
   };
 }
 
-export function wrapSandboxToolsForVerification(tools: ClaudeMcpTool[]): ClaudeMcpTool[] {
+export function wrapSandboxToolsForVerification(
+  tools: ClaudeMcpTool[],
+  options?: { onCommand?: (command: string) => void },
+): ClaudeMcpTool[] {
   return tools.map((tool) => {
     if (shortenToolName(tool.name) !== 'commands') {
       return tool;
@@ -32,7 +35,11 @@ export function wrapSandboxToolsForVerification(tools: ClaudeMcpTool[]): ClaudeM
     return {
       ...tool,
       handler: async (args, extra) => {
-        const wrapped = withExitCodeEcho(extractCommand(args).command);
+        const command = extractCommand(args).command;
+        if (command) {
+          options?.onCommand?.(command);
+        }
+        const wrapped = withExitCodeEcho(command);
         const nextArgs = withWrappedCommand(args, wrapped) as typeof args;
         // Keep isError false even when EXIT:N is non-zero. Flipping isError
         // makes the Agent SDK treat a captured compiler failure as a protocol

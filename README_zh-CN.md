@@ -103,7 +103,7 @@ Agent 在 `agents/` 下以会话模式运行。带有相同 `conversation_id` �
 2. **状态恢复** — Chat pipeline 从 `context.store` 读取对话历史；沙箱已回收时，通过 `context.sandbox.restore()` 从项目 Blob 恢复生成源码。
 3. **LLM 与工具循环** — Claude Agent SDK 使用 `edgeone-sandbox` MCP 服务、`permissionMode: 'dontAsk'` 和仅限沙箱的工具运行。工作区由 host 在模型循环前准备好，Agent 再用 `write_project_file` 写入文件。
 4. **项目编辑** — 生成的源码通过 `write_project_file` 按文件逐个写入，让进度持续反馈到界面。命令执行和依赖安装都在沙箱内完成。
-5. **发布预览** — `publish_preview` 在内部 `3000` 端口启动应用，等待预览入口就绪，并返回仅在当前临时沙箱生命周期内可用的预览 URL。
+5. **发布预览** — `publish_preview` 在内部 `3000` 端口启动应用（`/preview/` 已就绪时复用），等待预览入口就绪，并返回仅在当前临时沙箱生命周期内可用的预览 URL。
 6. **验证检查** — Node 项目包含 build 脚本时运行 `npm run build`；存在 Python 文件时运行 `python -m compileall .`。如果 Agent 成功运行后验证失败，流水线会尝试一轮自动修复。
 7. **持久化、SSE 与重连** — 源码检查点通过 `context.sandbox.persist()` 写入当前项目保留的 `__sandbox` Blob Store，归档字节不再经过对话元数据。正常生成通过 `POST /chat` 的 SSE 接收状态、日志、工具、文件、预览、构建状态和最终回复；页面刷新后使用 `GET /chat?runId=...` 重连任务，`GET /resume` 在同一 SSE 连接中恢复工作区并预热最多 48 个、总计 2 MiB 的文本文件。
 

@@ -42,3 +42,21 @@ test('does not wrap install commands', async () => {
   assert.equal(received, 'npm install');
   assert.equal(result.isError, undefined);
 });
+
+test('notifies onCommand with the original sandbox command', async () => {
+  const seen: string[] = [];
+  const commandsTool = {
+    name: 'commands',
+    description: 'run',
+    inputSchema: {},
+    handler: async () => ({ content: [{ type: 'text', text: 'ok' }] }),
+  } as unknown as ClaudeMcpTool;
+
+  const [wrapped] = wrapSandboxToolsForVerification([commandsTool], {
+    onCommand: (command) => seen.push(command),
+  });
+  await wrapped.handler({ command: 'npm install' }, {});
+  await wrapped.handler({ command: 'npm run build' }, {});
+
+  assert.deepEqual(seen, ['npm install', 'npm run build']);
+});

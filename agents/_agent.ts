@@ -27,7 +27,6 @@ import {
 } from './_session';
 import { wrapSandboxToolsForVerification } from './tools/_commands-wrap';
 import {
-  buildPreviewLinkTool,
   buildPublishPreviewTool,
   buildWriteProjectFileTool,
 } from './tools/_project-tools';
@@ -35,6 +34,7 @@ import type {
   AgentProgressEvent,
   CodingAgentResult,
   ConversationMessage,
+  PreviewRestartSignal,
   ProjectState,
 } from './_types';
 import {
@@ -49,7 +49,13 @@ import {
   sanitizeNarrationText,
   type NarrationEmitState,
 } from './utils/_narration';
-import { isInstallCommand, isPreviewCommand, parseEchoedExitCode, shortenToolName } from './utils/_tool-phase';
+import {
+  isInstallCommand,
+  isPreviewCommand,
+  isPreviewRestartConfigPath,
+  parseEchoedExitCode,
+  shortenToolName,
+} from './utils/_tool-phase';
 
 function pickEnvValue(context: any, key: string) {
   const value = context?.env?.[key];
@@ -286,8 +292,8 @@ export function buildPrompt(
     'The final response is a short conclusion: at most two sentences, plain prose, naming what was built for this request and the preview/verification outcome. For "a pomodoro timer with stats and theme switching", the whole reply is: Built the pomodoro timer with stats and theme switching. The preview is ready in the right panel. Do not say only "Done, please check the result." either.',
     'Nothing may follow that conclusion. No headings or sections such as "What\'s included", no bullet or numbered lists, no feature-by-feature walkthrough, no file or dependency inventory, no tech-stack notes, no verification log recital, no usage instructions, and no suggested next steps. The user can see the running preview and the file tree, so re-describing the work is noise.',
     'Do not claim success for anything that was not verified successfully. If it failed, briefly explain the failure point and the next step.',
-    `After code changes and dependency installation, you must call publish_preview to publish the getHost(${PREVIEW_PUBLIC_PORT})${PREVIEW_PATH_PREFIX} preview for the user. publish_preview handles startup and validation of the internal ${PREVIEW_SERVER_PORT} preview service. get_preview_link is only a legacy alias; do not prefer it.`,
-    'Do not synthesize preview URLs or sandboxDebugUrl. Use only the fields returned by publish_preview or get_preview_link.',
+    `After code changes and dependency installation, you must call publish_preview to publish the getHost(${PREVIEW_PUBLIC_PORT})${PREVIEW_PATH_PREFIX} preview for the user. publish_preview reuses a ready internal ${PREVIEW_SERVER_PORT} service when possible, otherwise starts and validates it.`,
+    'Do not synthesize preview URLs or sandboxDebugUrl. Use only the fields returned by publish_preview.',
     'Do not include preview buttons, preview links, preview URLs, or sandboxDebugUrl in the final response. The preview is shown only in the right preview panel.',
     'Do not take screenshots.',
     'Do not include emoji in the response.',
@@ -313,7 +319,7 @@ export async function runCodingAgent(
   // write_project_file (with the file just written, so the pipeline can stream
   // its content to the frontend instead of making it fetch the file back).
   onProjectFilesChanged?: (file?: { path: string; content: string }) => void | Promise<void>,
-  // Fires as soon as publish_preview / get_preview_link resolves a public URL so
+  // Fires as soon as publish_preview resolves a public URL so
   // the UI can switch to the iframe without waiting for verification / finalize.
   onPreviewReady?: (preview: { url?: string; sandboxDebugUrl?: string }) => void,
   abortSignal?: AbortSignal,
@@ -396,9 +402,17 @@ export async function runCodingAgent(
       throw new Error('The current Pages Agent Runtime is missing context.tools.toClaudeMcpServer. Please upgrade to a runtime that supports the new pages-agent-toolkit Tools API.');
     }
     const edgeoneMcp = context.tools.toClaudeMcpServer(mcpServerName, { alwaysLoad: true });
+    const previewRestart: PreviewRestartSignal = { mustRestart: false };
     const sandboxTools = wrapSandboxToolsForVerification(
       edgeoneMcp.tools.filter((tool: { name: string }) =>
         !isBrowserSandboxToolName(tool.name) && !isGenericProjectWriteToolName(tool.name)),
+      {
+        onCommand: (command) => {
+          if (isInstallCommand(command)) {
+            previewRestart.mustRestart = true;
+          }
+        },
+      },
     );
     const sandboxAllowedTools = edgeoneMcp.allowedTools.filter((toolName: string) =>
       !isBrowserSandboxToolName(toolName) && !isGenericProjectWriteToolName(toolName));
@@ -410,20 +424,19 @@ export async function runCodingAgent(
         onPreviewReady?.(preview);
       }
     };
-    const previewLinkTool = buildPreviewLinkTool(
-      context,
-      state,
-      handlePreviewPublished,
-    );
     const publishPreviewTool = buildPublishPreviewTool(
       context,
       state,
       handlePreviewPublished,
+      previewRestart,
     );
     const writeProjectFileTool = buildWriteProjectFileTool(
       context,
       state,
       async ({ written, content }) => {
+        if (isPreviewRestartConfigPath(written)) {
+          previewRestart.mustRestart = true;
+        }
         projectTouched = true;
         await onProjectFilesChanged?.({ path: written, content });
       },
@@ -432,13 +445,11 @@ export async function runCodingAgent(
       ...sandboxTools,
       writeProjectFileTool,
       publishPreviewTool,
-      previewLinkTool,
     ];
     const mcpAllowedTools = [
       ...sandboxAllowedTools,
       `mcp__${mcpServerName}__write_project_file`,
       `mcp__${mcpServerName}__publish_preview`,
-      `mcp__${mcpServerName}__get_preview_link`,
     ];
 
     const sandboxMcpServer = createSdkMcpServer({
@@ -495,8 +506,8 @@ export async function runCodingAgent(
         },
       ),
       env: sdkEnv,
-      // publish_preview starts the internal port 3000 service, verifies /preview/
-      // readiness, and publishes the getHost(9000)/preview/ preview link.
+      // publish_preview reuses or starts the internal port 3000 service, then
+      // publishes the getHost(9000)/preview/ preview link.
       cwd: process.cwd(),
       settingSources: ['project'],
       debug: isDebugEnabled(context),

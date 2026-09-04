@@ -20,6 +20,11 @@ export type ProjectState = {
   makersPreviewUrl?: string;
 };
 
+/** Turn-scoped: an install or preview-config write means publish_preview must restart. */
+export type PreviewRestartSignal = {
+  mustRestart: boolean;
+};
+
 // A base64 archive of the whole project, persisted outside the volatile sandbox so
 // the code survives sandbox recycling (see agents/_memory.ts snapshot helpers). The
 // fields mirror createProjectArchive's success result plus a write timestamp.

@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   isInstallCommand,
   isPreviewCommand,
+  isPreviewRestartConfigPath,
   isVerificationCommand,
   parseEchoedExitCode,
   shortenToolName,
@@ -13,6 +14,15 @@ import {
 test('shortens MCP tool names', () => {
   assert.equal(shortenToolName('mcp__edgeone-sandbox__files_write'), 'files_write');
   assert.equal(shortenToolName('write_project_file'), 'write_project_file');
+});
+
+test('detects preview-restart config writes', () => {
+  assert.equal(isPreviewRestartConfigPath('package.json'), true);
+  assert.equal(isPreviewRestartConfigPath('vite.config.ts'), true);
+  assert.equal(isPreviewRestartConfigPath('vite.config.mjs'), true);
+  assert.equal(isPreviewRestartConfigPath('next.config.js'), true);
+  assert.equal(isPreviewRestartConfigPath('src/App.tsx'), false);
+  assert.equal(isPreviewRestartConfigPath('src/package.json.bak'), false);
 });
 
 test('detects install, preview, and verification commands', () => {

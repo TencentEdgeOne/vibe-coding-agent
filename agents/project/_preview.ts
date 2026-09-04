@@ -290,13 +290,21 @@ export async function startPreviewServer(context: any, state: ProjectState) {
   const release = await runSandboxCommand(
     context,
     [
+      'killed=0',
       'if command -v fuser >/dev/null 2>&1; then',
-      `fuser -k ${port}/tcp 2>/dev/null || true;`,
+      `  if fuser ${port}/tcp >/dev/null 2>&1; then`,
+      `    fuser -k ${port}/tcp >/dev/null 2>&1 || true`,
+      '    killed=1',
+      '  fi',
       'elif command -v lsof >/dev/null 2>&1; then',
-      `lsof -ti tcp:${port} | xargs -r kill -9 2>/dev/null || true;`,
-      'fi;',
-      'sleep 1',
-    ].join(' '),
+      `  pids=$(lsof -ti tcp:${port} 2>/dev/null || true)`,
+      '  if [ -n "$pids" ]; then',
+      '    echo "$pids" | xargs -r kill -9 >/dev/null 2>&1 || true',
+      '    killed=1',
+      '  fi',
+      'fi',
+      'if [ "$killed" = 1 ]; then sleep 1; fi',
+    ].join('\n'),
     { timeout: 10 },
   );
 
@@ -344,15 +352,16 @@ export async function startPreviewServer(context: any, state: ProjectState) {
   };
 }
 
-export async function assertPreviewServerReady(context: any, readyPath = PREVIEW_PATH_PREFIX) {
-  const result = await runSandboxCommand(
-    context,
-    `curl -fsS ${shellQuote(`http://127.0.0.1:${PREVIEW_SERVER_PORT}${readyPath}`)} >/dev/null`,
-    { timeout: 10 },
-  );
-
-  if (result.exitCode !== 0) {
-    throw new Error(`Preview server is not ready on port ${PREVIEW_SERVER_PORT}${readyPath}.`);
+export async function isPreviewServerReady(context: any, readyPath = PREVIEW_PATH_PREFIX) {
+  try {
+    const result = await runSandboxCommand(
+      context,
+      `curl -fsS ${shellQuote(`http://127.0.0.1:${PREVIEW_SERVER_PORT}${readyPath}`)} >/dev/null`,
+      { timeout: 10 },
+    );
+    return result.exitCode === 0;
+  } catch {
+    return false;
   }
 }
 

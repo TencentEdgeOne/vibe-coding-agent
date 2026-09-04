@@ -5,6 +5,17 @@ export function shortenToolName(name: string) {
   return match ? match[1] : name;
 }
 
+export function shouldReusePreviewServer(ready: boolean, mustRestart: boolean) {
+  return ready && !mustRestart;
+}
+
+export function isPreviewRestartConfigPath(relPath: string) {
+  const name = relPath.replace(/\\/g, '/').split('/').pop() || relPath;
+  return name === 'package.json'
+    || /^vite\.config\.[cm]?[jt]s$/.test(name)
+    || /^next\.config\.[cm]?[jt]s$/.test(name);
+}
+
 export function isInstallCommand(cmd: string) {
   const normalized = cmd.toLowerCase();
   return (

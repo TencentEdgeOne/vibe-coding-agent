@@ -1,14 +1,15 @@
 import { tool as defineClaudeTool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import {
-  assertPreviewServerReady,
+  isPreviewServerReady,
   resolvePublicLinks,
   runSandboxCommand,
   startPreviewServer,
 } from '../_project';
-import type { ClaudeMcpTool, ProjectState } from '../_types';
+import type { ClaudeMcpTool, PreviewRestartSignal, ProjectState } from '../_types';
 import { getBlockedProjectWriteReason, toAppRelPath } from '../utils/_paths';
 import { stringifyToolResult } from '../utils/_text';
+import { shouldReusePreviewServer } from '../utils/_tool-phase';
 
 const writeProjectFileInputSchema = {
   path: z.string().describe(
@@ -69,32 +70,18 @@ export function buildWriteProjectFileTool(
   ) as ClaudeMcpTool;
 }
 
-export function buildPreviewLinkTool(
-  context: any,
-  state: ProjectState,
-  onResult?: (result: { url?: string; sandboxDebugUrl?: string }) => void,
-) {
-  return defineClaudeTool(
-    'get_preview_link',
-    'Legacy alias for publish_preview. Start or refresh the project preview server on internal port 3000, wait until the /preview/ entry is ready, then return the public preview URL generated from sandbox.getHost(9000)/preview/ plus envdAccessToken and an optional sandboxDebugUrl from sandbox.browser.liveUrl. Do not call any other preview startup tool or synthesize either field.',
-    {},
-    async () => {
-      return publishPreview(context, state, onResult);
-    },
-  ) as ClaudeMcpTool;
-}
-
 export function buildPublishPreviewTool(
   context: any,
   state: ProjectState,
   onResult?: (result: { url?: string; sandboxDebugUrl?: string }) => void,
+  restartSignal?: PreviewRestartSignal,
 ) {
   return defineClaudeTool(
     'publish_preview',
-    'Publish the project preview. Start or refresh the project preview server on internal port 3000, wait until the /preview/ entry is ready, then return the public preview URL generated from sandbox.getHost(9000)/preview/ plus envdAccessToken and an optional sandboxDebugUrl from sandbox.browser.liveUrl. Do not call any other preview startup tool or synthesize either field.',
+    'Publish the project preview. Reuse the running service on internal port 3000 when /preview/ is already HTTP-ready and this turn did not install dependencies or rewrite package.json / Vite / Next config. Otherwise start or restart the service, wait until /preview/ is ready, then return the public preview URL from sandbox.getHost(9000)/preview/ plus envdAccessToken and an optional sandboxDebugUrl. Do not synthesize either field.',
     {},
     async () => {
-      return publishPreview(context, state, onResult);
+      return publishPreview(context, state, onResult, restartSignal);
     },
   ) as ClaudeMcpTool;
 }
@@ -103,11 +90,17 @@ async function publishPreview(
   context: any,
   state: ProjectState,
   onResult?: (result: { url?: string; sandboxDebugUrl?: string }) => void,
+  restartSignal?: PreviewRestartSignal,
 ) {
   try {
     await assertPreviewableProject(context, state);
-    const server = await startPreviewServer(context, state);
-    await assertPreviewServerReady(context, server.readyPath);
+    const reused = shouldReusePreviewServer(
+      await isPreviewServerReady(context),
+      restartSignal?.mustRestart === true,
+    );
+    if (!reused) {
+      await startPreviewServer(context, state);
+    }
     const links = await resolvePublicLinks(context);
     state.previewUrl = links.previewUrl;
     state.sandboxDebugUrl = links.sandboxDebugUrl;
@@ -117,15 +110,14 @@ async function publishPreview(
       url: state.previewUrl,
       sandboxDebugUrl: state.sandboxDebugUrl,
     });
-    const preview = {
-      url: state.previewUrl,
-      sandboxDebugUrl: state.sandboxDebugUrl,
-      server,
-    };
     return {
       content: [{
         type: 'text' as const,
-        text: stringifyToolResult(preview),
+        text: stringifyToolResult({
+          url: state.previewUrl,
+          sandboxDebugUrl: state.sandboxDebugUrl,
+          reused,
+        }),
       }],
     };
   } catch (error) {

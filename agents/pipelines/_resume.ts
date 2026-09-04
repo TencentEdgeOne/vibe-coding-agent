@@ -8,8 +8,8 @@ import {
   saveProjectState,
 } from '../_memory';
 import {
-  assertPreviewServerReady,
   getFileTree,
+  isPreviewServerReady,
   previewTargetsMatch,
   resolvePublicLinks,
   restorePersistedProject,
@@ -182,41 +182,42 @@ async function ensureProjectDependencies(context: any, state: ProjectState) {
 
 // Warm sandboxes may still be serving /preview/; otherwise install + restart.
 async function republishPreviewOnResume(context: any, state: ProjectState) {
-  try {
-    await assertPreviewServerReady(context);
-    const accessToken = typeof context.sandbox?.envdAccessToken === 'string'
-      ? context.sandbox.envdAccessToken
-      : '';
+  if (await isPreviewServerReady(context)) {
+    try {
+      const accessToken = typeof context.sandbox?.envdAccessToken === 'string'
+        ? context.sandbox.envdAccessToken
+        : '';
 
-    // Prefer rotating the token on the URL the iframe already used. Only do so
-    // when that URL still targets the current sandbox host; a recycled sandbox
-    // can otherwise produce a host/token mismatch and AUTHENTICATION_FAILED.
-    const warmLinks = await resolvePublicLinks(context);
-    if (state.previewUrl && accessToken && warmLinks.previewUrl
-      && previewTargetsMatch(state.previewUrl, warmLinks.previewUrl)) {
-      const rewritten = rewritePreviewAccessToken(state.previewUrl, accessToken);
-      if (rewritten) {
-        state.previewUrl = rewritten;
-        state.sandboxDebugUrl = warmLinks.sandboxDebugUrl || state.sandboxDebugUrl;
+      // Prefer rotating the token on the URL the iframe already used. Only do so
+      // when that URL still targets the current sandbox host; a recycled sandbox
+      // can otherwise produce a host/token mismatch and AUTHENTICATION_FAILED.
+      const warmLinks = await resolvePublicLinks(context);
+      if (state.previewUrl && accessToken && warmLinks.previewUrl
+        && previewTargetsMatch(state.previewUrl, warmLinks.previewUrl)) {
+        const rewritten = rewritePreviewAccessToken(state.previewUrl, accessToken);
+        if (rewritten) {
+          state.previewUrl = rewritten;
+          state.sandboxDebugUrl = warmLinks.sandboxDebugUrl || state.sandboxDebugUrl;
+          return {
+            url: rewritten,
+            sandboxDebugUrl: state.sandboxDebugUrl,
+            restarted: false,
+          };
+        }
+      }
+
+      if (warmLinks.previewUrl) {
+        state.previewUrl = warmLinks.previewUrl;
+        state.sandboxDebugUrl = warmLinks.sandboxDebugUrl;
         return {
-          url: rewritten,
-          sandboxDebugUrl: state.sandboxDebugUrl,
+          url: warmLinks.previewUrl,
+          sandboxDebugUrl: warmLinks.sandboxDebugUrl,
           restarted: false,
         };
       }
+    } catch {
+      // Warm links failed — fall through to a full restart.
     }
-
-    if (warmLinks.previewUrl) {
-      state.previewUrl = warmLinks.previewUrl;
-      state.sandboxDebugUrl = warmLinks.sandboxDebugUrl;
-      return {
-        url: warmLinks.previewUrl,
-        sandboxDebugUrl: warmLinks.sandboxDebugUrl,
-        restarted: false,
-      };
-    }
-  } catch {
-    // Server is not ready — fall through to a full restart.
   }
 
   const depsReady = await ensureProjectDependencies(context, state);
@@ -224,8 +225,7 @@ async function republishPreviewOnResume(context: any, state: ProjectState) {
     throw new Error('Project dependencies are not available for preview resume.');
   }
 
-  const server = await startPreviewServer(context, state);
-  await assertPreviewServerReady(context, server.readyPath);
+  await startPreviewServer(context, state);
   const links = await resolvePublicLinks(context);
   if (!links.previewUrl) {
     throw new Error('Preview server started but no public preview URL was available.');

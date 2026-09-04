@@ -482,7 +482,6 @@ export async function runChatPipeline(
   };
 
   // Preview startup, HTTP readiness checks, and link generation are handled by publish_preview.
-  // publish_preview, or the legacy get_preview_link alias, writes state.previewUrl / state.sandboxDebugUrl.
   if (state.previewUrl) {
     send({
       type: 'preview_ready',
