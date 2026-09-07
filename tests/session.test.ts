@@ -215,8 +215,7 @@ test('the agent prompt and query wire session resume instead of a full reread', 
   assert.match(agent, /sessionStore: sdkSession\.sessionStore/);
   assert.match(agent, /\.\.\.sdkSession\.binding/);
   assert.match(chat, /resetSession: shouldResetProject/);
-  assert.match(
-    chat.slice(chat.indexOf('const autoFixResult'), chat.indexOf('if (autoFixResult.stopped')),
-    /\{ model: options\.model \}/,
-  );
+  const autoFixCall = chat.slice(chat.indexOf('const autoFixResult'), chat.indexOf('if (autoFixResult.stopped'));
+  assert.match(autoFixCall, /model: options\.model/);
+  assert.doesNotMatch(autoFixCall, /resetSession/);
 });

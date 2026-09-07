@@ -178,6 +178,9 @@ function AssistantTurn({ message, copy }: {
     <section className="conversation-turn conversation-assistant-turn">
       <div className="conversation-body">
         {activities.map((activity, index) => {
+          if (activity.kind === 'log') {
+            return null;
+          }
           if (activity.kind === 'text') {
             return isFinalTextDuplicate(activity.content)
               ? null
@@ -249,9 +252,11 @@ export function AgentConversation({
     message.id,
     message.status,
     message.content,
-    message.activities?.map((activity) => activity.kind === 'text'
-      ? activity.content
-      : `${activity.toolUseId}:${activity.status}:${activity.outputSummary || ''}`).join('|'),
+    message.activities?.map((activity) => {
+      if (activity.kind === 'text') return activity.content;
+      if (activity.kind === 'log') return `log:${activity.message}`;
+      return `${activity.toolUseId}:${activity.status}:${activity.outputSummary || ''}`;
+    }).join('|'),
   ].join(':')).join('\n');
 
   useEffect(() => {

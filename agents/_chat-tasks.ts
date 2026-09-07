@@ -29,6 +29,7 @@ type LiveChatTask = {
   // stop generation. Only /stop (via abortLiveChatTask) should abort this.
   abortController: AbortController;
   runPromise?: Promise<void>;
+  persistMs?: number;
 };
 
 const liveTasks = new Map<string, LiveChatTask>();
@@ -199,6 +200,7 @@ async function createChatTask(
   // updateConversation available for the durable task record below. The stream
   // pipeline knows this message is already persisted and will not append it a
   // second time.
+  const persistStartedAt = Date.now();
   await appendTurn(context, conversationId, 'user', message);
 
   // A request without a choice inherits the conversation's, so the model only
@@ -213,13 +215,18 @@ async function createChatTask(
     ...(model ? { model } : {}),
     resetProject: options.resetProject === true,
     status: 'queued',
-    createdAt: Date.now(),
+    createdAt: persistStartedAt,
   };
   await saveChatTask(context, conversationId, task);
   if (requestedModel) {
     await saveModelPreference(context, conversationId, requestedModel);
   }
-  return { ok: true as const, conversationId, task };
+  return {
+    ok: true as const,
+    conversationId,
+    task,
+    persistMs: Date.now() - persistStartedAt,
+  };
 }
 
 function withTaskAbortSignal(context: any, signal: AbortSignal) {
@@ -253,11 +260,15 @@ async function executeLiveTask(context: any, liveTask: LiveChatTask) {
   try {
     await saveChatTask(taskContext, liveTask.conversationId, runningTask);
     publish(liveTask, { type: 'status', message: 'Starting the chat task' });
+    const dispatchAt = Date.now();
     await runChatPipeline(taskContext, liveTask.task.message, send, {
       resetProject: liveTask.task.resetProject,
       turnId: liveTask.task.id,
       userMessagePersisted: true,
       model: liveTask.task.model,
+      timingOriginMs: liveTask.task.createdAt || dispatchAt,
+      persistMs: liveTask.persistMs,
+      dispatchMs: Math.max(0, dispatchAt - (liveTask.task.createdAt || dispatchAt)),
     });
   } catch (runError) {
     error = runError instanceof Error ? runError.message : 'Request processing failed.';
@@ -295,8 +306,16 @@ async function executeLiveTask(context: any, liveTask: LiveChatTask) {
   }, 5 * 60 * 1_000);
 }
 
-function ensureChatTaskStarted(context: any, conversationId: string, task: ChatTask) {
+function ensureChatTaskStarted(
+  context: any,
+  conversationId: string,
+  task: ChatTask,
+  persistMs?: number,
+) {
   const liveTask = getOrCreateLiveTask(conversationId, task);
+  if (persistMs !== undefined) {
+    liveTask.persistMs = persistMs;
+  }
   if (!liveTask.runPromise && isTaskActive(liveTask.task)) {
     liveTask.runPromise = executeLiveTask(context, liveTask).catch((error) => {
       console.error('[chat-task] execution failed', error);
@@ -340,8 +359,9 @@ function createLiveTaskStreamResponse(
   context: any,
   conversationId: string,
   task: ChatTask,
+  persistMs?: number,
 ) {
-  const liveTask = ensureChatTaskStarted(context, conversationId, task);
+  const liveTask = ensureChatTaskStarted(context, conversationId, task, persistMs);
 
   return createSSEResponse(async function* (signal) {
     yield sseEvent({
@@ -409,7 +429,7 @@ export async function createChatTaskAndStreamResponse(
       headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
     });
   }
-  return createLiveTaskStreamResponse(context, result.conversationId, result.task);
+  return createLiveTaskStreamResponse(context, result.conversationId, result.task, result.persistMs);
 }
 
 /** Reconnect to a running or completed task without creating a second run. */

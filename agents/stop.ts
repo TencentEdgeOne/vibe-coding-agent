@@ -2,7 +2,7 @@ import { buildStoppedReply } from '../shared/reply-language.ts';
 import { abortLiveChatTask, markChatTaskStopped } from './_chat-tasks';
 import { getProjectState, saveActivityTurn, saveProjectState } from './_memory';
 import { persistProjectSnapshot } from './pipelines/_helpers';
-import type { PersistedActivity } from './_types';
+import type { PersistedActivity, PersistedActivityTurn } from './_types';
 
 export async function onRequest(context: any) {
   const conversationId = String(context?.request?.body?.conversation_id || '').trim();
@@ -53,12 +53,18 @@ export async function onRequest(context: any) {
           ? { ...activity, status: 'stopped' as const, endedAt: Date.now() }
           : activity);
       if (user) {
+        const startedAt = Number(turn.startedAt) || Number(turn.createdAt) || Date.now();
         await saveActivityTurn(context, conversationId, {
           id: String(turn.id || context.run_id || Date.now()),
           user,
           assistant,
           status: 'stopped',
-          createdAt: Number(turn.createdAt) || Date.now(),
+          createdAt: startedAt,
+          startedAt,
+          endedAt: Number(turn.endedAt) || Date.now(),
+          turnResult: turn.turnResult && typeof turn.turnResult === 'object'
+            ? turn.turnResult as PersistedActivityTurn['turnResult']
+            : { ok: false, stopped: true },
           activities,
         });
       }

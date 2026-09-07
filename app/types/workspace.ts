@@ -1,4 +1,4 @@
-import type { AssistantActivity } from '../../shared/protocol';
+import type { AssistantActivity, TurnResult } from '../../shared/protocol';
 
 export type {
   AssistantActivity,
@@ -22,4 +22,7 @@ export type ChatMessage = {
   content: string;
   activities?: AssistantActivity[];
   status?: AssistantStatus;
+  startedAt?: number;
+  endedAt?: number;
+  turnResult?: TurnResult;
 };

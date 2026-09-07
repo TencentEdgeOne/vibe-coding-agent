@@ -5,11 +5,14 @@ import {
   Check,
   Code2,
   Copy,
+  Download,
   ExternalLink,
   Eye,
+  Globe,
   Laptop,
   RefreshCw,
   Smartphone,
+  Upload,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -43,7 +46,7 @@ import {
   getStoredConversationId,
   sanitizeThinkingContent,
 } from '@/app/lib/conversation';
-import { LANGUAGE_STORAGE_KEY, TRANSLATIONS, type Locale } from '@/app/i18n';
+import { LANGUAGE_STORAGE_KEY, TRANSLATIONS, type Locale, type UiCopy } from '@/app/i18n';
 import { claudeSessionExportFilename } from '../../../shared/claude-session-export';
 import { conversationExportFilename, conversationToJsonl } from '../../../shared/conversation-export';
 import { buildStoppedReply } from '../../../shared/reply-language';
@@ -98,6 +101,21 @@ function previewDisplayPathFromPath(path: string) {
     ? path.slice(PREVIEW_PATH_PREFIX.length)
     : path.replace(/^\/+/, '');
   return stripped === '' ? '/' : `/${stripped}`;
+}
+
+function publishButtonTitle(
+  copy: UiCopy,
+  options: {
+    canDownload: boolean;
+    loading: boolean;
+    publishBusy: boolean;
+    lastPublishUrl: string | null;
+  },
+) {
+  if (options.publishBusy) return copy.workspace.publishDisabledPublishing;
+  if (options.loading) return copy.workspace.publishDisabledAgentRunning;
+  if (!options.canDownload) return copy.workspace.publishDisabledNoProject;
+  return options.lastPublishUrl ? copy.republishLabel : copy.publishLabel;
 }
 
 function isSamePreviewTarget(a: string, b: string) {
@@ -212,6 +230,14 @@ export function WorkspaceScreen() {
   // token rotation does not reload the running app).
   const shareablePreviewUrl = preview?.url || activePreviewUrl;
   const hasWorkspace = messages.length > 0 || Boolean(preview) || Boolean(build) || workspaceRestoring;
+  const canDownload = Boolean(download?.url);
+  const publishDisabled = !hasWorkspace || !canDownload || loading || publishBusy;
+  const publishTitleText = publishButtonTitle(t, {
+    canDownload,
+    loading,
+    publishBusy,
+    lastPublishUrl,
+  });
   // Address bar shows the preview's current route (relative to the /preview/
   // base) once the injected tracker reports it; before that it falls back to
   // a bare root path so neither the host domain nor the preview base path is
@@ -314,21 +340,30 @@ export function WorkspaceScreen() {
       }
       const activityHistory = Array.isArray(data.activityHistory) ? data.activityHistory : [];
       let nextMessages: ChatMessage[] = activityHistory.length > 0
-        ? activityHistory.flatMap((turn) => [
-            {
-              id: `${turn.id}-user`,
-              role: 'user' as const,
-              content: turn.user,
-              status: 'done' as AssistantStatus,
-            },
-            {
-              id: `${turn.id}-assistant`,
-              role: 'assistant' as const,
-              content: turn.assistant,
-              activities: turn.activities,
-              status: turn.status === 'completed' ? 'done' as const : turn.status === 'failed' ? 'error' as const : 'stopped' as const,
-            },
-          ])
+        ? activityHistory.flatMap((turn) => {
+            const startedAt = turn.startedAt ?? turn.createdAt;
+            const endedAt = turn.endedAt ?? turn.createdAt;
+            return [
+              {
+                id: `${turn.id}-user`,
+                role: 'user' as const,
+                content: turn.user,
+                status: 'done' as AssistantStatus,
+                startedAt,
+                endedAt: startedAt,
+              },
+              {
+                id: `${turn.id}-assistant`,
+                role: 'assistant' as const,
+                content: turn.assistant,
+                activities: turn.activities,
+                status: turn.status === 'completed' ? 'done' as const : turn.status === 'failed' ? 'error' as const : 'stopped' as const,
+                startedAt,
+                endedAt,
+                turnResult: turn.turnResult,
+              },
+            ];
+          })
         : history.map((item) => ({
             id: createMessageId(item.role),
             role: item.role,
@@ -356,17 +391,19 @@ export function WorkspaceScreen() {
           );
           const hasUserForTurn = nextMessages.some((item) => item.id === userId);
 
+          const inFlightStartedAt = activeTask.startedAt || Date.now();
           if (!hasRunningAssistant) {
             if (last?.role === 'user' && last.content === activeTask.message) {
               nextMessages = [
                 ...nextMessages.slice(0, -1),
-                { ...last, id: userId },
+                { ...last, id: userId, startedAt: last.startedAt ?? inFlightStartedAt, endedAt: last.endedAt ?? inFlightStartedAt },
                 {
                   id: assistantId,
                   role: 'assistant',
                   content: '',
                   activities: [],
                   status: 'running',
+                  startedAt: inFlightStartedAt,
                 },
               ];
             } else if (!hasUserForTurn && !(last?.role === 'assistant' && last.id === assistantId)) {
@@ -377,6 +414,8 @@ export function WorkspaceScreen() {
                   role: 'user',
                   content: activeTask.message,
                   status: 'done',
+                  startedAt: inFlightStartedAt,
+                  endedAt: inFlightStartedAt,
                 },
                 {
                   id: assistantId,
@@ -384,6 +423,7 @@ export function WorkspaceScreen() {
                   content: '',
                   activities: [],
                   status: 'running',
+                  startedAt: inFlightStartedAt,
                 },
               ];
             }
@@ -819,9 +859,11 @@ export function WorkspaceScreen() {
             activities[activities.length - 1] = {
               ...last,
               content: `${last.content}${nextText}`,
+              endedAt: Date.now(),
             };
           } else {
-            activities.push({ kind: 'text', content: nextText });
+            const now = Date.now();
+            activities.push({ kind: 'text', content: nextText, startedAt: now, endedAt: now });
           }
           return {
             ...item,
@@ -829,6 +871,36 @@ export function WorkspaceScreen() {
           };
         }),
       );
+    };
+
+    const appendLogActivity = (log: {
+      phase?: Extract<AssistantActivity, { kind: 'log' }>['phase'];
+      stream?: Extract<AssistantActivity, { kind: 'log' }>['stream'];
+      message: string;
+      startedAt?: number;
+      endedAt?: number;
+    }) => {
+      const message = log.message.trim();
+      if (!message) return;
+      const now = Date.now();
+      const startedAt = log.startedAt ?? now;
+      setMessages((current) => current.map((item) => {
+        if (item.id !== assistantMessageId) return item;
+        return {
+          ...item,
+          activities: [
+            ...(item.activities ?? []),
+            {
+              kind: 'log' as const,
+              phase: log.phase,
+              stream: log.stream,
+              message,
+              startedAt,
+              endedAt: log.endedAt ?? startedAt,
+            },
+          ],
+        };
+      }));
     };
 
     const upsertToolActivity = (
@@ -851,6 +923,8 @@ export function WorkspaceScreen() {
             status: patch.status || 'running',
             inputSummary: patch.inputSummary,
             outputSummary: patch.outputSummary,
+            command: patch.command,
+            phaseHint: patch.phaseHint,
             startedAt: patch.startedAt || Date.now(),
             endedAt: patch.endedAt,
           });
@@ -862,7 +936,9 @@ export function WorkspaceScreen() {
     const finalizeAssistant = (
       finalContent: string,
       finalStatus: AssistantStatus,
+      turnResult?: ChatMessage['turnResult'],
     ) => {
+      const endedAt = Date.now();
       setMessages((current) =>
         current.map((item) =>
           item.id === assistantMessageId
@@ -878,11 +954,15 @@ export function WorkspaceScreen() {
                           : finalStatus === 'error'
                             ? 'failed' as const
                             : 'completed' as const,
-                        endedAt: Date.now(),
+                        endedAt,
                       }
-                    : activity,
+                    : activity.kind === 'text' && !activity.endedAt
+                      ? { ...activity, endedAt }
+                      : activity,
                 ),
                 status: finalStatus,
+                endedAt,
+                ...(turnResult ? { turnResult } : {}),
               }
             : item,
         ),
@@ -962,7 +1042,12 @@ export function WorkspaceScreen() {
 
       const finalText = data.reply || data.error || t.response.noDisplay;
       const finalStatus: AssistantStatus = data.stopped ? 'stopped' : data.ok === false ? 'error' : 'done';
-      finalizeAssistant(finalText, finalStatus);
+      finalizeAssistant(finalText, finalStatus, {
+        ok: data.ok,
+        stopped: data.stopped,
+        buildStatus: data.build?.status,
+        hasPreview: Boolean(data.preview?.url),
+      });
     };
 
     const handleStreamEvent = (event: ChatStreamEvent) => {
@@ -977,6 +1062,11 @@ export function WorkspaceScreen() {
         return;
       }
       if (event.type === 'status' && event.message) {
+        appendLogActivity({
+          phase: 'agent',
+          stream: 'status',
+          message: event.message,
+        });
         return;
       }
       if (event.type === 'ping') return;
@@ -1010,6 +1100,8 @@ export function WorkspaceScreen() {
           name: toolName,
           status: 'running',
           inputSummary: event.data.inputSummary || event.data.command,
+          command: event.data.command,
+          phaseHint: event.data.phaseHint,
           startedAt: event.data.startedAt,
         });
         return;
@@ -1064,6 +1156,13 @@ export function WorkspaceScreen() {
       }
       if (event.type === 'log' && event.message) {
         sawProjectActivity = true;
+        appendLogActivity({
+          phase: event.phase,
+          stream: event.stream,
+          message: event.message,
+          startedAt: event.startedAt,
+          endedAt: event.endedAt,
+        });
       }
     };
 
@@ -1173,16 +1272,25 @@ export function WorkspaceScreen() {
     const userMessageId = createMessageId('user');
     const assistantMessageId = createMessageId('assistant');
     activeTurnIdRef.current = assistantMessageId;
+    const turnStartedAt = Date.now();
 
     setMessages((current) => [
       ...current,
-      { id: userMessageId, role: 'user', content: trimmed },
+      {
+        id: userMessageId,
+        role: 'user',
+        content: trimmed,
+        status: 'done',
+        startedAt: turnStartedAt,
+        endedAt: turnStartedAt,
+      },
       {
         id: assistantMessageId,
         role: 'assistant',
         content: '',
         activities: [],
         status: 'running',
+        startedAt: turnStartedAt,
       },
     ]);
     setFilesRefreshing(true);
@@ -1226,6 +1334,7 @@ export function WorkspaceScreen() {
                 ...item,
                 content: msg,
                 status: 'error' as AssistantStatus,
+                endedAt: Date.now(),
               }
             : item,
         ),
@@ -1252,15 +1361,19 @@ export function WorkspaceScreen() {
     // Anchored to the prompt being stopped, not the UI locale, so the assistant
     // column stays in one language (and matches what /stop persists).
     const stoppedText = buildStoppedReply(currentUser?.content || '');
+    const stoppedAt = Date.now();
+    const startedAt = currentAssistant?.startedAt || currentUser?.startedAt || stoppedAt;
     setMessages((current) => current.map((item, index) => {
       if (index !== current.length - 1 || item.role !== 'assistant' || item.status !== 'running') return item;
       return {
         ...item,
         content: stoppedText,
         status: 'stopped',
+        endedAt: stoppedAt,
+        turnResult: { ok: false, stopped: true, hasPreview: Boolean(preview?.url) },
         activities: (item.activities ?? []).map((activity) =>
           activity.kind === 'tool' && activity.status === 'running'
-            ? { ...activity, status: 'stopped' as const, endedAt: Date.now() }
+            ? { ...activity, status: 'stopped' as const, endedAt: stoppedAt }
             : activity,
         ),
       };
@@ -1270,7 +1383,7 @@ export function WorkspaceScreen() {
 
     const stoppedActivities = (currentAssistant?.activities ?? []).map((activity) =>
       activity.kind === 'tool' && activity.status === 'running'
-        ? { ...activity, status: 'stopped' as const, endedAt: Date.now() }
+        ? { ...activity, status: 'stopped' as const, endedAt: stoppedAt }
         : activity,
     );
     const stoppedTurn = {
@@ -1278,7 +1391,10 @@ export function WorkspaceScreen() {
       user: currentUser?.content || '',
       assistant: stoppedText,
       status: 'stopped' as const,
-      createdAt: Date.now(),
+      createdAt: startedAt,
+      startedAt,
+      endedAt: stoppedAt,
+      turnResult: { ok: false, stopped: true, hasPreview: Boolean(preview?.url) },
       activities: stoppedActivities,
     };
 
@@ -1295,13 +1411,55 @@ export function WorkspaceScreen() {
     if (process.env.NODE_ENV !== 'development' || messages.length === 0) {
       return;
     }
+    const fileItems = (fileTree?.items ?? []).filter((item) => item.type === 'file');
     const jsonl = conversationToJsonl({
       conversationId,
+      model,
+      language,
+      preview: preview
+        ? {
+            has_url: Boolean(preview.url),
+            error: preview.error,
+            restarted: preview.restarted,
+          }
+        : undefined,
+      download: download
+        ? {
+            has_url: Boolean(download.url),
+            error: download.error,
+          }
+        : undefined,
+      build: build
+        ? {
+            status: build.status,
+            auto_fix_attempts: build.autoFixAttempts,
+            auto_fix_applied: build.autoFixApplied,
+            stdout: build.stdout,
+            stderr: build.stderr,
+          }
+        : undefined,
+      files: fileTree
+        ? {
+            root: fileTree.root,
+            count: fileItems.length,
+            paths: fileItems.map((item) => item.path),
+          }
+        : undefined,
+      publish: (publishResult || lastPublishUrl)
+        ? {
+            has_url: Boolean(publishResult?.previewUrl || lastPublishUrl),
+            project_id: publishResult?.projectId,
+            deployment_id: publishResult?.deploymentId,
+          }
+        : undefined,
       messages: messages.map((message) => ({
         id: message.id,
         role: message.role,
         content: message.content,
         status: message.status,
+        startedAt: message.startedAt,
+        endedAt: message.endedAt,
+        turnResult: message.turnResult,
         activities: message.activities,
       })),
     });
@@ -1587,11 +1745,6 @@ export function WorkspaceScreen() {
         copy={t}
         language={language}
         hasWorkspace={hasWorkspace}
-        canDownload={Boolean(download?.url)}
-        downloadBusy={downloadBusy}
-        loading={loading}
-        publishBusy={publishBusy}
-        lastPublishUrl={lastPublishUrl}
         contactUrl={contactUrl}
         showDeploy={CLAIM_DEPLOY_ENABLED}
         showExportTranscript={process.env.NODE_ENV === 'development'}
@@ -1599,11 +1752,8 @@ export function WorkspaceScreen() {
         canExportSession={Boolean(conversationId) && messages.length > 0}
         exportSessionBusy={exportSessionBusy}
         onLanguageChange={setLanguage}
-        onDownload={() => void handleDownload()}
         onNewProject={handleNewProject}
         onDeploy={handleClaimDeploy}
-        onPublish={() => void handlePublish()}
-        onOpenLastPublish={handleOpenPublishUrl}
         onExportTranscript={handleExportTranscript}
         onExportSession={() => void handleExportSdkSession()}
       />
@@ -1767,6 +1917,47 @@ export function WorkspaceScreen() {
                   </button>
                 </>
               )}
+              {sandboxTab === 'files' && canDownload && (
+                <button
+                  type="button"
+                  onClick={() => void handleDownload()}
+                  disabled={downloadBusy}
+                  className="workspace-icon-button"
+                  aria-label={downloadBusy ? t.workspace.downloading : t.workspace.downloadSource}
+                  data-tooltip={downloadBusy ? t.workspace.downloading : t.workspace.downloadSource}
+                >
+                  {downloadBusy
+                    ? <span className="size-3.5 animate-spin rounded-full border-2 border-transparent border-t-current" />
+                    : <Download className="size-3.5" />}
+                </button>
+              )}
+              {lastPublishUrl && (
+                <button
+                  type="button"
+                  onClick={handleOpenPublishUrl}
+                  className="workspace-icon-button"
+                  aria-label={t.workspace.publishOpenLast}
+                  title={t.workspace.publishOpenLast}
+                >
+                  <Globe className="size-3.5" />
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => void handlePublish()}
+                disabled={publishDisabled}
+                className="workspace-publish-button"
+                title={publishTitleText}
+              >
+                {publishBusy
+                  ? <span className="size-3.5 animate-spin rounded-full border-2 border-transparent border-t-current" />
+                  : <Upload />}
+                {publishBusy
+                  ? t.workspace.publishing
+                  : lastPublishUrl
+                    ? t.republishLabel
+                    : t.publishLabel}
+              </button>
             </div>
           </div>
 

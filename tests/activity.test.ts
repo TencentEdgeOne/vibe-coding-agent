@@ -61,6 +61,33 @@ test('tool output is capped at two kilobytes', () => {
   assert.match(summary, /truncated$/);
 });
 
+test('activity trim keeps timing logs when the item cap is exceeded', () => {
+  const activities = [
+    { kind: 'log' as const, message: '[timing] task_start duration_ms=12 since_turn_ms=12', startedAt: 1, endedAt: 13 },
+    { kind: 'log' as const, message: '[timing] first_visible duration_ms=800 since_turn_ms=800 via=narration', startedAt: 1, endedAt: 801 },
+    ...Array.from({ length: 8 }, (_, index) => ({
+      kind: 'text' as const,
+      content: `step-${index}`,
+    })),
+  ];
+  const next = appendTrimmedActivityTurn(
+    [],
+    {
+      id: 'turn',
+      user: 'hi',
+      assistant: 'ok',
+      status: 'completed',
+      createdAt: 1,
+      activities,
+    },
+    25,
+    4,
+  );
+  assert.equal(next[0].activities.length, 4);
+  assert.equal(next[0].activities.filter((item) => item.kind === 'log').length, 2);
+  assert.equal(next[0].activities.filter((item) => item.kind === 'text').length, 2);
+});
+
 test('activity history replaces duplicate turns and applies both caps', () => {
   const makeTurn = (id: string, count = 1): PersistedActivityTurn => ({
     id,

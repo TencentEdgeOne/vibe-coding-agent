@@ -1,6 +1,6 @@
 'use client';
 
-import { Download, Globe, MessageCircle, Upload } from 'lucide-react';
+import { MessageCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -19,19 +19,11 @@ type SiteHeaderProps = {
   copy: UiCopy;
   language: Locale;
   hasWorkspace: boolean;
-  canDownload: boolean;
-  downloadBusy: boolean;
-  loading: boolean;
-  publishBusy: boolean;
-  lastPublishUrl: string | null;
   contactUrl: string;
   showDeploy: boolean;
   onLanguageChange: (language: Locale) => void;
-  onDownload: () => void;
   onNewProject: () => void;
   onDeploy: () => void;
-  onPublish: () => void;
-  onOpenLastPublish: () => void;
   showExportTranscript?: boolean;
   canExportTranscript?: boolean;
   onExportTranscript?: () => void;
@@ -40,41 +32,15 @@ type SiteHeaderProps = {
   onExportSession?: () => void;
 };
 
-function publishTitle(
-  copy: UiCopy,
-  options: {
-    hasWorkspace: boolean;
-    canDownload: boolean;
-    loading: boolean;
-    publishBusy: boolean;
-    lastPublishUrl: string | null;
-  },
-) {
-  if (options.publishBusy) return copy.workspace.publishDisabledPublishing;
-  if (options.loading) return copy.workspace.publishDisabledAgentRunning;
-  if (!options.hasWorkspace || !options.canDownload) {
-    return copy.workspace.publishDisabledNoProject;
-  }
-  return options.lastPublishUrl ? copy.republishLabel : copy.publishLabel;
-}
-
 export function SiteHeader({
   copy,
   language,
   hasWorkspace,
-  canDownload,
-  downloadBusy,
-  loading,
-  publishBusy,
-  lastPublishUrl,
   contactUrl,
   showDeploy,
   onLanguageChange,
-  onDownload,
   onNewProject,
   onDeploy,
-  onPublish,
-  onOpenLastPublish,
   showExportTranscript = false,
   canExportTranscript = false,
   onExportTranscript,
@@ -83,14 +49,6 @@ export function SiteHeader({
   onExportSession,
 }: SiteHeaderProps) {
   const isZh = language === 'zh';
-  const publishDisabled = !hasWorkspace || !canDownload || loading || publishBusy;
-  const publishTitleText = publishTitle(copy, {
-    hasWorkspace,
-    canDownload,
-    loading,
-    publishBusy,
-    lastPublishUrl,
-  });
 
   return (
     <header className="site-topbar">
@@ -136,20 +94,6 @@ export function SiteHeader({
             className="site-language"
           />
         )}
-        {hasWorkspace && canDownload && (
-          <button
-            type="button"
-            onClick={onDownload}
-            disabled={downloadBusy}
-            className="site-icon-button"
-            aria-label={downloadBusy ? copy.workspace.downloading : copy.workspace.downloadSource}
-            title={downloadBusy ? copy.workspace.downloading : copy.workspace.downloadSource}
-          >
-            {downloadBusy
-              ? <span className="size-4 animate-spin rounded-full border-2 border-transparent border-t-current" />
-              : <Download />}
-          </button>
-        )}
         {hasWorkspace && (
           <button type="button" onClick={onNewProject} className="site-secondary-button">
             {copy.workspace.newProject}
@@ -158,33 +102,6 @@ export function SiteHeader({
         {hasWorkspace && showDeploy && (
           <button type="button" onClick={onDeploy} className="site-secondary-button">
             {copy.deployLabel}
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={onPublish}
-          disabled={publishDisabled}
-          className="site-secondary-button site-publish-button"
-          title={publishTitleText}
-        >
-          {publishBusy
-            ? <span className="size-3.5 animate-spin rounded-full border-2 border-transparent border-t-current" />
-            : <Upload />}
-          {publishBusy
-            ? copy.workspace.publishing
-            : lastPublishUrl
-              ? copy.republishLabel
-              : copy.publishLabel}
-        </button>
-        {lastPublishUrl && (
-          <button
-            type="button"
-            onClick={onOpenLastPublish}
-            className="site-icon-button"
-            aria-label={copy.workspace.publishOpenLast}
-            title={copy.workspace.publishOpenLast}
-          >
-            <Globe />
           </button>
         )}
         <Dialog>

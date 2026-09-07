@@ -2,9 +2,11 @@ import type { SdkMcpToolDefinition } from '@anthropic-ai/claude-agent-sdk';
 import type {
   ActivityStatus,
   BuildStatus,
+  ProgressPhase,
+  TurnResult,
 } from '../shared/protocol.ts';
 
-export type { ActivityStatus, BuildStatus, FileTreeItem } from '../shared/protocol.ts';
+export type { ActivityStatus, BuildStatus, FileTreeItem, ProgressPhase, TurnResult } from '../shared/protocol.ts';
 
 export type ProjectState = {
   created: boolean;
@@ -60,6 +62,8 @@ export type PersistedActivity =
   | {
       kind: 'text';
       content: string;
+      startedAt?: number;
+      endedAt?: number;
     }
   | {
       kind: 'tool';
@@ -68,7 +72,17 @@ export type PersistedActivity =
       status: ActivityStatus;
       inputSummary?: string;
       outputSummary?: string;
+      command?: string;
+      phaseHint?: ProgressPhase;
       startedAt: number;
+      endedAt?: number;
+    }
+  | {
+      kind: 'log';
+      phase?: 'scaffold' | 'agent';
+      stream?: 'status' | 'stdout' | 'stderr';
+      message: string;
+      startedAt?: number;
       endedAt?: number;
     };
 
@@ -78,6 +92,9 @@ export type PersistedActivityTurn = {
   assistant: string;
   status: 'completed' | 'failed' | 'stopped';
   createdAt: number;
+  startedAt?: number;
+  endedAt?: number;
+  turnResult?: TurnResult;
   activities: PersistedActivity[];
 };
 
@@ -117,7 +134,7 @@ export type AgentProgressEvent =
         id: string;
         name: string;
         command?: string;
-        phaseHint?: 'scaffold' | 'code' | 'install' | 'preview' | 'link';
+        phaseHint?: ProgressPhase;
         fileCount?: number;
         inputSummary?: string;
         startedAt?: number;

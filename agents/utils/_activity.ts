@@ -1,4 +1,5 @@
-import type { PersistedActivityTurn } from '../_types.ts';
+import type { PersistedActivity, PersistedActivityTurn } from '../_types.ts';
+import { isTimingLog } from './_timing.ts';
 
 const SUMMARY_LIMIT = 2_000;
 const SENSITIVE_KEY = /(authorization|cookie|password|passwd|secret|token|api[_-]?key|private[_-]?key|credential)/i;
@@ -91,13 +92,31 @@ export function summarizeToolOutput(value: string, projectDir = '') {
   return truncate(redactInlineSecrets(withoutProjectPath));
 }
 
+function isTimingActivity(activity: PersistedActivity) {
+  return activity.kind === 'log' && isTimingLog(activity.message);
+}
+
+/** Keep timing logs when the turn is over the item cap so export still has the send→visible breakdown. */
+export function trimActivities(activities: PersistedActivity[], itemLimit: number) {
+  if (activities.length <= itemLimit) {
+    return activities;
+  }
+  const timing = activities.filter(isTimingActivity);
+  const rest = activities.filter((activity) => !isTimingActivity(activity));
+  const timingBudget = Math.min(timing.length, itemLimit);
+  const restBudget = itemLimit - timingBudget;
+  const keptTiming = new Set(timing.slice(-timingBudget));
+  const keptRest = new Set(rest.slice(-restBudget));
+  return activities.filter((activity) => keptTiming.has(activity) || keptRest.has(activity));
+}
+
 export function appendTrimmedActivityTurn(
   current: PersistedActivityTurn[],
   turn: PersistedActivityTurn,
   turnLimit = 25,
   itemLimit = 50,
 ) {
-  const nextTurn = { ...turn, activities: turn.activities.slice(-itemLimit) };
+  const nextTurn = { ...turn, activities: trimActivities(turn.activities, itemLimit) };
   return [...current.filter((item) => item.id !== turn.id), nextTurn].slice(-turnLimit);
 }
 

@@ -1474,10 +1474,6 @@ input::placeholder {
     display: none;
   }
 
-  .site-publish-button {
-    display: inline-flex;
-  }
-
   .workspace-topbar {
     align-items: center;
     padding: 0 8px;
@@ -1633,14 +1629,48 @@ input::placeholder {
   background: #1f57e0;
 }
 
-.site-publish-button {
+.workspace-publish-button {
+  display: inline-flex;
+  height: 30px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
   gap: 6px;
-  padding: 0 10px;
+  margin-left: 4px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--brand);
+  padding: 0 12px;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  box-shadow: 0 1px 2px rgba(47, 107, 255, 0.28), 0 0 0 1px rgba(47, 107, 255, 0.08);
+  transition:
+    background 150ms ease,
+    box-shadow 150ms ease,
+    transform 120ms ease;
 }
 
-.site-publish-button svg {
+.workspace-publish-button svg {
   width: 13px;
   height: 13px;
+}
+
+.workspace-publish-button:hover:not(:disabled) {
+  background: var(--brand-deep);
+  box-shadow: 0 4px 12px rgba(47, 107, 255, 0.32);
+  transform: translateY(-1px);
+}
+
+.workspace-publish-button:active:not(:disabled) {
+  transform: translateY(0) scale(0.98);
+}
+
+.workspace-publish-button:disabled {
+  cursor: not-allowed;
+  background: #9db6ff;
+  box-shadow: none;
 }
 
 .publish-steps {

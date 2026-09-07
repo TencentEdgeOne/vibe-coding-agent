@@ -8,10 +8,21 @@ export type BuildStatus = 'success' | 'failed' | 'skipped';
 
 export type ActivityStatus = 'running' | 'completed' | 'failed' | 'stopped';
 
+export type ProgressPhase = 'scaffold' | 'modify' | 'code' | 'install' | 'preview' | 'link';
+
+export type TurnResult = {
+  ok?: boolean;
+  stopped?: boolean;
+  buildStatus?: BuildStatus;
+  hasPreview?: boolean;
+};
+
 export type AssistantActivity =
   | {
       kind: 'text';
       content: string;
+      startedAt?: number;
+      endedAt?: number;
     }
   | {
       kind: 'tool';
@@ -20,6 +31,16 @@ export type AssistantActivity =
       status: ActivityStatus;
       inputSummary?: string;
       outputSummary?: string;
+      command?: string;
+      phaseHint?: ProgressPhase;
+      startedAt?: number;
+      endedAt?: number;
+    }
+  | {
+      kind: 'log';
+      phase?: 'scaffold' | 'agent';
+      stream?: 'status' | 'stdout' | 'stderr';
+      message: string;
       startedAt?: number;
       endedAt?: number;
     };
@@ -30,6 +51,9 @@ export type PersistedActivityTurn = {
   assistant: string;
   status: 'completed' | 'failed' | 'stopped';
   createdAt: number;
+  startedAt?: number;
+  endedAt?: number;
+  turnResult?: TurnResult;
   activities: AssistantActivity[];
 };
 
@@ -103,8 +127,6 @@ export type ChatResponse = {
   stopped?: boolean;
 };
 
-type ProgressPhase = 'scaffold' | 'modify' | 'code' | 'install' | 'preview' | 'link';
-
 export type ChatStreamEvent =
   | {
       type: 'task_started';
@@ -158,6 +180,8 @@ export type ChatStreamEvent =
       phase?: 'scaffold' | 'agent';
       stream?: 'status' | 'stdout' | 'stderr';
       message?: string;
+      startedAt?: number;
+      endedAt?: number;
     }
   | { type: 'ping'; ts?: number };
 

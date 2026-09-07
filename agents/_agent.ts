@@ -328,7 +328,11 @@ export async function runCodingAgent(
   languageAnchorMessage: string = userMessage,
   // An object rather than another positional argument: the list above is long
   // enough that a new slot would be easy to fill in the wrong order.
-  runOptions: { model?: string; resetSession?: boolean } = {},
+  runOptions: {
+    model?: string;
+    resetSession?: boolean;
+    onTiming?: (stage: string, startedAt: number, fields?: Record<string, string | number | boolean | undefined>) => void;
+  } = {},
 ): Promise<CodingAgentResult> {
   // Prefer AI Gateway for model access, with backward-compatible Anthropic / DeepSeek config.
   const apiKey = pickEnvValue(context, 'AI_GATEWAY_API_KEY')
@@ -401,6 +405,7 @@ export async function runCodingAgent(
     if (typeof context.tools?.toClaudeMcpServer !== 'function') {
       throw new Error('The current Pages Agent Runtime is missing context.tools.toClaudeMcpServer. Please upgrade to a runtime that supports the new pages-agent-toolkit Tools API.');
     }
+    const setupStartedAt = Date.now();
     const edgeoneMcp = context.tools.toClaudeMcpServer(mcpServerName, { alwaysLoad: true });
     const previewRestart: PreviewRestartSignal = { mustRestart: false };
     const sandboxTools = wrapSandboxToolsForVerification(
@@ -461,9 +466,13 @@ export async function runCodingAgent(
     const sdkAbortController = new AbortController();
     const abortSdkQuery = () => sdkAbortController.abort();
     abortSignal?.addEventListener('abort', abortSdkQuery, { once: true });
+    const sessionStartedAt = Date.now();
     const sdkSession = await resolveAgentSdkSession(context, conversationId, {
       reset: runOptions.resetSession === true,
       cwd: process.cwd(),
+    });
+    runOptions.onTiming?.('session_resolve', sessionStartedAt, {
+      resumed: sdkSession.sessionResumed,
     });
     let existingFiles: string[] = [];
     if (!isNewProject) {
@@ -529,6 +538,12 @@ export async function runCodingAgent(
       prompt: userMessage,
       options: sdkOptions,
     });
+    runOptions.onTiming?.('agent_setup', setupStartedAt, {
+      resumed: sdkSession.sessionResumed,
+      existing_files: existingFiles.length,
+    });
+    const firstEventStartedAt = Date.now();
+    let firstSdkEventLogged = false;
 
     let resultMessage: SDKResultMessage | null = null;
     // Sandbox infrastructure failures, such as EdgeOne LazySandbox routes returning
@@ -620,6 +635,12 @@ export async function runCodingAgent(
     };
 
     for await (const event of sdkQuery as AsyncIterable<SDKMessage>) {
+      if (!firstSdkEventLogged) {
+        firstSdkEventLogged = true;
+        runOptions.onTiming?.('agent_first_event', firstEventStartedAt, {
+          type: event.type,
+        });
+      }
       if (abortSignal?.aborted) {
         sdkAbortController.abort();
         break;

@@ -13,6 +13,7 @@ import type {
 import { buildAutoFixPrompt } from '../utils/_build-errors';
 import { toAppRelPath } from '../utils/_paths';
 import { sanitizeAssistantText } from '../utils/_text';
+import { createTurnTimer, formatTimingLog } from '../utils/_timing';
 import { resolveConversationId } from '../utils/_request';
 import {
   FILE_PUSH_MAX_BYTES,
@@ -37,6 +38,10 @@ export async function runChatPipeline(
     userMessagePersisted?: boolean;
     /** Validated model for this turn; '' or absent runs the configured default. */
     model?: string;
+    /** Server clock when the user message was persisted; first-visible metrics are since this. */
+    timingOriginMs?: number;
+    persistMs?: number;
+    dispatchMs?: number;
   } = {},
 ) {
   const { conversationId } = resolveConversationId(context);
@@ -70,32 +75,99 @@ export async function runChatPipeline(
     return;
   }
 
-  await extendExistingSandboxTimeout(context);
+  const pendingLogs: Array<{
+    phase?: 'scaffold' | 'agent';
+    stream?: 'status' | 'stdout' | 'stderr';
+    message: string;
+    startedAt?: number;
+    endedAt?: number;
+  }> = [];
+  let recordLog: ((log: (typeof pendingLogs)[number]) => void) | undefined;
+  const captureLog = (event: Record<string, unknown>) => {
+    const message = typeof event.message === 'string' ? event.message : '';
+    if (!message) return;
+    if (event.type !== 'log' && event.type !== 'status') return;
+    const stream = event.type === 'status'
+      ? 'status' as const
+      : event.stream === 'stdout'
+        ? 'stdout' as const
+        : event.stream === 'stderr'
+          ? 'stderr' as const
+          : 'status' as const;
+    const startedAt = typeof event.startedAt === 'number' ? event.startedAt : undefined;
+    const endedAt = typeof event.endedAt === 'number' ? event.endedAt : undefined;
+    const log: (typeof pendingLogs)[number] = {
+      phase: event.type === 'status'
+        ? 'agent'
+        : event.phase === 'scaffold' ? 'scaffold' : 'agent',
+      stream,
+      message,
+      ...(startedAt !== undefined ? { startedAt } : {}),
+      ...(endedAt !== undefined ? { endedAt } : {}),
+    };
+    if (recordLog) recordLog(log);
+    else pendingLogs.push(log);
+  };
+  const sendAndCapture = (event: Record<string, unknown>) => {
+    send(event);
+    captureLog(event);
+  };
 
-  send({
+  sendAndCapture({
     type: 'status',
     message: 'Running the agent workflow',
   });
 
+  const timer = createTurnTimer(options.timingOriginMs ?? Date.now());
+  const emitMark = (mark: ReturnType<typeof timer.mark>) => {
+    sendAndCapture({
+      type: 'log',
+      phase: 'agent',
+      stream: 'status',
+      message: formatTimingLog(mark),
+      startedAt: mark.startedAt,
+      endedAt: mark.endedAt,
+    });
+    return mark;
+  };
+  const reportTiming = (
+    stage: string,
+    startedAt: number,
+    fields?: Parameters<typeof timer.mark>[2],
+  ) => emitMark(timer.mark(stage, startedAt, fields));
+
   const shouldResetProject = options.resetProject === true;
+  if (typeof options.persistMs === 'number') {
+    emitMark(timer.record('task_persist', timer.originMs, timer.originMs + options.persistMs));
+  }
+  if (typeof options.dispatchMs === 'number') {
+    emitMark(timer.record('task_start', timer.originMs, timer.originMs + options.dispatchMs));
+  }
+  const extendStartedAt = Date.now();
+  await extendExistingSandboxTimeout(context);
+  reportTiming('extend_sandbox', extendStartedAt);
+
   const state = await prepareProjectWorkspace(
     context,
     conversationId,
     shouldResetProject,
-    send,
+    sendAndCapture,
+    timer,
   );
+  const historyStartedAt = Date.now();
   const history = shouldResetProject
     ? []
     : await getHistory(context, conversationId, {
       excludeLatestUserMessage: options.userMessagePersisted ? message : undefined,
     });
+  reportTiming('history', historyStartedAt, { messages: history.length });
   const activityTurnId = options.turnId
     || String(context?.run_id || `${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
   // Mid-turn debounced snapshots + exit-path flush so a recycled sandbox still
   // has a restorable workspace in project Blob storage.
   const checkpoint = createProjectCheckpointController(context, conversationId, state, (persistenceError) => {
-    send({
+    sendAndCapture({
       type: 'log',
       phase: 'agent',
       stream: 'stderr',
@@ -113,6 +185,24 @@ export async function runChatPipeline(
   });
   const recordProgress = turn.recordProgress;
   const finalizeTurn = turn.finalize;
+  recordLog = turn.recordLog;
+  for (const log of pendingLogs) recordLog(log);
+  pendingLogs.length = 0;
+
+  let firstVisibleLogged = false;
+  const logFirstVisible = (via: 'narration' | 'tool') => {
+    if (firstVisibleLogged) return;
+    firstVisibleLogged = true;
+    reportTiming('first_visible', timer.originMs, { via });
+    sendAndCapture({
+      type: 'log',
+      phase: 'agent',
+      stream: 'status',
+      message: timer.formatSummary(),
+      startedAt: timer.originMs,
+      endedAt: Date.now(),
+    });
+  };
 
   const forwardProgress = (event: AgentProgressEvent) => {
     // Forward structured progress events directly; the frontend renders by type.
@@ -123,6 +213,7 @@ export async function runChatPipeline(
       if (text.length === 0) {
         return;
       }
+      logFirstVisible('narration');
       recordProgress({ ...event, data: { ...event.data, text } });
       send({
         ...event,
@@ -132,6 +223,9 @@ export async function runChatPipeline(
         },
       } as unknown as Record<string, unknown>);
       return;
+    }
+    if (event.type === 'tool_use') {
+      logFirstVisible('tool');
     }
     recordProgress(event);
     send(event as unknown as Record<string, unknown>);
@@ -148,7 +242,7 @@ export async function runChatPipeline(
       });
       return tree;
     } catch (error) {
-      send({
+      sendAndCapture({
         type: 'log',
         phase: 'agent',
         stream: 'stderr',
@@ -222,8 +316,24 @@ export async function runChatPipeline(
     handlePreviewReady,
     abortSignal,
     message,
-    { model: options.model, resetSession: shouldResetProject },
+    {
+      model: options.model,
+      resetSession: shouldResetProject,
+      onTiming: reportTiming,
+    },
   );
+
+  if (!firstVisibleLogged) {
+    reportTiming('first_visible_missing', timer.originMs);
+    sendAndCapture({
+      type: 'log',
+      phase: 'agent',
+      stream: 'status',
+      message: timer.formatSummary(),
+      startedAt: timer.originMs,
+      endedAt: Date.now(),
+    });
+  }
 
   if (modelResult.stopped || abortSignal?.aborted) {
     const stoppedReply = buildStoppedReply(message);
@@ -351,7 +461,10 @@ export async function runChatPipeline(
 
   if (build.fatal) {
     const fatalReply = build.stderr || 'The task failed, and the remaining workflow was stopped.';
-    await finalizeTurn(fatalReply, 'failed', { withSnapshot: true });
+    await finalizeTurn(fatalReply, 'failed', {
+      withSnapshot: true,
+      turnResult: { buildStatus: build.status },
+    });
 
     send({
       type: 'result',
@@ -378,7 +491,7 @@ export async function runChatPipeline(
   if (build.status === 'failed' && modelResult.success) {
     autoFixAttempts = AUTO_FIX_MAX_ATTEMPTS;
     autoFixApplied = true;
-    send({
+    sendAndCapture({
       type: 'status',
       message: `Verification failed. Running auto-fix 1/${AUTO_FIX_MAX_ATTEMPTS}`,
     });
@@ -408,7 +521,7 @@ export async function runChatPipeline(
       message,
       // Repairing on a different model than the one that wrote the code would
       // make a failed build hard to attribute to either.
-      { model: options.model },
+      { model: options.model, onTiming: reportTiming },
     );
     if (autoFixResult.stopped || abortSignal?.aborted) {
       const stoppedReply = buildStoppedReply(message);
@@ -509,7 +622,7 @@ export async function runChatPipeline(
   await finalizeTurn(
     reply,
     modelResult.success && build.status !== 'failed' && Boolean(state.previewUrl) ? 'completed' : 'failed',
-    { withSnapshot: true },
+    { withSnapshot: true, turnResult: { buildStatus: build.status } },
   );
 
   send({

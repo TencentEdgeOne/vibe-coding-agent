@@ -111,23 +111,28 @@ test('publish is a dedicated agent route with a private pipeline', async () => {
   await access('agents/publish.ts');
 });
 
-test('publish button sits left of contact and disables while the agent is running', async () => {
+test('publish button sits in the workspace topbar and disables while the agent is running', async () => {
   const header = await readFile('app/features/workspace/components/site-header.tsx', 'utf8');
   const screen = await readFile('app/features/workspace/workspace-screen.tsx', 'utf8');
 
-  const publishIndex = header.indexOf('onPublish');
-  const contactIndex = header.indexOf("isZh ? '联系我们' : 'Contact'");
-  assert.ok(publishIndex >= 0 && contactIndex > publishIndex);
-  assert.match(header, /disabled=\{publishDisabled\}/);
-  assert.match(header, /loading \|\| publishBusy/);
-  assert.match(header, /title=\{publishTitleText\}/);
-  assert.match(header, /publishDisabledAgentRunning/);
-  assert.match(header, /republishLabel/);
-  assert.match(header, /onOpenLastPublish/);
-  assert.match(header, /Globe/);
-  assert.doesNotMatch(header, /showDeploy &&[\s\S]{0,80}onPublish/);
+  assert.doesNotMatch(header, /onPublish/);
+  assert.doesNotMatch(header, /site-publish-button/);
+  assert.doesNotMatch(header, /workspace-publish-button/);
+  assert.match(screen, /disabled=\{publishDisabled\}/);
+  assert.match(screen, /loading \|\| publishBusy/);
+  assert.match(screen, /title=\{publishTitleText\}/);
+  assert.match(screen, /publishDisabledAgentRunning/);
+  assert.match(screen, /republishLabel/);
+  assert.match(screen, /handleOpenPublishUrl/);
+  assert.match(screen, /Globe/);
+  assert.match(screen, /workspace-publish-button/);
+  assert.match(screen, /onClick=\{\(\) => void handlePublish\(\)\}/);
+  const actionsIndex = screen.indexOf('workspace-topbar-actions');
+  const publishBtn = screen.indexOf('workspace-publish-button');
+  const globe = screen.indexOf('<Globe');
+  assert.ok(actionsIndex >= 0 && publishBtn > actionsIndex);
+  assert.ok(globe > actionsIndex && globe < publishBtn);
   assert.match(screen, /showDeploy=\{CLAIM_DEPLOY_ENABLED\}/);
-  assert.match(screen, /onPublish=\{\(\) => void handlePublish\(\)\}/);
   assert.doesNotMatch(screen, /showDeploy=\{true\}/);
   assert.match(screen, /<PublishDialog/);
   assert.match(screen, /const url = publishResult\?\.previewUrl/);
@@ -140,9 +145,6 @@ test('publish button sits left of contact and disables while the agent is runnin
   assert.match(dialog, /href=\{previewUrl\}/);
   assert.match(dialog, /publishRetry/);
   assert.doesNotMatch(dialog, /eo_token/);
-  const publishBtn = header.indexOf('site-publish-button');
-  const globe = header.indexOf('<Globe');
-  assert.ok(publishBtn >= 0 && globe > publishBtn && contactIndex > globe);
 
   const i18n = await readFile('app/i18n.ts', 'utf8');
   assert.match(i18n, /republishLabel/);
