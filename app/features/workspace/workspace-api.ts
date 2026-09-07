@@ -143,6 +143,22 @@ export function fetchProjectArchive(url: string, conversationId: string) {
   });
 }
 
+const SDK_SESSION_EXPORT_TIMEOUT_MS = 120_000;
+
+export async function fetchSdkSessionTranscript(conversationId: string) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SDK_SESSION_EXPORT_TIMEOUT_MS);
+  try {
+    return await fetch('/sdk-session', {
+      method: 'GET',
+      headers: conversationHeaders(conversationId),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export function publishProject(conversationId: string, siteDomain: string) {
   return fetch('/publish', {
     method: 'POST',

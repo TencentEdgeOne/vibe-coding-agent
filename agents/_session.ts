@@ -204,6 +204,20 @@ export async function resolveClaudeSessionBinding(
   return { sessionId };
 }
 
+export async function readBoundSdkSessionId(
+  context: any,
+  conversationId: string,
+): Promise<string> {
+  const trimmed = conversationId.trim();
+  if (!trimmed) {
+    return '';
+  }
+  return resolveBoundSessionId({
+    conversationId: trimmed,
+    store: context?.store,
+  }, trimmed);
+}
+
 export async function persistConversationSdkSession(
   context: any,
   conversationId: string,

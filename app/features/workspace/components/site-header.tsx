@@ -35,6 +35,9 @@ type SiteHeaderProps = {
   showExportTranscript?: boolean;
   canExportTranscript?: boolean;
   onExportTranscript?: () => void;
+  canExportSession?: boolean;
+  exportSessionBusy?: boolean;
+  onExportSession?: () => void;
 };
 
 function publishTitle(
@@ -75,6 +78,9 @@ export function SiteHeader({
   showExportTranscript = false,
   canExportTranscript = false,
   onExportTranscript,
+  canExportSession = false,
+  exportSessionBusy = false,
+  onExportSession,
 }: SiteHeaderProps) {
   const isZh = language === 'zh';
   const publishDisabled = !hasWorkspace || !canDownload || loading || publishBusy;
@@ -91,15 +97,34 @@ export function SiteHeader({
       <div className="site-brand-cluster">
         <div className="site-brand" aria-label="MAKERS VIBE CODING">MAKERS VIBE CODING</div>
         {showExportTranscript && (
-          <button
-            type="button"
-            onClick={onExportTranscript}
-            disabled={!canExportTranscript}
-            className="site-secondary-button"
-            title={canExportTranscript ? copy.workspace.exportTranscript : copy.workspace.exportTranscriptEmpty}
-          >
-            {copy.workspace.exportTranscript}
-          </button>
+          <>
+            <button
+              type="button"
+              onClick={onExportTranscript}
+              disabled={!canExportTranscript}
+              className="site-secondary-button"
+              title={canExportTranscript ? copy.workspace.exportTranscript : copy.workspace.exportTranscriptEmpty}
+            >
+              {copy.workspace.exportTranscript}
+            </button>
+            <button
+              type="button"
+              onClick={onExportSession}
+              disabled={!canExportSession || exportSessionBusy}
+              className="site-secondary-button"
+              title={
+                exportSessionBusy
+                  ? copy.workspace.exportSessionBusy
+                  : canExportSession
+                    ? copy.workspace.exportSession
+                    : copy.workspace.exportSessionEmpty
+              }
+            >
+              {exportSessionBusy
+                ? copy.workspace.exportSessionBusy
+                : copy.workspace.exportSession}
+            </button>
+          </>
         )}
       </div>
       <div className="site-topbar-actions">

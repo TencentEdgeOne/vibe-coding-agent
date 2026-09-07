@@ -44,6 +44,7 @@ import {
   sanitizeThinkingContent,
 } from '@/app/lib/conversation';
 import { LANGUAGE_STORAGE_KEY, TRANSLATIONS, type Locale } from '@/app/i18n';
+import { claudeSessionExportFilename } from '../../../shared/claude-session-export';
 import { conversationExportFilename, conversationToJsonl } from '../../../shared/conversation-export';
 import { buildStoppedReply } from '../../../shared/reply-language';
 import type {
@@ -70,6 +71,7 @@ import {
   fetchModelCatalog,
   fetchProjectArchive,
   fetchResumePreview,
+  fetchSdkSessionTranscript,
   openResumeStream,
   publishProject,
   startChatTask,
@@ -131,6 +133,7 @@ export function WorkspaceScreen() {
   const [preview, setPreview] = useState<LinkInfo | null>(null);
   const [download, setDownload] = useState<LinkInfo | null>(null);
   const [downloadBusy, setDownloadBusy] = useState(false);
+  const [exportSessionBusy, setExportSessionBusy] = useState(false);
   const [publishBusy, setPublishBusy] = useState(false);
   const [publishDialogOpen, setPublishDialogOpen] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
@@ -1305,6 +1308,32 @@ export function WorkspaceScreen() {
     downloadTextFile(conversationExportFilename(conversationId), jsonl);
   }
 
+  async function handleExportSdkSession() {
+    if (process.env.NODE_ENV !== 'development' || !conversationId || exportSessionBusy) {
+      return;
+    }
+    setExportSessionBusy(true);
+    try {
+      const response = await fetchSdkSessionTranscript(conversationId);
+      if (!response.ok) {
+        window.alert(t.workspace.exportSessionFailed);
+        return;
+      }
+      const filename = response.headers.get('x-filename')
+        || claudeSessionExportFilename(conversationId);
+      const jsonl = await response.text();
+      if (!jsonl.trim()) {
+        window.alert(t.workspace.exportSessionEmpty);
+        return;
+      }
+      downloadTextFile(filename, jsonl);
+    } catch {
+      window.alert(t.workspace.exportSessionFailed);
+    } finally {
+      setExportSessionBusy(false);
+    }
+  }
+
   async function handleDownload() {
     if (!download?.url || downloadBusy) {
       return;
@@ -1567,6 +1596,8 @@ export function WorkspaceScreen() {
         showDeploy={CLAIM_DEPLOY_ENABLED}
         showExportTranscript={process.env.NODE_ENV === 'development'}
         canExportTranscript={messages.length > 0}
+        canExportSession={Boolean(conversationId) && messages.length > 0}
+        exportSessionBusy={exportSessionBusy}
         onLanguageChange={setLanguage}
         onDownload={() => void handleDownload()}
         onNewProject={handleNewProject}
@@ -1574,6 +1605,7 @@ export function WorkspaceScreen() {
         onPublish={() => void handlePublish()}
         onOpenLastPublish={handleOpenPublishUrl}
         onExportTranscript={handleExportTranscript}
+        onExportSession={() => void handleExportSdkSession()}
       />
       <Dialog open={newProjectConfirmOpen} onOpenChange={setNewProjectConfirmOpen}>
         <DialogContent
