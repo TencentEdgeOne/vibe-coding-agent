@@ -7,6 +7,9 @@ import type { ProjectState } from '../_types';
 import { debugLog } from '../utils/_debug';
 import { runSandboxCommand } from './_commands';
 
+const PREVIEW_READY_ATTEMPTS = 75;
+const PREVIEW_READY_TIMEOUT_S = 90;
+
 export async function resolvePublicLinks(context: any) {
   const previewHost = context.sandbox.getHost(PREVIEW_PUBLIC_PORT);
   const accessToken = context.sandbox.envdAccessToken;
@@ -171,9 +174,14 @@ async function prepareVitePreviewConfig(context: any, state: ProjectState, deps:
     "const mode = process.env.NODE_ENV || 'development';",
     "const configEnv = { command: 'serve', mode, isSsrBuild: false, isPreview: false };",
     `const userConfigSpecifier = ${JSON.stringify(userConfigSpecifier)};`,
-    'const loaded = userConfigSpecifier',
-    '  ? await loadConfigFromFile(configEnv, new URL(userConfigSpecifier, import.meta.url).pathname)',
-    '  : null;',
+    'let loaded = null;',
+    'try {',
+    '  loaded = userConfigSpecifier',
+    '    ? await loadConfigFromFile(configEnv, new URL(userConfigSpecifier, import.meta.url).pathname)',
+    '    : null;',
+    '} catch (error) {',
+    "  console.warn('[edgeone-preview] failed to load user Vite config:', error);",
+    '}',
     'const userConfig = loaded?.config || {};',
     'const userServer = userConfig.server || {};',
     'const userHmr = userServer.hmr && typeof userServer.hmr === \'object\' ? userServer.hmr : {};',
@@ -323,20 +331,7 @@ export async function startPreviewServer(context: any, state: ProjectState) {
     throw new Error(startResult.stderr || startResult.stdout || `Failed to start preview server on port ${port}.`);
   }
 
-  const ready = await runSandboxCommand(
-    context,
-    [
-      `for i in $(seq 1 30); do curl -fsS ${shellQuote(`http://127.0.0.1:${port}${start.readyPath}`)} >/dev/null && exit 0; sleep 1; done;`,
-      `echo "Preview server did not become ready on port ${port}${start.readyPath}" >&2;`,
-      'tail -n 120 /tmp/dev.log >&2 || true;',
-      'exit 1',
-    ].join(' '),
-    { timeout: 35 },
-  );
-
-  if (ready.exitCode !== 0) {
-    throw new Error(ready.stderr || ready.stdout || `Preview server did not become ready on port ${port}.`);
-  }
+  await waitForPreviewReady(context, port, start.readyPath);
 
   return {
     port,
@@ -347,6 +342,38 @@ export async function startPreviewServer(context: any, state: ProjectState) {
     readyPath: start.readyPath,
     ready: true,
   };
+}
+
+async function waitForPreviewReady(context: any, port: number, readyPath: string) {
+  const url = `http://127.0.0.1:${port}${readyPath}`;
+  // Always exit 0. A non-zero status is SANDBOX_UNKNOWN_ERROR and drops /tmp/dev.log.
+  const probe = await runSandboxCommand(
+    context,
+    [
+      `for i in $(seq 1 ${PREVIEW_READY_ATTEMPTS}); do`,
+      `  if curl -fsS ${shellQuote(url)} >/dev/null; then echo __PREVIEW_READY__; exit 0; fi;`,
+      '  sleep 1;',
+      'done;',
+      'echo __PREVIEW_NOT_READY__;',
+      "echo '--- /tmp/dev.log ---';",
+      'tail -n 160 /tmp/dev.log || true;',
+      "echo '--- listeners ---';",
+      `(ss -lntp 2>/dev/null || netstat -lntp 2>/dev/null || true) | grep ${port} || true;`,
+      'exit 0',
+    ].join('\n'),
+    { timeout: PREVIEW_READY_TIMEOUT_S },
+  );
+
+  if (probe.stdout.includes('__PREVIEW_READY__')) {
+    return;
+  }
+
+  const detail = [probe.stdout, probe.stderr].filter(Boolean).join('\n').trim();
+  throw new Error(
+    detail
+      ? `Preview server did not become ready on ${url}.\n${detail}`
+      : `Preview server did not become ready on ${url}.`,
+  );
 }
 
 export async function isPreviewServerReady(context: any, readyPath = PREVIEW_PATH_PREFIX) {
@@ -389,7 +416,7 @@ async function detectPreviewStartCommand(
       const vitePreviewConfig = await prepareVitePreviewConfig(context, state, deps);
       return {
         framework: 'vite',
-        command: `nohup npm run dev -- --host 0.0.0.0 --port ${port} --config ${shellQuote(vitePreviewConfig)} > /tmp/dev.log 2>&1 &`,
+        command: `nohup env ${frontendPreviewEnv} npm run dev -- --host 0.0.0.0 --port ${port} --config ${shellQuote(vitePreviewConfig)} > /tmp/dev.log 2>&1 &`,
         readyPath: PREVIEW_PATH_PREFIX,
       };
     }

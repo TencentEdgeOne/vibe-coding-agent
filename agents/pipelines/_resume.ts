@@ -61,14 +61,21 @@ function projectStateImpliesPreview(state: ProjectState, activityHistory: Persis
 
 type ResumeStage = 'history' | 'workspace' | 'preview';
 
-// Hard ceiling for the whole workspace stage so a stuck sandbox call cannot
-// leave the browser spinner pending indefinitely after stop/refresh.
-// Preview restart may need npm install + dev-server boot; keep this under the
-// client abort in app/lib/conversation.ts (130s).
+// Hard ceiling for the workspace SSE stage (restore + file tree + warm remint).
+// Cold preview (npm install + dev-server boot) is a separate /resume?stage=preview
+// request so a long install cannot swallow the file tree or blow this budget.
+// Keep the dedicated preview stage under the client abort in
+// app/features/workspace/workspace-api.ts (RESUME_CLIENT_TIMEOUT_MS).
 const WORKSPACE_RESUME_BUDGET_MS = 120_000;
 const SANDBOX_PROBE_MS = 15_000;
 const RESTORE_BUDGET_MS = 45_000;
-const PREVIEW_RESTART_BUDGET_MS = 75_000;
+const DEPENDENCY_INSTALL_BUDGET_MS = 120_000;
+const PREVIEW_RESTART_BUDGET_MS = 120_000;
+// Cold preview may restore a snapshot first, then npm install, then boot the
+// dev server. Keep this under RESUME_CLIENT_TIMEOUT_MS.
+const PREVIEW_STAGE_BUDGET_MS = WORKSPACE_RESUME_BUDGET_MS
+  + DEPENDENCY_INSTALL_BUDGET_MS
+  + PREVIEW_RESTART_BUDGET_MS;
 
 function jsonResponse(obj: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(obj), {
@@ -180,48 +187,62 @@ async function ensureProjectDependencies(context: any, state: ProjectState) {
   return installed.exitCode === 0;
 }
 
-// Warm sandboxes may still be serving /preview/; otherwise install + restart.
-async function republishPreviewOnResume(context: any, state: ProjectState) {
-  if (await isPreviewServerReady(context)) {
-    try {
-      const accessToken = typeof context.sandbox?.envdAccessToken === 'string'
-        ? context.sandbox.envdAccessToken
-        : '';
+type ResumePreview = { url?: string; error?: string; restarted?: boolean };
 
-      // Prefer rotating the token on the URL the iframe already used. Only do so
-      // when that URL still targets the current sandbox host; a recycled sandbox
-      // can otherwise produce a host/token mismatch and AUTHENTICATION_FAILED.
-      const warmLinks = await resolvePublicLinks(context);
-      if (state.previewUrl && accessToken && warmLinks.previewUrl
-        && previewTargetsMatch(state.previewUrl, warmLinks.previewUrl)) {
-        const rewritten = rewritePreviewAccessToken(state.previewUrl, accessToken);
-        if (rewritten) {
-          state.previewUrl = rewritten;
-          return {
-            url: rewritten,
-            restarted: false,
-          };
-        }
-      }
+// Fast path: sandbox still serving /preview/. Rotate the token when the stored
+// URL still points at this host; otherwise reuse the freshly resolved link.
+async function remintWarmPreview(context: any, state: ProjectState): Promise<ResumePreview | null> {
+  if (!(await isPreviewServerReady(context))) {
+    return null;
+  }
 
-      if (warmLinks.previewUrl) {
-        state.previewUrl = warmLinks.previewUrl;
+  try {
+    const accessToken = typeof context.sandbox?.envdAccessToken === 'string'
+      ? context.sandbox.envdAccessToken
+      : '';
+
+    const warmLinks = await resolvePublicLinks(context);
+    if (state.previewUrl && accessToken && warmLinks.previewUrl
+      && previewTargetsMatch(state.previewUrl, warmLinks.previewUrl)) {
+      const rewritten = rewritePreviewAccessToken(state.previewUrl, accessToken);
+      if (rewritten) {
+        state.previewUrl = rewritten;
         return {
-          url: warmLinks.previewUrl,
+          url: rewritten,
           restarted: false,
         };
       }
-    } catch {
-      // Warm links failed — fall through to a full restart.
     }
+
+    if (warmLinks.previewUrl) {
+      state.previewUrl = warmLinks.previewUrl;
+      return {
+        url: warmLinks.previewUrl,
+        restarted: false,
+      };
+    }
+  } catch {
+    // Warm links failed — caller falls through to a full restart.
   }
 
-  const depsReady = await ensureProjectDependencies(context, state);
+  return null;
+}
+
+async function restartColdPreview(context: any, state: ProjectState): Promise<ResumePreview> {
+  const depsReady = await withTimeout(
+    ensureProjectDependencies(context, state),
+    DEPENDENCY_INSTALL_BUDGET_MS,
+    'dependency install',
+  );
   if (!depsReady) {
     throw new Error('Project dependencies are not available for preview resume.');
   }
 
-  await startPreviewServer(context, state);
+  await withTimeout(
+    startPreviewServer(context, state),
+    PREVIEW_RESTART_BUDGET_MS,
+    'preview resume',
+  );
   const links = await resolvePublicLinks(context);
   if (!links.previewUrl) {
     throw new Error('Preview server started but no public preview URL was available.');
@@ -232,6 +253,15 @@ async function republishPreviewOnResume(context: any, state: ProjectState) {
     // The dev server is a new process: whatever an open iframe shows is dead.
     restarted: true,
   };
+}
+
+// Warm sandboxes may still be serving /preview/; otherwise install + restart.
+async function republishPreviewOnResume(context: any, state: ProjectState) {
+  const warm = await remintWarmPreview(context, state);
+  if (warm?.url) {
+    return warm;
+  }
+  return restartColdPreview(context, state);
 }
 
 async function runWorkspaceRestoreBody(context: any, conversationId: string) {
@@ -279,6 +309,7 @@ async function runWorkspaceRestoreBody(context: any, conversationId: string) {
       stage: 'workspace' as const,
       conversation_id: conversationId,
       hasProject: false,
+      hasPreview: hadPreview,
       preview: restoreError ? { error: restoreError } : {},
       files: { root: state.appDir, items: [] as FileTreeItem[] },
     };
@@ -298,29 +329,29 @@ async function runWorkspaceRestoreBody(context: any, conversationId: string) {
   }
 
   const hasFileItems = items.some((item) => item.type === 'file');
-  // Only restart preview when publish_preview previously succeeded for this
+  // Only remint preview when publish_preview previously succeeded for this
   // conversation. Do NOT key off package.json — a stopped mid-generation
   // project often has a scaffold but is not previewable yet.
-  const shouldRestartPreview = !generationActive && hasFileItems && hadPreview;
+  // Workspace stays on the warm path so a missing node_modules / dead dev
+  // server cannot stall the file tree. Cold start is /resume?stage=preview.
+  const shouldRemintPreview = !generationActive && hasFileItems && hadPreview;
 
-  let preview: { url?: string; error?: string; restarted?: boolean } = {};
-  if (shouldRestartPreview) {
+  let preview: ResumePreview = {};
+  if (shouldRemintPreview) {
     try {
-      preview = await withTimeout(
-        republishPreviewOnResume(context, state),
-        PREVIEW_RESTART_BUDGET_MS,
-        'preview resume',
+      const warm = await withTimeout(
+        remintWarmPreview(context, state),
+        SANDBOX_PROBE_MS,
+        'preview remint',
       );
-      state.previewPublished = true;
+      if (warm?.url) {
+        preview = warm;
+        state.previewPublished = true;
+      }
     } catch (error) {
-      state.previewUrl = undefined;
-      // Keep previewPublished so the next refresh retries instead of sticking to Files.
-      // Keep the files panel usable; do not surface a hard preview error on resume.
-      console.warn(
-        '[resume:workspace] preview restart failed:',
-        error instanceof Error ? error.message : error,
-      );
-      preview = {};
+      const message = error instanceof Error ? error.message : 'Preview remint failed.';
+      console.warn('[resume:workspace] preview remint failed:', message);
+      preview = { error: message };
     }
   } else if (!generationActive && !hadPreview) {
     // Never-published / interrupted projects stay files-only.
@@ -338,6 +369,7 @@ async function runWorkspaceRestoreBody(context: any, conversationId: string) {
     stage: 'workspace' as const,
     conversation_id: conversationId,
     hasProject: hasFileItems || Boolean(state.created),
+    hasPreview: hadPreview,
     preview,
     files: { root: state.appDir, items },
     ...(hasFileItems
@@ -369,6 +401,7 @@ export async function runProjectResumeWorkspacePipeline(context: any): Promise<R
       stage: 'workspace',
       conversation_id: conversationId,
       hasProject: false,
+      hasPreview: false,
       preview: { error: message },
       files: { root: '', items: [] },
     });
@@ -413,10 +446,39 @@ async function runPreviewRefreshBody(context: any, conversationId: string) {
     const message = error instanceof Error ? error.message : String(error);
     console.warn('[resume:preview] remint failed, escalating to workspace restore:', message);
     const workspace = await runWorkspaceRestoreBody(context, conversationId);
-    return {
-      ...workspace,
-      stage: 'preview' as const,
-    };
+    const restoredState = await getProjectState(context, conversationId);
+    if (!workspace.hasProject || !projectStateImpliesPreview(restoredState, activityHistory)) {
+      return {
+        ...workspace,
+        stage: 'preview' as const,
+        preview: workspace.preview?.url
+          ? workspace.preview
+          : { error: workspace.preview?.error || message },
+      };
+    }
+
+    try {
+      const preview = await republishPreviewOnResume(context, restoredState);
+      restoredState.previewPublished = true;
+      try {
+        await saveProjectState(context, conversationId, restoredState);
+      } catch {
+        // Non-fatal — the fresh URL below is still usable for this session.
+      }
+      return {
+        ...workspace,
+        stage: 'preview' as const,
+        preview,
+      };
+    } catch (restartError) {
+      const restartMessage = restartError instanceof Error ? restartError.message : String(restartError);
+      console.warn('[resume:preview] cold start after restore failed:', restartMessage);
+      return {
+        ...workspace,
+        stage: 'preview' as const,
+        preview: { error: restartMessage },
+      };
+    }
   }
 }
 
@@ -431,7 +493,7 @@ export async function runProjectResumePreviewPipeline(context: any): Promise<Res
     // the slow resume ceiling (and the client abort in fetchResumePreview).
     const payload = await withTimeout(
       runPreviewRefreshBody(context, conversationId),
-      WORKSPACE_RESUME_BUDGET_MS,
+      PREVIEW_STAGE_BUDGET_MS,
       'preview refresh',
     );
     return jsonResponse(payload);
@@ -496,6 +558,7 @@ export async function createProjectResumeStreamResponse(context: any): Promise<R
             stage: 'workspace',
             conversation_id: conversationId,
             hasProject: false,
+            hasPreview: false,
             preview: { error: message },
             files: { root: '', items: [] },
           },

@@ -37,7 +37,9 @@ export function openResumeStream(conversationId: string, signal?: AbortSignal) {
   });
 }
 
-const RESUME_CLIENT_TIMEOUT_MS = 130_000;
+// Must cover /resume?stage=preview cold start: snapshot restore + npm install +
+// dev-server boot. Keep above PREVIEW_STAGE_BUDGET_MS in agents/pipelines/_resume.ts.
+const RESUME_CLIENT_TIMEOUT_MS = 380_000;
 
 function fetchTimedResumeStage(conversationId: string, stage: 'preview') {
   const controller = new AbortController();

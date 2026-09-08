@@ -2,15 +2,14 @@
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AlertCircle,
   Check,
   Code2,
   Copy,
   Download,
   ExternalLink,
   Eye,
-  Globe,
   Laptop,
-  RefreshCw,
   Smartphone,
   Upload,
 } from 'lucide-react';
@@ -27,6 +26,7 @@ import {
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AgentConversation } from '@/app/components/agent-conversation';
 import { FilesPanel } from '@/app/components/files-panel';
+import { PreviewUrlChip } from '@/app/features/workspace/components/preview-url-chip';
 import { useFileContentCache } from '@/app/hooks/use-file-content-cache';
 import { useTypewriterPlaceholder } from '@/app/hooks/use-typewriter-placeholder';
 import {
@@ -49,6 +49,7 @@ import {
 import { LANGUAGE_STORAGE_KEY, TRANSLATIONS, type Locale, type UiCopy } from '@/app/i18n';
 import { claudeSessionExportFilename } from '../../../shared/claude-session-export';
 import { conversationExportFilename, conversationToJsonl } from '../../../shared/conversation-export';
+import { displayPublishOrigin } from '../../../shared/publish-target';
 import { buildStoppedReply } from '../../../shared/reply-language';
 import type {
   AssistantActivity,
@@ -66,8 +67,8 @@ import type {
   ResumeStreamEvent,
 } from '@/app/types/workspace';
 import { HomeStage } from './components/home-stage';
-import { PublishDialog } from './components/publish-dialog';
 import { SiteHeader } from './components/site-header';
+import { useWorkspaceSplitShell, WorkspaceSplitHandle } from './components/workspace-split-handle';
 import { consumeEventStream } from './sse';
 import {
   fetchChatTaskStream,
@@ -118,6 +119,155 @@ function publishButtonTitle(
   return options.lastPublishUrl ? copy.republishLabel : copy.publishLabel;
 }
 
+function publishStageLabel(copy: UiCopy, stage: PublishStage | null) {
+  if (stage === 'uploading') return copy.workspace.publishStageUploading;
+  if (stage === 'deploying') return copy.workspace.publishStageDeploying;
+  return copy.workspace.publishStagePackaging;
+}
+
+function PublishControl({
+  copy,
+  busy,
+  disabled,
+  stage,
+  error,
+  result,
+  lastPublishUrl,
+  copied,
+  idleTooltip,
+  onPublish,
+  onCopy,
+  onOpen,
+}: {
+  copy: UiCopy;
+  busy: boolean;
+  disabled: boolean;
+  stage: PublishStage | null;
+  error: string | null;
+  result: PublishResult | null;
+  lastPublishUrl: string | null;
+  copied: boolean;
+  idleTooltip: string;
+  onPublish: () => void;
+  onCopy: () => void;
+  onOpen: () => void;
+}) {
+  const previewUrl = result?.previewUrl || lastPublishUrl || '';
+  const origin = previewUrl ? displayPublishOrigin(previewUrl) : '';
+  const failed = Boolean(error) && !busy;
+  const finishedWithoutUrl = !busy && !error && Boolean(result) && !previewUrl;
+  const tokenMissing = Boolean(error?.includes('MAKERS_API_TOKEN'));
+  const succeeded = !busy && !failed && !finishedWithoutUrl && Boolean(origin);
+  const state = busy
+    ? 'busy'
+    : failed || finishedWithoutUrl
+      ? 'failed'
+      : succeeded
+        ? 'success'
+        : 'idle';
+
+  const failDetail = tokenMissing
+    ? copy.workspace.publishTokenMissing
+    : failed
+      ? error
+      : finishedWithoutUrl
+        ? copy.workspace.publishNoUrl
+        : null;
+
+  const label = busy
+    ? publishStageLabel(copy, stage)
+    : state === 'failed'
+      ? (finishedWithoutUrl ? copy.workspace.publishNoUrl : copy.workspace.publishFailedTitle)
+      : origin;
+
+  const iconAria = state === 'idle'
+    ? idleTooltip
+    : state === 'busy'
+      ? label
+      : state === 'failed'
+        ? copy.workspace.publishRetry
+        : copy.republishLabel;
+
+  const iconDisabled = busy || (state !== 'failed' && disabled);
+
+  return (
+    <div className="workspace-publish-chip" data-state={state}>
+      <button
+        type="button"
+        className={
+          state === 'idle'
+            ? 'workspace-publish-chip-icon workspace-icon-button is-publish'
+            : 'workspace-publish-chip-icon'
+        }
+        disabled={iconDisabled}
+        aria-label={iconAria}
+        data-tooltip={state === 'busy' ? undefined : iconAria}
+        onClick={() => {
+          if (busy) return;
+          onPublish();
+        }}
+      >
+        {busy
+          ? <span className="workspace-publish-chip-spinner" />
+          : state === 'failed'
+            ? <AlertCircle className="size-3.5" />
+            : <Upload className="size-3.5" />}
+      </button>
+      {state !== 'idle' && (
+        <>
+          {state === 'success' ? (
+            <button
+              type="button"
+              className="workspace-publish-chip-label"
+              onClick={onOpen}
+              aria-label={`${copy.workspace.publishOpen} ${origin}`}
+              data-tooltip={copy.workspace.publishOpen}
+            >
+              <span className="workspace-publish-chip-label-text">{label}</span>
+            </button>
+          ) : state === 'failed' ? (
+            <button
+              type="button"
+              className="workspace-publish-chip-label"
+              disabled={disabled}
+              aria-label={copy.workspace.publishRetry}
+              data-tooltip={copy.workspace.publishRetry}
+              title={failDetail || undefined}
+              onClick={onPublish}
+            >
+              <span className="workspace-publish-chip-label-text">{label}</span>
+            </button>
+          ) : (
+            <span className="workspace-publish-chip-label">{label}</span>
+          )}
+          {state === 'success' && (
+            <>
+              <button
+                type="button"
+                className="workspace-publish-chip-action"
+                aria-label={copied ? copy.workspace.publishCopied : copy.workspace.publishCopy}
+                data-tooltip={copied ? copy.workspace.publishCopied : copy.workspace.publishCopy}
+                onClick={onCopy}
+              >
+                {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+              </button>
+              <button
+                type="button"
+                className="workspace-publish-chip-action"
+                aria-label={copy.workspace.publishOpen}
+                data-tooltip={copy.workspace.publishOpen}
+                onClick={onOpen}
+              >
+                <ExternalLink className="size-3.5" />
+              </button>
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function isSamePreviewTarget(a: string, b: string) {
   try {
     const left = new URL(a);
@@ -153,7 +303,6 @@ export function WorkspaceScreen() {
   const [downloadBusy, setDownloadBusy] = useState(false);
   const [exportSessionBusy, setExportSessionBusy] = useState(false);
   const [publishBusy, setPublishBusy] = useState(false);
-  const [publishDialogOpen, setPublishDialogOpen] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
   const [publishResult, setPublishResult] = useState<PublishResult | null>(null);
   const [publishStage, setPublishStage] = useState<PublishStage | null>(null);
@@ -171,6 +320,8 @@ export function WorkspaceScreen() {
   const [resultPanelOpen, setResultPanelOpen] = useState(false);
   // Slow resume stage: snapshot restore + npm install + preview restart.
   const [workspaceRestoring, setWorkspaceRestoring] = useState(false);
+  // History said a preview was published even if this resume has no live URL yet.
+  const [hadPublishedPreview, setHadPublishedPreview] = useState(false);
   const [newProjectConfirmOpen, setNewProjectConfirmOpen] = useState(false);
   const fileCache = useFileContentCache();
   const [activePreviewUrl, setActivePreviewUrl] = useState('');
@@ -201,6 +352,7 @@ export function WorkspaceScreen() {
   const loadingRef = useRef(false);
   const workspaceRestoringRef = useRef(false);
   const hasLivePreviewRef = useRef(false);
+  const hadPublishedPreviewRef = useRef(false);
   const chatAbortControllerRef = useRef<AbortController | null>(null);
   const activeTurnIdRef = useRef('');
   const stoppingRef = useRef(false);
@@ -222,6 +374,7 @@ export function WorkspaceScreen() {
     showLoading?: boolean;
     remountIframe?: boolean;
   }) => Promise<boolean>>(async () => false);
+  const workspaceShellRef = useWorkspaceSplitShell();
 
   const t = TRANSLATIONS[language];
   const canSend = input.trim().length > 0 && !loading;
@@ -270,6 +423,10 @@ export function WorkspaceScreen() {
   useEffect(() => {
     hasLivePreviewRef.current = Boolean(preview?.url);
   }, [preview?.url]);
+
+  useEffect(() => {
+    hadPublishedPreviewRef.current = hadPublishedPreview;
+  }, [hadPublishedPreview]);
 
   // Every new file listing is the authoritative view of what is on disk, so use it
   // to stamp or drop cached file contents. Covers all three sources of a tree
@@ -443,6 +600,10 @@ export function WorkspaceScreen() {
       });
 
       setMessages(nextMessages);
+      if (data.hasPreview) {
+        hadPublishedPreviewRef.current = true;
+        setHadPublishedPreview(true);
+      }
       if (data.hasProject || data.needsWorkspace || activeTask) {
         if (data.hasProject || data.needsWorkspace) {
           // If a preview was published before, stay on the preview pane and show
@@ -459,10 +620,15 @@ export function WorkspaceScreen() {
 
     const applyWorkspace = (data: ResumeData) => {
       const hasFiles = Boolean(data.files?.items.some((item) => item.type === 'file'));
+      const published = Boolean(data.hasPreview) || hadPublishedPreviewRef.current;
+      if (data.hasPreview) {
+        hadPublishedPreviewRef.current = true;
+        setHadPublishedPreview(true);
+      }
       if (data.files) {
         setFileTree(data.files);
       }
-      if (hasFiles || data.preview?.url) {
+      if (hasFiles || data.preview?.url || published) {
         setResultPanelOpen(true);
       }
       if (data.download?.url) {
@@ -480,18 +646,25 @@ export function WorkspaceScreen() {
         setActivePreviewUrl(data.preview.url);
         setActivePreviewRevision(revision);
         setActivePreviewLoaded(false);
-      } else {
-        // No live preview on this resume — clear stale iframe state. Only then
-        // fall back to the Files tab (do not steal the tab when preview is ready).
-        setPreview(null);
+        return;
+      }
+
+      // No live URL on this workspace event. Keep the preview pane when a
+      // preview was published before so the empty "first build" copy is not
+      // shown while stage=preview recovers the server.
+      setPreview(data.preview?.error ? { error: data.preview.error } : null);
+      activePreviewUrlRef.current = '';
+      activePreviewRevisionRef.current = 0;
+      setActivePreviewUrl('');
+      setActivePreviewRevision(0);
+      setActivePreviewLoaded(false);
+      previewPathRef.current = '';
+      setPreviewPath('');
+      if (published) {
+        setSandboxTab('preview');
         setPreviewRefreshFailed(false);
-        activePreviewUrlRef.current = '';
-        activePreviewRevisionRef.current = 0;
-        setActivePreviewUrl('');
-        setActivePreviewRevision(0);
-        setActivePreviewLoaded(false);
-        previewPathRef.current = '';
-        setPreviewPath('');
+      } else {
+        setPreviewRefreshFailed(false);
         if (hasFiles) {
           setSandboxTab('files');
         }
@@ -501,6 +674,7 @@ export function WorkspaceScreen() {
     const resumeController = new AbortController();
     (async () => {
       let handedOffToActiveStream = false;
+      let recoveredPreviewUrl = false;
       try {
         const response = await openResumeStream(existing, resumeController.signal);
         const contentType = response.headers.get('content-type') || '';
@@ -542,6 +716,9 @@ export function WorkspaceScreen() {
 
           if (event.type === 'resume_workspace' && event.data?.ok) {
             applyWorkspace(event.data);
+            if (event.data.preview?.url) {
+              recoveredPreviewUrl = true;
+            }
             return;
           }
 
@@ -564,8 +741,55 @@ export function WorkspaceScreen() {
       } finally {
         if (!cancelled) {
           setResumeChecked(true);
-          setWorkspaceRestoring(false);
           if (!handedOffToActiveStream) setFilesRefreshing(false);
+          const shouldRecoverPreview = hadPublishedPreviewRef.current
+            && !recoveredPreviewUrl
+            && !handedOffToActiveStream;
+          if (!shouldRecoverPreview) {
+            setWorkspaceRestoring(false);
+          } else {
+            // Files are already on screen. Keep the preview spinner while the
+            // dedicated stage=preview request does npm install + dev-server boot.
+            setWorkspaceRestoring(true);
+            setPreviewRefreshing(true);
+            setPreviewRefreshFailed(false);
+            try {
+              const data = await fetchResumePreview(existing);
+              if (cancelled) return;
+              if (data?.ok && data.preview?.url) {
+                setPreview(data.preview);
+                setPreviewRefreshFailed(false);
+                setSandboxTab('preview');
+                previewRefreshedAtRef.current = Date.now();
+                const revision = previewRevisionRef.current + 1;
+                previewRevisionRef.current = revision;
+                activePreviewUrlRef.current = data.preview.url;
+                activePreviewRevisionRef.current = revision;
+                setActivePreviewUrl(data.preview.url);
+                setActivePreviewRevision(revision);
+                setActivePreviewLoaded(false);
+                if (data.files?.items?.length) {
+                  setFileTree(data.files);
+                }
+                if (data.download?.url) {
+                  setDownload(data.download);
+                }
+              } else {
+                setPreviewRefreshFailed(true);
+                setSandboxTab('preview');
+              }
+            } catch {
+              if (!cancelled) {
+                setPreviewRefreshFailed(true);
+                setSandboxTab('preview');
+              }
+            } finally {
+              if (!cancelled) {
+                setPreviewRefreshing(false);
+                setWorkspaceRestoring(false);
+              }
+            }
+          }
         }
       }
     })();
@@ -618,7 +842,7 @@ export function WorkspaceScreen() {
       const id = conversationIdRef.current;
       if (
         !id
-        || !hasLivePreviewRef.current
+        || (!hasLivePreviewRef.current && !hadPublishedPreviewRef.current)
         || loadingRef.current
         || workspaceRestoringRef.current
         || previewRefreshInFlightRef.current
@@ -1540,7 +1764,6 @@ export function WorkspaceScreen() {
     setPublishResult(null);
     setPublishStage('packaging');
     setPublishCopied(false);
-    setPublishDialogOpen(true);
 
     try {
       const { domain } = extractProjectName();
@@ -1596,7 +1819,7 @@ export function WorkspaceScreen() {
   }
 
   async function handleCopyPublishUrl() {
-    const url = publishResult?.previewUrl;
+    const url = publishResult?.previewUrl || lastPublishUrl;
     if (!url || !navigator.clipboard) {
       return;
     }
@@ -1616,7 +1839,7 @@ export function WorkspaceScreen() {
   }
 
   function handleRefreshPreview() {
-    if (!shareablePreviewUrl) {
+    if (!shareablePreviewUrl && !hadPublishedPreview) {
       return;
     }
     // A failed remint deliberately leaves the iframe detached. Reloading the
@@ -1678,7 +1901,6 @@ export function WorkspaceScreen() {
     setDownload(null);
     setDownloadBusy(false);
     setPublishBusy(false);
-    setPublishDialogOpen(false);
     setPublishError(null);
     setPublishResult(null);
     setPublishStage(null);
@@ -1690,6 +1912,8 @@ export function WorkspaceScreen() {
     setFilesFocusPath(null);
     setResultPanelOpen(false);
     setWorkspaceRestoring(false);
+    hadPublishedPreviewRef.current = false;
+    setHadPublishedPreview(false);
     setSandboxTab('preview');
     setPreviewViewport('desktop');
     activePreviewUrlRef.current = '';
@@ -1708,12 +1932,9 @@ export function WorkspaceScreen() {
   }
 
   function handleNewProject() {
-    if (loadingRef.current) {
-      setNewProjectConfirmOpen(true);
-      return;
-    }
-    startNewProject();
+    setNewProjectConfirmOpen(true);
   }
+
 
   function confirmNewProject() {
     setNewProjectConfirmOpen(false);
@@ -1765,31 +1986,24 @@ export function WorkspaceScreen() {
         >
           <DialogHeader>
             <DialogTitle>{t.workspace.newProjectConfirmTitle}</DialogTitle>
-            <DialogDescription>{t.workspace.newProjectConfirmDescription}</DialogDescription>
+            <DialogDescription>
+              {loading
+                ? t.workspace.newProjectConfirmDescriptionRunning
+                : t.workspace.newProjectConfirmDescription}
+            </DialogDescription>
           </DialogHeader>
           <DialogFooter className="contact-dialog-footer">
             <DialogClose asChild>
               <Button variant="outline">{t.workspace.newProjectConfirmCancel}</Button>
             </DialogClose>
             <Button onClick={confirmNewProject}>
-              {t.workspace.newProjectConfirmContinue}
+              {loading
+                ? t.workspace.newProjectConfirmContinueRunning
+                : t.workspace.newProjectConfirmContinue}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      <PublishDialog
-        copy={t}
-        open={publishDialogOpen}
-        busy={publishBusy}
-        stage={publishStage}
-        error={publishError}
-        result={publishResult}
-        copied={publishCopied}
-        onOpenChange={setPublishDialogOpen}
-        onRetry={() => void handlePublish()}
-        onCopy={() => void handleCopyPublishUrl()}
-        onOpen={handleOpenPublishUrl}
-      />
       {!hasWorkspace && (
         <HomeStage
           copy={t}
@@ -1808,6 +2022,7 @@ export function WorkspaceScreen() {
       )}
 
       <section
+        ref={workspaceShellRef}
         className={`min-h-0 min-w-0 w-full flex-1 ${
           hasWorkspace
             ? `workspace-shell${resultPanelOpen ? '' : ' is-chat-only'}`
@@ -1841,6 +2056,13 @@ export function WorkspaceScreen() {
           onStop={() => void handleStop()}
         />
 
+        {resultPanelOpen && (
+          <WorkspaceSplitHandle
+            shellRef={workspaceShellRef}
+            label={t.workspace.resizePanels}
+          />
+        )}
+
         {/* ===== RIGHT: preview / files — mounts after the first written file ===== */}
         {resultPanelOpen && <div className="workspace-result-panel">
           <div className="workspace-topbar">
@@ -1864,21 +2086,15 @@ export function WorkspaceScreen() {
 
             <div className="workspace-topbar-center">
               {sandboxTab === 'preview' && shareablePreviewUrl && !previewRefreshing && !previewRefreshFailed && (
-                <button
-                  type="button"
-                  onClick={handleCopyPreviewUrl}
-                  className="workspace-url-chip"
-                  title={previewCopied ? t.workspace.previewPathCopied : t.workspace.copyPreviewPath}
-                >
-                  <span dir="ltr">{previewDisplayPath}</span>
-                  {previewCopied ? <Check /> : <Copy />}
-                </button>
-              )}
-            </div>
-
-            <div className="workspace-topbar-actions">
-              {sandboxTab === 'preview' && shareablePreviewUrl && !previewRefreshing && !previewRefreshFailed && (
                 <>
+                  <PreviewUrlChip
+                    path={previewDisplayPath}
+                    copied={previewCopied}
+                    copy={t.workspace}
+                    onCopy={handleCopyPreviewUrl}
+                    onRefresh={handleRefreshPreview}
+                    onOpen={handleOpenPreview}
+                  />
                   <div className="workspace-viewport-switch" role="group" aria-label="Viewport">
                     <button
                       type="button"
@@ -1897,26 +2113,11 @@ export function WorkspaceScreen() {
                       <Smartphone />
                     </button>
                   </div>
-                  <button
-                    type="button"
-                    onClick={handleRefreshPreview}
-                    className="workspace-icon-button"
-                    aria-label={t.workspace.refreshPreview}
-                    data-tooltip={t.workspace.refreshPreview}
-                  >
-                    <RefreshCw className="size-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleOpenPreview}
-                    className="workspace-icon-button"
-                    aria-label={t.workspace.openPreview}
-                    data-tooltip={t.workspace.openPreview}
-                  >
-                    <ExternalLink className="size-3.5" />
-                  </button>
                 </>
               )}
+            </div>
+
+            <div className="workspace-topbar-actions">
               {sandboxTab === 'files' && canDownload && (
                 <button
                   type="button"
@@ -1931,33 +2132,20 @@ export function WorkspaceScreen() {
                     : <Download className="size-3.5" />}
                 </button>
               )}
-              {lastPublishUrl && (
-                <button
-                  type="button"
-                  onClick={handleOpenPublishUrl}
-                  className="workspace-icon-button"
-                  aria-label={t.workspace.publishOpenLast}
-                  title={t.workspace.publishOpenLast}
-                >
-                  <Globe className="size-3.5" />
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => void handlePublish()}
+              <PublishControl
+                copy={t}
+                busy={publishBusy}
                 disabled={publishDisabled}
-                className="workspace-publish-button"
-                title={publishTitleText}
-              >
-                {publishBusy
-                  ? <span className="size-3.5 animate-spin rounded-full border-2 border-transparent border-t-current" />
-                  : <Upload />}
-                {publishBusy
-                  ? t.workspace.publishing
-                  : lastPublishUrl
-                    ? t.republishLabel
-                    : t.publishLabel}
-              </button>
+                stage={publishStage}
+                error={publishError}
+                result={publishResult}
+                lastPublishUrl={lastPublishUrl}
+                copied={publishCopied}
+                idleTooltip={publishTitleText}
+                onPublish={() => void handlePublish()}
+                onCopy={() => void handleCopyPublishUrl()}
+                onOpen={handleOpenPublishUrl}
+              />
             </div>
           </div>
 
@@ -2011,7 +2199,7 @@ export function WorkspaceScreen() {
                 </div>
               ) : (
                 <div className="workspace-empty-state">
-                  {workspaceRestoring ? (
+                  {workspaceRestoring || previewRefreshing ? (
                     <>
                       <span
                         className="size-8 animate-spin rounded-full border-2 border-primary/30 border-t-primary"
@@ -2020,6 +2208,16 @@ export function WorkspaceScreen() {
                       <p>{t.workspace.restoringWorkspace}</p>
                       <p className="max-w-xl text-xs leading-5 text-muted-foreground">
                         {t.workspace.previewStarting}
+                      </p>
+                    </>
+                  ) : (previewRefreshFailed || hadPublishedPreview) ? (
+                    <>
+                      <p>{t.workspace.previewUnavailable}</p>
+                      <Button size="sm" variant="outline" onClick={handleRefreshPreview}>
+                        {t.workspace.retryPreview}
+                      </Button>
+                      <p className="workspace-empty-disclaimer">
+                        {t.workspace.constructionDisclaimer}
                       </p>
                     </>
                   ) : (

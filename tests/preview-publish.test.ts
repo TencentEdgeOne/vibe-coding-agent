@@ -49,4 +49,10 @@ test('preview start sleeps only after killing a process on 3000', async () => {
 
   assert.match(start, /if \[ "\$killed" = 1 \]; then sleep 1; fi/);
   assert.doesNotMatch(start, /fi;\s*sleep 1/);
+  assert.match(start, /waitForPreviewReady/);
+  assert.doesNotMatch(
+    start,
+    /exit 1/,
+    'a failed ready poll must exit 0 so sandbox keeps /tmp/dev.log',
+  );
 });

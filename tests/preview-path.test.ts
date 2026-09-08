@@ -31,6 +31,9 @@ test('vite preview config injects a path tracker and exposes the track env flag'
   assert.match(preview, /EDGEONE_PREVIEW_TRACK_PATH/);
   assert.match(preview, /edgeone-preview-path-tracker/);
   assert.match(preview, /__edgeonePreviewPath/);
+  assert.match(preview, /failed to load user Vite config/);
+  assert.match(preview, /__PREVIEW_READY__/);
+  assert.match(preview, /__PREVIEW_NOT_READY__/);
 });
 
 test('expired preview credentials never fall back to the stale iframe URL', async () => {
@@ -66,4 +69,31 @@ test('resume only rotates a token when the old and current preview hosts match',
   assert.match(resume, /previewTargetsMatch/);
   assert.match(resume, /previewUrl && accessToken && warmLinks\.previewUrl/);
   assert.match(resume, /rewritePreviewAccessToken\(state\.previewUrl, accessToken\)/);
+});
+
+test('workspace resume remints a warm preview and leaves cold start to stage=preview', async () => {
+  const resume = await readFile('agents/pipelines/_resume.ts', 'utf8');
+
+  assert.match(resume, /async function remintWarmPreview/);
+  assert.match(resume, /async function restartColdPreview/);
+  assert.match(resume, /DEPENDENCY_INSTALL_BUDGET_MS/);
+  assert.match(resume, /hasPreview: hadPreview/);
+  assert.match(resume, /\/resume\?stage=preview/);
+  assert.doesNotMatch(
+    resume,
+    /preview = \{\};/,
+    'a failed preview remint must not collapse to an empty object',
+  );
+});
+
+test('resume recovers a published preview when workspace returns files without a URL', async () => {
+  const screen = await readFile('app/features/workspace/workspace-screen.tsx', 'utf8');
+  const client = await readFile('app/features/workspace/workspace-api.ts', 'utf8');
+
+  assert.match(screen, /hadPublishedPreview/);
+  assert.match(screen, /fetchResumePreview/);
+  assert.match(screen, /shouldRecoverPreview/);
+  assert.match(screen, /previewRefreshFailed \|\| hadPublishedPreview/);
+  assert.match(screen, /!shareablePreviewUrl && !hadPublishedPreview/);
+  assert.match(client, /RESUME_CLIENT_TIMEOUT_MS = 380_000/);
 });

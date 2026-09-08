@@ -15,6 +15,8 @@ import {
 import { LanguageSwitch } from '@/app/components/language-switch';
 import type { Locale, UiCopy } from '@/app/i18n';
 
+const BRAND_MARK = 'MAKERS VIBE CODING';
+
 type SiteHeaderProps = {
   copy: UiCopy;
   language: Locale;
@@ -53,7 +55,36 @@ export function SiteHeader({
   return (
     <header className="site-topbar">
       <div className="site-brand-cluster">
-        <div className="site-brand" aria-label="MAKERS VIBE CODING">MAKERS VIBE CODING</div>
+        {hasWorkspace ? (
+          <button
+            type="button"
+            onClick={onNewProject}
+            className="site-brand is-back"
+            aria-label={copy.workspace.back}
+            title={copy.workspace.back}
+            style={{ gap: 8 }}
+          >
+            <svg
+              viewBox="0 0 16 16"
+              width="13"
+              height="13"
+              fill="none"
+              aria-hidden="true"
+              style={{ color: '#17181c', flex: '0 0 13px' }}
+            >
+              <path
+                d="M10.2 3.2 5.4 8l4.8 4.8"
+                stroke="currentColor"
+                strokeWidth="1.85"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+            <span>{BRAND_MARK}</span>
+          </button>
+        ) : (
+          <div className="site-brand" aria-label={BRAND_MARK}>{BRAND_MARK}</div>
+        )}
         {showExportTranscript && (
           <>
             <button
@@ -93,11 +124,6 @@ export function SiteHeader({
             ariaLabel={copy.languageToggleAria}
             className="site-language"
           />
-        )}
-        {hasWorkspace && (
-          <button type="button" onClick={onNewProject} className="site-secondary-button">
-            {copy.workspace.newProject}
-          </button>
         )}
         {hasWorkspace && showDeploy && (
           <button type="button" onClick={onDeploy} className="site-secondary-button">
