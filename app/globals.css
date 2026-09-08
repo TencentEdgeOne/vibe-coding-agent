@@ -837,7 +837,8 @@ input::placeholder {
 
 .workspace-icon-button[data-tooltip]::after,
 .workspace-publish-chip [data-tooltip]::after,
-.workspace-url-chip [data-tooltip]::after {
+.workspace-url-chip [data-tooltip]::after,
+.workspace-viewport-switch [data-tooltip]::after {
   position: absolute;
   z-index: 40;
   top: calc(100% + 8px);
@@ -863,7 +864,9 @@ input::placeholder {
 .workspace-publish-chip [data-tooltip]:hover::after,
 .workspace-publish-chip [data-tooltip]:focus-visible::after,
 .workspace-url-chip [data-tooltip]:hover::after,
-.workspace-url-chip [data-tooltip]:focus-visible::after {
+.workspace-url-chip [data-tooltip]:focus-visible::after,
+.workspace-viewport-switch [data-tooltip]:hover::after,
+.workspace-viewport-switch [data-tooltip]:focus-visible::after {
   opacity: 1;
   transform: translateY(0);
 }
@@ -992,7 +995,8 @@ input::placeholder {
 
   .workspace-icon-button[data-tooltip]::after,
   .workspace-publish-chip [data-tooltip]::after,
-  .workspace-url-chip [data-tooltip]::after {
+  .workspace-url-chip [data-tooltip]::after,
+  .workspace-viewport-switch [data-tooltip]::after {
     right: auto;
     left: 0;
   }
@@ -1473,11 +1477,12 @@ body.is-workspace-resizing {
 
 .workspace-url-chip-label {
   display: flex;
+  position: relative;
   min-width: 0;
   flex: 1 1 0;
   align-items: center;
   gap: 7px;
-  overflow: hidden;
+  overflow: visible;
   padding: 0 4px 0 0;
   color: inherit;
   font-size: inherit;
@@ -1531,6 +1536,7 @@ body.is-workspace-resizing {
 
 .workspace-viewport-switch button {
   display: grid;
+  position: relative;
   width: 26px;
   height: 24px;
   place-items: center;

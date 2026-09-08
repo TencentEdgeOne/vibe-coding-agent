@@ -24,7 +24,8 @@ export function PreviewUrlChip({
         type="button"
         onClick={onCopy}
         className="workspace-url-chip-label"
-        title={copied ? copy.previewPathCopied : copy.copyPreviewPath}
+        aria-label={copied ? copy.previewPathCopied : copy.copyPreviewPath}
+        data-tooltip={copied ? copy.previewPathCopied : copy.copyPreviewPath}
       >
         <span dir="ltr">{path}</span>
         {copied ? <Check /> : <Copy />}

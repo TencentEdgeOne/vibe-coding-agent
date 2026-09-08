@@ -2095,20 +2095,22 @@ export function WorkspaceScreen() {
                     onRefresh={handleRefreshPreview}
                     onOpen={handleOpenPreview}
                   />
-                  <div className="workspace-viewport-switch" role="group" aria-label="Viewport">
+                  <div className="workspace-viewport-switch" role="group" aria-label={t.workspace.previewViewport}>
                     <button
                       type="button"
                       aria-pressed={previewViewport === 'desktop'}
+                      aria-label={t.workspace.previewDesktop}
+                      data-tooltip={t.workspace.previewDesktop}
                       onClick={() => setPreviewViewport('desktop')}
-                      title="Desktop"
                     >
                       <Laptop />
                     </button>
                     <button
                       type="button"
                       aria-pressed={previewViewport === 'mobile'}
+                      aria-label={t.workspace.previewMobile}
+                      data-tooltip={t.workspace.previewMobile}
                       onClick={() => setPreviewViewport('mobile')}
-                      title="Mobile"
                     >
                       <Smartphone />
                     </button>
