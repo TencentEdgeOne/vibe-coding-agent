@@ -1,4 +1,4 @@
-import { runProjectPublishPipeline } from './_pipelines';
+import { runProjectPublishPipeline } from './_pipelines.ts';
 
 export async function onRequestPost(context: any) {
   try {

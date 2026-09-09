@@ -3,13 +3,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Makers, MakersError } from '@edgeone/makers-sdk';
 import { resolveMakersPublishTarget } from '../../shared/publish-target.ts';
-import { getProjectState, saveProjectState } from '../_memory';
+import { getProjectState, saveProjectState } from '../_memory.ts';
 import { rewritePublishZip } from '../project/_publish-rewrite.ts';
-import { createProjectArchive, restorePersistedProject } from '../_project';
-import { createSSEResponse, sseEvent } from '../_shared';
-import { resolveConversationId } from '../utils/_request';
-import { safeSegment } from '../utils/_paths';
-import { debugLog } from '../utils/_debug';
+import { createProjectArchive, restorePersistedProject } from '../_project.ts';
+import { createSSEResponse, sseEvent } from '../_shared.ts';
+import { resolveConversationId } from '../utils/_request.ts';
+import { safeSegment } from '../utils/_paths.ts';
+import { debugLog } from '../utils/_debug.ts';
 
 function jsonError(error: string, status = 400) {
   return new Response(

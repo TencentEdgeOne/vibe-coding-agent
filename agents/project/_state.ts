@@ -1,7 +1,7 @@
-import type { ProjectState } from '../_types';
+import type { ProjectState } from '../_types.ts';
 import { createMakersWorkspacePort } from '../core/adapters/_makers.ts';
-import { safeSegment } from '../utils/_paths';
-import { runSandboxCommand } from './_commands';
+import { safeSegment } from '../utils/_paths.ts';
+import { runSandboxCommand } from './_commands.ts';
 
 export function createProjectState(conversationId: string): ProjectState {
   const sessionDir = `projects/${safeSegment(conversationId)}`;

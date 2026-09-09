@@ -6,7 +6,7 @@ import {
   getModelPreference,
   getProjectState,
   saveProjectState,
-} from '../_memory';
+} from '../_memory.ts';
 import {
   getFileTree,
   isPreviewServerReady,
@@ -16,17 +16,17 @@ import {
   rewritePreviewAccessToken,
   runSandboxCommand,
   startPreviewServer,
-} from '../_project';
-import type { FileTreeItem, PersistedActivity, PersistedActivityTurn, ProjectState } from '../_types';
+} from '../_project.ts';
+import type { FileTreeItem, PersistedActivity, PersistedActivityTurn, ProjectState } from '../_types.ts';
 import { createProjectFiles } from '../core/_project-files.ts';
 import { createMakersWorkspacePort } from '../core/adapters/_makers.ts';
-import { createSSEResponse, sseEvent } from '../_shared';
+import { createSSEResponse, sseEvent } from '../_shared.ts';
 
 const projectFilesFor = (context: any, state: ProjectState) =>
   createProjectFiles(createMakersWorkspacePort(context), state.appDir);
-import { getRequestQueryParam, resolveConversationId } from '../utils/_request';
-import { withTimeout } from './_helpers';
-import { loadResumeFileContents } from './_resume-files';
+import { getRequestQueryParam, resolveConversationId } from '../utils/_request.ts';
+import { withTimeout } from './_helpers.ts';
+import { loadResumeFileContents } from './_resume-files.ts';
 
 function toolNameImpliesProject(name: string) {
   return name.includes('write_project_file')

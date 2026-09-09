@@ -63,6 +63,21 @@ export async function readMetadataField<T>(
   return parse((await readMetadata(store, conversationId))[field]);
 }
 
+/**
+ * Several fields from a single metadata read.
+ *
+ * getConversation returns the whole metadata document, so reading two fields
+ * with two calls fetches the same payload twice — and that payload grows with
+ * the conversation.
+ */
+export async function readMetadataFields<T>(
+  store: ConversationStorePort,
+  conversationId: string,
+  parse: (metadata: Record<string, unknown>) => T,
+): Promise<T> {
+  return parse(await readMetadata(store, conversationId));
+}
+
 export function writeMetadataField(
   store: ConversationStorePort,
   conversationId: string,
@@ -70,6 +85,21 @@ export function writeMetadataField(
   value: unknown,
 ) {
   return mergeMetadata(store, conversationId, { [field]: value });
+}
+
+/**
+ * Same write for several fields at once.
+ *
+ * Fields that must move together belong in one merge: two sequential writes
+ * cost two round trips and leave a window where a reader sees one applied and
+ * the other not.
+ */
+export function writeMetadataFields(
+  store: ConversationStorePort,
+  conversationId: string,
+  fields: Record<string, unknown>,
+) {
+  return mergeMetadata(store, conversationId, fields);
 }
 
 /**
@@ -86,6 +116,15 @@ export function writeMetadataFieldStrict(
   value: unknown,
 ) {
   return store.updateConversation({ conversationId, metadata: { [field]: value } });
+}
+
+/** Same strict write, for fields that must land together. */
+export function writeMetadataFieldsStrict(
+  store: ConversationStorePort,
+  conversationId: string,
+  fields: Record<string, unknown>,
+) {
+  return store.updateConversation({ conversationId, metadata: fields });
 }
 
 /**

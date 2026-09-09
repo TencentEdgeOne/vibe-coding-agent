@@ -1,10 +1,4 @@
 import {
-  createSdkMcpServer,
-  query,
-  type SDKMessage,
-  type SDKResultMessage,
-} from '@anthropic-ai/claude-agent-sdk';
-import {
   buildReplyLanguageDirective,
   buildReplyLanguageReminder,
 } from '../shared/reply-language.ts';
@@ -16,50 +10,54 @@ import {
   PREVIEW_PUBLIC_PORT,
   PREVIEW_SERVER_PORT,
   SANDBOX_MCP_SERVER_NAME,
-} from './_constants';
-import { resolveConfiguredModel } from './_models';
-import { createMakersConfigPort } from './core/adapters/_makers.ts';
+} from './_constants.ts';
+import { resolveConfiguredModel } from './_models.ts';
+import {
+  createMakersConfigPort,
+  createSignalCancellationPort,
+} from './core/adapters/_makers.ts';
 import { resolveModelAccess } from './core/_model-access.ts';
 import { classifyTool, extractCommandFromInput } from './core/_tool-kind.ts';
-import type { ToolKind } from './core/_events.ts';
-import { getFileTree } from './_project';
+import type { DomainEvent, ToolKind } from './core/_events.ts';
+import { createClaudeDriver } from './core/drivers/_claude.ts';
+import { getFileTree } from './_project.ts';
 import {
   buildExistingProjectGuidance,
   formatExistingFilePaths,
   resolveAgentSdkSession,
-} from './_session';
-import { extractToolUseId, wrapSandboxToolsForVerification } from './tools/_commands-wrap';
-import { createCommandOutputBuffer } from './utils/_command-stream';
+} from './_session.ts';
+import { extractToolUseId, wrapSandboxToolsForVerification } from './tools/_commands-wrap.ts';
+import { createCommandOutputBuffer } from './utils/_command-stream.ts';
 import {
   buildPublishPreviewTool,
   buildWriteProjectFileTool,
-} from './tools/_project-tools';
+} from './tools/_project-tools.ts';
 import type {
   AgentProgressEvent,
   CodingAgentResult,
   ConversationMessage,
   PreviewRestartSignal,
   ProjectState,
-} from './_types';
+} from './_types.ts';
 import {
   detectFatalToolError,
   sanitizeAssistantText,
   truncateForStream,
-} from './utils/_text';
-import { debugLog, isDebugEnabled } from './utils/_debug';
-import { summarizeToolInput, summarizeToolOutput } from './utils/_activity';
+} from './utils/_text.ts';
+import { debugLog, isDebugEnabled } from './utils/_debug.ts';
+import { summarizeToolInput, summarizeToolOutput } from './utils/_activity.ts';
 import {
   resolveNarrationEmit,
   sanitizeNarrationText,
   type NarrationEmitState,
-} from './utils/_narration';
+} from './utils/_narration.ts';
 import {
   isInstallCommand,
   isPreviewCommand,
   isPreviewRestartConfigPath,
   parseEchoedExitCode,
   shortenToolName,
-} from './utils/_tool-phase';
+} from './utils/_tool-phase.ts';
 
 function pickEnvValue(context: any, key: string) {
   const value = context?.env?.[key];
@@ -78,104 +76,11 @@ function isGenericProjectWriteToolName(name: string) {
     || normalized.endsWith('__write_files');
 }
 
-function extractVisibleNarrationDelta(event: SDKMessage) {
-  if (event.type !== 'stream_event') {
-    return '';
-  }
-  const streamEvent = (event as any).event;
-  if (streamEvent?.type !== 'content_block_delta') {
-    return '';
-  }
-  const delta = streamEvent.delta;
-  if (delta?.type === 'text_delta' && typeof delta.text === 'string') {
-    return sanitizeNarrationText(delta.text);
-  }
-  return '';
-}
-
-type StreamingToolUseBlock = {
-  id: string;
-  name: string;
-  inputJson: string;
-  input?: unknown;
-};
-
-function isToolUseContentBlock(block: unknown): block is {
-  type: string;
-  id?: string;
-  name?: string;
-  input?: unknown;
-} {
-  const record = block && typeof block === 'object'
-    ? block as Record<string, unknown>
-    : {};
-  return record.type === 'tool_use' || record.type === 'mcp_tool_use';
-}
-
-function extractVisibleTextBlock(block: unknown) {
-  const record = block && typeof block === 'object'
-    ? block as Record<string, unknown>
-    : {};
-  if (record.type !== 'text' || typeof record.text !== 'string') {
-    return '';
-  }
-  return sanitizeNarrationText(record.text);
-}
-
-function parseToolInputJson(rawJson: string, fallback: unknown) {
-  if (!rawJson.trim()) {
-    return fallback ?? {};
-  }
-  try {
-    return JSON.parse(rawJson);
-  } catch {
-    return fallback ?? {};
-  }
-}
-
-function summarizeSdkMessage(event: SDKMessage): Record<string, unknown> {
-  if (event.type === 'stream_event') {
-    const streamEvent = (event as any).event;
-    return {
-      type: event.type,
-      uuid: typeof event.uuid === 'string' ? event.uuid : '',
-      eventType: streamEvent?.type,
-      index: typeof streamEvent?.index === 'number' ? streamEvent.index : undefined,
-      deltaType: streamEvent?.delta?.type,
-      blockType: streamEvent?.content_block?.type,
-      toolName: typeof streamEvent?.content_block?.name === 'string'
-        ? streamEvent.content_block.name
-        : undefined,
-    };
-  }
-
-  if (event.type === 'assistant') {
-    const blocks = (event as any).message?.content;
-    return {
-      type: event.type,
-      uuid: typeof (event as any).uuid === 'string' ? (event as any).uuid : '',
-      blocks: Array.isArray(blocks)
-        ? blocks.map((block: any) => ({
-            type: block?.type,
-            id: typeof block?.id === 'string' ? block.id : undefined,
-            name: typeof block?.name === 'string' ? block.name : undefined,
-          }))
-        : [],
-    };
-  }
-
-  return {
-    type: event.type,
-    uuid: typeof (event as any).uuid === 'string' ? (event as any).uuid : '',
-    subtype: typeof (event as any).subtype === 'string' ? (event as any).subtype : undefined,
-  };
-}
-
 type ToolProgressPhase = 'code' | 'install' | 'preview' | 'link';
 
-// Progress phases are this UI's vocabulary, so they are derived here from the
-// core's ToolKind rather than classified a second time. Keeping one classifier
-// means a new tool cannot be understood differently in two places.
+// Progress phases are this UI's vocabulary, so they are derived from the core's
+// ToolKind rather than classified a second time. Keeping one classifier means a
+// new tool cannot be understood differently in two places.
 const PHASE_BY_TOOL_KIND: Partial<Record<ToolKind, ToolProgressPhase>> = {
   'file.write': 'code',
   'file.remove': 'code',
@@ -184,51 +89,23 @@ const PHASE_BY_TOOL_KIND: Partial<Record<ToolKind, ToolProgressPhase>> = {
   'preview.publish': 'preview',
 };
 
-function inferToolProgress(name: string, input: unknown): {
-  phaseHint?: ToolProgressPhase;
-  fileCount?: number;
-} {
-  const kind = classifyTool(name, input, { isInstallCommand, isPreviewCommand });
-  const phaseHint = PHASE_BY_TOOL_KIND[kind];
-  // write_project_file writes exactly one file per call, which the UI counts.
-  const fileCount = shortenToolName(name) === 'write_project_file' ? 1 : undefined;
-
-  return {
-    ...(phaseHint ? { phaseHint } : {}),
-    ...(fileCount ? { fileCount } : {}),
-  };
-}
-
-// Prompt-level guardrails: understand the request, generate or modify the project,
-// then publish the preview link.
-export function buildPrompt(
-  userMessage: string,
-  history: ConversationMessage[],
+/**
+ * The invariant half of the prompt, sent as `systemPrompt`.
+ *
+ * Everything here depends only on the project directory and the MCP server
+ * name, both of which are fixed for the life of a conversation, so the string
+ * is byte-identical on every turn and the provider can serve the prefix from
+ * cache. Anything that varies per turn — the request itself, the reply
+ * language, recent history, the new-project checklist — belongs in
+ * `buildTurnPrompt`, because putting it here would change the very start of the
+ * cached prefix and force a full prefill of a conversation that only grows.
+ */
+export function buildSystemPrompt(
   state: ProjectState,
-  isNewProject: boolean,
   mcpServerName: string,
-  // Message whose language the reply must mirror. Differs from `userMessage` on
-  // internal turns such as auto-fix, where the prompt is machine-written English
-  // but the answer still belongs to whoever asked the original question.
-  languageAnchorMessage: string = userMessage,
-  contextOptions: {
-    sessionResumed?: boolean;
-    existingFiles?: string[];
-  } = {},
 ) {
-  const recentHistory = history
-    .slice(-8)
-    .map((item) => `${item.role === 'user' ? 'User' : 'Assistant'}: ${item.content}`)
-    .join('\n');
-  const existingProjectGuidance = buildExistingProjectGuidance({
-    isNewProject,
-    sessionResumed: contextOptions.sessionResumed === true,
-    existingFiles: contextOptions.existingFiles,
-  });
-
   return [
     'You are a Web Dev Agent that creates and modifies runnable web projects in a remote sandbox.',
-    buildReplyLanguageDirective(languageAnchorMessage),
     'You may create Next.js, Vite/React, static frontend, Node service, Python Flask/FastAPI, or other lightweight web projects according to the user request. Do not force every project to be Next.js. For ordinary UI pages, prefer a modular Vite/React (or split HTML/CSS/JS) project instead of one self-contained HTML file.',
     `The only project directory you may modify is ${state.appDir} (relative path, no leading slash).`,
     `All file, command, browser, and code-execution operations must be performed through the ${mcpServerName} MCP tools in the remote sandbox.`,
@@ -239,16 +116,6 @@ export function buildPrompt(
     'That first sentence must be concise, user-visible progress narration, not a plan, and written in the reply language. For an English request it reads like: I will start building now.',
     `Never pass absolute paths (starting with /). For write_project_file, path must be relative to ${state.appDir} itself — correct: package.json, src/App.tsx, index.html. Wrong: ${state.appDir}/package.json or /${state.appDir}/src/App.tsx. Prefer write_project_file, not raw files_write/files_list.`,
     'Do not use the cloud function local filesystem as the project workspace, and do not modify business files outside the project directory.',
-    existingProjectGuidance,
-    isNewProject
-      ? [
-        `The workspace at ${state.appDir} is empty and already prepared. Complete these steps in order:`,
-        '1. Choose a modular tech stack and a small multi-file layout. Prefer Vite + React/TS (or plain HTML split into index.html + css/ + js/modules) over a single giant HTML file. Do not put styles, scripts, and markup into one large index.html unless the user explicitly asks for a single-file page.',
-        `2. Write the project incrementally with write_project_file. Each call must contain exactly one complete file: {"path":"src/App.tsx","content":"complete file contents"} — path relative to ${state.appDir}, never "${state.appDir}/src/App.tsx". Keep each file focused and reasonably small so the user sees steady progress. Typical order: package.json/config → styles → small components/modules → entry/App → thin index.html if needed. Call it once per file, in dependency order, and wait for each tool result before the next call. Never send multiple write_project_file calls in the same assistant message.`,
-        `3. Install dependencies inside ${state.appDir} (cd ${state.appDir} && npm install by default for Node/frontend projects; pnpm/yarn only when explicitly requested; python -m pip install -r requirements.txt for Python). Do not invent nested ${state.appDir}/${state.appDir} paths.`,
-        `4. Call the publish_preview tool. It starts the internal service on port ${PREVIEW_SERVER_PORT}, verifies that ${PREVIEW_PATH_PREFIX} is HTTP-ready, and generates the public preview with sandbox.getHost(${PREVIEW_PUBLIC_PORT}) + ${PREVIEW_PATH_PREFIX} + envdAccessToken. Do not hand-write background npm run dev commands.`,
-      ].join('\n')
-      : '',
     'Structure code for progressive delivery: split UI, styles, and logic across multiple files/modules instead of one monolithic HTML/JS blob. Avoid thousand-line files when they can be split into components, hooks, utils, and stylesheets. Prefer several medium files over one oversized HTML/JS file so each write_project_file finishes quickly and improves streaming UX.',
     'Do not write only placeholder pages. Generated files must be complete, internally consistent, and directly installable and runnable.',
     'Always use write_project_file for UTF-8 project source and configuration files, including one-file edits to existing projects. Do not use files_write, write_files, or shell commands to create or replace text source files.',
@@ -275,11 +142,63 @@ export function buildPrompt(
     'Do not include preview buttons, preview links, or preview URLs in the final response. The preview is shown only in the right preview panel.',
     'Do not take screenshots.',
     'Do not include emoji in the response.',
-    isNewProject ? 'The project workspace is empty and ready for new files.' : 'This conversation has already prepared a project workspace.',
+    'If the user request is unclear, ask the user for the specific requirement.',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+/**
+ * The per-turn half of the prompt, sent as the query's `prompt`.
+ *
+ * Only what actually changes between turns lives here, so the cached system
+ * prefix above stays intact.
+ */
+export function buildTurnPrompt(
+  userMessage: string,
+  history: ConversationMessage[],
+  state: ProjectState,
+  isNewProject: boolean,
+  // Message whose language the reply must mirror. Differs from `userMessage` on
+  // internal turns such as auto-fix, where the prompt is machine-written English
+  // but the answer still belongs to whoever asked the original question.
+  languageAnchorMessage: string = userMessage,
+  contextOptions: {
+    sessionResumed?: boolean;
+    existingFiles?: string[];
+  } = {},
+) {
+  const sessionResumed = contextOptions.sessionResumed === true;
+  // A resumed session already carries these turns in its transcript, so
+  // restating them here would only pay for the same tokens twice and grow the
+  // per-turn prompt for the life of the conversation.
+  const recentHistory = sessionResumed
+    ? ''
+    : history
+      .slice(-8)
+      .map((item) => `${item.role === 'user' ? 'User' : 'Assistant'}: ${item.content}`)
+      .join('\n');
+  const existingProjectGuidance = buildExistingProjectGuidance({
+    isNewProject,
+    sessionResumed,
+    existingFiles: contextOptions.existingFiles,
+  });
+
+  return [
+    buildReplyLanguageDirective(languageAnchorMessage),
+    existingProjectGuidance,
+    isNewProject
+      ? [
+        `The workspace at ${state.appDir} is empty and already prepared. Complete these steps in order:`,
+        '1. Choose a modular tech stack and a small multi-file layout. Prefer Vite + React/TS (or plain HTML split into index.html + css/ + js/modules) over a single giant HTML file. Do not put styles, scripts, and markup into one large index.html unless the user explicitly asks for a single-file page.',
+        `2. Write the project incrementally with write_project_file. Each call must contain exactly one complete file: {"path":"src/App.tsx","content":"complete file contents"} — path relative to ${state.appDir}, never "${state.appDir}/src/App.tsx". Keep each file focused and reasonably small so the user sees steady progress. Typical order: package.json/config → styles → small components/modules → entry/App → thin index.html if needed. Call it once per file, in dependency order, and wait for each tool result before the next call. Never send multiple write_project_file calls in the same assistant message.`,
+        `3. Install dependencies inside ${state.appDir} (cd ${state.appDir} && npm install by default for Node/frontend projects; pnpm/yarn only when explicitly requested; python -m pip install -r requirements.txt for Python). Do not invent nested ${state.appDir}/${state.appDir} paths.`,
+        `4. Call the publish_preview tool. It starts the internal service on port ${PREVIEW_SERVER_PORT}, verifies that ${PREVIEW_PATH_PREFIX} is HTTP-ready, and generates the public preview with sandbox.getHost(${PREVIEW_PUBLIC_PORT}) + ${PREVIEW_PATH_PREFIX} + envdAccessToken. Do not hand-write background npm run dev commands.`,
+      ].join('\n')
+      : 'This conversation has already prepared a project workspace.',
     recentHistory ? `Recent conversation:\n${recentHistory}` : '',
     `Current user request: ${userMessage}`,
     buildReplyLanguageReminder(languageAnchorMessage),
-    'If the user request is unclear, ask the user for the specific requirement.',
   ]
     .filter(Boolean)
     .join('\n\n');
@@ -342,6 +261,12 @@ export async function runCodingAgent(
   // Declared out here so the finally block can unsubscribe: the tools context
   // outlives this turn, and a leaked handler would emit into a stale stream.
   let stopCommandOutput: (() => void) | undefined;
+  // Declared out here so the catch block can reach it; see the assignment below.
+  let sessionRecovery: {
+    resumed: boolean;
+    sawEvent: boolean;
+    forget: () => Promise<void>;
+  } | undefined;
   try {
     if (abortSignal?.aborted) {
       return {
@@ -362,14 +287,10 @@ export async function runCodingAgent(
     const previewRestart: PreviewRestartSignal = { mustRestart: false };
     const commandOutputById = new Map<string, ReturnType<typeof createCommandOutputBuffer>>();
     let latestCommandToolUseId = '';
-    const resolveCommandToolUseId = (preferred = '') => {
-      if (preferred) return preferred;
-      if (latestCommandToolUseId) return latestCommandToolUseId;
-      for (const [id, ctx] of [...toolContextById.entries()].reverse()) {
-        if (shortenToolName(ctx.name) === 'commands') return id;
-      }
-      return '';
-    };
+    // `latestCommandToolUseId` is set the moment a commands tool is announced,
+    // so it already is the most recent one; output that arrives before any
+    // announcement falls back to the shared buffer key below.
+    const resolveCommandToolUseId = (preferred = '') => preferred || latestCommandToolUseId;
     const emitCommandOutput = (toolUseId: string, chunk: string) => {
       if (!chunk) return;
       const id = resolveCommandToolUseId(toolUseId);
@@ -455,23 +376,22 @@ export async function runCodingAgent(
       `mcp__${mcpServerName}__publish_preview`,
     ];
 
-    const sandboxMcpServer = createSdkMcpServer({
-      name: mcpServerName,
-      tools: mcpTools,
-      alwaysLoad: true,
-    });
-
-    const sdkAbortController = new AbortController();
-    const abortSdkQuery = () => sdkAbortController.abort();
-    abortSignal?.addEventListener('abort', abortSdkQuery, { once: true });
     const sessionStartedAt = Date.now();
     const sdkSession = await resolveAgentSdkSession(context, conversationId, {
       reset: runOptions.resetSession === true,
-      cwd: process.cwd(),
     });
     runOptions.onTiming?.('session_resolve', sessionStartedAt, {
       resumed: sdkSession.sessionResumed,
     });
+    // Resume materialization happens in the SDK parent before the subprocess
+    // spawns, so a transcript the store can no longer serve fails before the
+    // first event. Recorded here so the catch below can drop the stale id and
+    // let the next turn start clean instead of failing the same way forever.
+    sessionRecovery = {
+      resumed: sdkSession.sessionResumed,
+      sawEvent: false,
+      forget: sdkSession.forgetSession,
+    };
     let existingFiles: string[] = [];
     if (!isNewProject) {
       try {
@@ -487,55 +407,56 @@ export async function runCodingAgent(
         existingFiles = [];
       }
     }
-    const sdkOptions: Parameters<typeof query>[0]['options'] = {
-      model,
-      permissionMode: 'dontAsk',
-      maxTurns: 100,
-      // Disable Claude Code built-in local tools so the model can only read,
-      // write, and execute through EdgeOne sandbox MCP tools.
-      tools: [],
-      includePartialMessages: true,
-      mcpServers: {
-        [mcpServerName]: sandboxMcpServer,
+    // The agent loop itself lives behind a driver, so this function no longer
+    // knows which SDK runs it — only how to describe a turn and how to project
+    // the resulting domain events onto this host's progress stream.
+    const driver = createClaudeDriver({
+      helpers: {
+        sanitizeText: sanitizeNarrationText,
+        resolveNarration: resolveNarrationEmit,
+        classifyTool: (name, input) =>
+          classifyTool(name, input, { isInstallCommand, isPreviewCommand }),
+        extractCommand: (name, input) =>
+          (shortenToolName(name) === 'commands' ? extractCommandFromInput(input) : ''),
+        parseEchoedExitCode,
+        detectFatalError: detectFatalToolError,
       },
-      allowedTools: mcpAllowedTools,
-      strictMcpConfig: true,
-      systemPrompt: buildPrompt(
+    });
+
+    const turn = driver.runTurn({
+      runId: conversationId,
+      systemPrompt: buildSystemPrompt(state, mcpServerName),
+      prompt: buildTurnPrompt(
         userMessage,
         history,
         state,
         isNewProject,
-        mcpServerName,
         languageAnchorMessage,
         {
           sessionResumed: sdkSession.sessionResumed,
           existingFiles,
         },
       ),
+      model,
+      tools: mcpTools,
+      allowedTools: mcpAllowedTools,
+      toolNamespace: mcpServerName,
+      session: {
+        ...sdkSession.binding,
+        ...(sdkSession.sessionStore ? { store: sdkSession.sessionStore } : {}),
+      },
       env: sdkEnv,
       // publish_preview reuses or starts the internal port 3000 service, then
       // publishes the getHost(9000)/preview/ preview link.
       cwd: process.cwd(),
-      settingSources: ['project'],
       debug: isDebugEnabled(context),
-      abortController: sdkAbortController,
-      stderr: (data: string) => {
+      ...(executablePath ? { executablePath } : {}),
+      onStderr: (data: string) => {
         debugLog(context, '[claude-code stderr]', data.trimEnd());
       },
-      ...(sdkSession.sessionStore
-        ? { sessionStore: sdkSession.sessionStore, sessionStoreFlush: 'eager' as const }
-        : {}),
-      ...sdkSession.binding,
-    };
-
-    if (executablePath) {
-      sdkOptions.pathToClaudeCodeExecutable = executablePath;
-    }
-
-    const sdkQuery = query({
-      prompt: userMessage,
-      options: sdkOptions,
+      cancellation: createSignalCancellationPort(abortSignal),
     });
+
     runOptions.onTiming?.('agent_setup', setupStartedAt, {
       resumed: sdkSession.sessionResumed,
       existing_files: existingFiles.length,
@@ -543,242 +464,86 @@ export async function runCodingAgent(
     const firstEventStartedAt = Date.now();
     let firstSdkEventLogged = false;
 
-    let resultMessage: SDKResultMessage | null = null;
-    // Sandbox infrastructure failures, such as EdgeOne LazySandbox routes returning
-    // Not Found, make all later tool calls fail. Retrying only consumes turns and
-    // pollutes context, so stop this query immediately with a clear upper-layer error.
-    let fatalError: string | null = null;
-    // Independently record tool_use_id -> tool context so tool_result events
-    // can update the correct progress step even when model providers stream
-    // partial tool inputs differently.
+    // A tool result names only the id it belongs to, so the invocation's name
+    // and command are remembered here for the progress event that reports it.
     const toolContextById = new Map<string, { name: string; command?: string }>();
-    const toolStartedAtById = new Map<string, number>();
-    const pendingToolUseBlocks = new Map<number, StreamingToolUseBlock>();
-    const emittedToolUseProgress = new Map<string, string>();
-    let narrationState: NarrationEmitState = {
-      currentTextBlock: '',
-      emittedNarration: '',
-    };
 
-    const emitNarration = (rawText: string, uuid: string, complete = false) => {
-      const resolved = resolveNarrationEmit(narrationState, rawText, complete);
-      narrationState = resolved.state;
-      if (!resolved.text) {
+    const emitDomainEvent = (event: DomainEvent) => {
+      if (event.type === 'assistant.text') {
+        onProgress?.({
+          type: 'text_segment',
+          data: { uuid: event.blockId, text: event.text },
+        });
         return;
       }
-      onProgress?.({
-        type: 'text_segment',
-        data: {
-          uuid,
-          text: resolved.text,
-        },
-      });
-    };
 
-    const emitToolUseProgress = (toolUse: {
-      id?: string;
-      name?: string;
-      input?: unknown;
-    }) => {
-      const toolName = typeof toolUse.name === 'string' ? toolUse.name : '<unknown>';
-      const toolUseId = typeof toolUse.id === 'string' ? toolUse.id : '';
-      const shortToolName = shortenToolName(toolName);
-      const command = shortToolName === 'commands' ? extractCommandFromInput(toolUse.input) : '';
-      const progress = typeof toolUse.name === 'string'
-        ? inferToolProgress(toolName, toolUse.input)
-        : {};
-      const inputSummary = summarizeToolInput(toolName, toolUse.input, state.appDir);
-      const progressSignature = JSON.stringify({
-        name: toolName,
-        command,
-        phaseHint: progress.phaseHint || '',
-        fileCount: progress.fileCount || 0,
-        inputSummary,
-      });
-      if (toolUseId) {
-        const previousSignature = emittedToolUseProgress.get(toolUseId);
-        if (previousSignature === progressSignature) {
-          return;
+      if (event.type === 'tool.invoked') {
+        // The translator already classified the tool, so the phase is read from
+        // that rather than classifying a second time.
+        const phaseHint = PHASE_BY_TOOL_KIND[event.kind];
+        const fileCount = shortenToolName(event.name) === 'write_project_file' ? 1 : undefined;
+        if (event.toolUseId) {
+          toolContextById.set(event.toolUseId, {
+            name: event.name,
+            ...(event.command ? { command: event.command } : {}),
+          });
+          if (shortenToolName(event.name) === 'commands') {
+            latestCommandToolUseId = event.toolUseId;
+          }
         }
-        emittedToolUseProgress.set(toolUseId, progressSignature);
-      }
-      // Tool calls end the current narration block. Clear the per-block window so
-      // the next assistant text is not compared against the previous sentence.
-      narrationState = {
-        ...narrationState,
-        currentTextBlock: '',
-      };
-
-      if (toolUseId && typeof toolUse.name === 'string') {
-        toolContextById.set(toolUseId, {
-          name: toolUse.name,
-          ...(command ? { command } : {}),
+        onProgress?.({
+          type: 'tool_use',
+          data: {
+            id: event.toolUseId,
+            name: event.name,
+            ...(event.command ? { command: event.command } : {}),
+            ...(phaseHint ? { phaseHint } : {}),
+            ...(fileCount ? { fileCount } : {}),
+            inputSummary: summarizeToolInput(event.name, event.raw, state.appDir),
+            startedAt: event.at,
+          },
         });
-        if (shortToolName === 'commands') {
-          latestCommandToolUseId = toolUseId;
-        }
+        return;
       }
-      const startedAt = toolUseId
-        ? toolStartedAtById.get(toolUseId) || Date.now()
-        : Date.now();
-      if (toolUseId) toolStartedAtById.set(toolUseId, startedAt);
-      onProgress?.({
-        type: 'tool_use',
-        data: {
-          id: toolUseId,
-          name: toolName,
-          ...(command ? { command } : {}),
-          ...progress,
-          inputSummary,
-          startedAt,
-        },
-      });
+
+      if (event.type === 'tool.settled') {
+        const known = toolContextById.get(event.toolUseId);
+        const output = event.output || '';
+        commandOutputById.get(event.toolUseId)?.flush();
+        onProgress?.({
+          type: 'tool_result',
+          data: {
+            tool_use_id: event.toolUseId,
+            toolName: known?.name || '<unknown>',
+            ...(known?.command ? { command: known.command } : {}),
+            ok: event.ok,
+            preview: truncateForStream(output, 500),
+            outputSummary: summarizeToolOutput(output, state.appDir),
+            status: event.ok ? 'completed' : 'failed',
+            endedAt: event.at,
+          },
+        });
+      }
     };
 
-    for await (const event of sdkQuery as AsyncIterable<SDKMessage>) {
+    for await (const domainEvent of turn.events) {
       if (!firstSdkEventLogged) {
         firstSdkEventLogged = true;
+        if (sessionRecovery) sessionRecovery.sawEvent = true;
         runOptions.onTiming?.('agent_first_event', firstEventStartedAt, {
-          type: event.type,
+          type: domainEvent.type,
+        });
+        // The session is open now, so the id is safe to hand to the next turn.
+        void sdkSession.markSessionStarted().catch((error) => {
+          console.warn('[session] failed to persist the sdk session id', error);
         });
       }
-      if (abortSignal?.aborted) {
-        sdkAbortController.abort();
-        break;
-      }
-      // debugLog(context, '[agent-event]', summarizeSdkMessage(event));
-      // Forward structured tool progress and high-level model narration. Tool
-      // input JSON and non-text stream deltas stay out of the UI.
-      if (event.type === 'stream_event') {
-        emitNarration(
-          extractVisibleNarrationDelta(event),
-          typeof event.uuid === 'string' ? event.uuid : '',
-          false,
-        );
-        const streamEvent = (event as any).event;
-        if (streamEvent?.type === 'content_block_start') {
-          const contentBlock = streamEvent.content_block;
-          // Each new text block starts a fresh dedupe window so earlier narration
-          // cannot suppress later phrases that share a common suffix/substring.
-          if (contentBlock?.type === 'text') {
-            narrationState = {
-              ...narrationState,
-              currentTextBlock: '',
-            };
-          }
-          if (isToolUseContentBlock(contentBlock) && typeof streamEvent.index === 'number') {
-            pendingToolUseBlocks.set(streamEvent.index, {
-              id: typeof contentBlock.id === 'string' ? contentBlock.id : '',
-              name: typeof contentBlock.name === 'string' ? contentBlock.name : '',
-              inputJson: '',
-              input: contentBlock.input,
-            });
-            emitToolUseProgress({
-              id: contentBlock.id,
-              name: contentBlock.name,
-              input: contentBlock.input,
-            });
-          }
-        } else if (streamEvent?.type === 'content_block_delta') {
-          const delta = streamEvent.delta;
-          const pendingToolUse = typeof streamEvent.index === 'number'
-            ? pendingToolUseBlocks.get(streamEvent.index)
-            : undefined;
-          if (
-            pendingToolUse
-            && delta?.type === 'input_json_delta'
-            && typeof delta.partial_json === 'string'
-          ) {
-            pendingToolUse.inputJson += delta.partial_json;
-          }
-        } else if (streamEvent?.type === 'content_block_stop') {
-          const pendingToolUse = typeof streamEvent.index === 'number'
-            ? pendingToolUseBlocks.get(streamEvent.index)
-            : undefined;
-          if (pendingToolUse) {
-            pendingToolUseBlocks.delete(streamEvent.index);
-            emitToolUseProgress({
-              id: pendingToolUse.id,
-              name: pendingToolUse.name,
-              input: parseToolInputJson(pendingToolUse.inputJson, pendingToolUse.input),
-            });
-          }
-        }
-      } else if (event.type === 'assistant') {
-        const blocks = (event as any).message?.content;
-        if (Array.isArray(blocks)) {
-          for (const b of blocks) {
-            emitNarration(
-              extractVisibleTextBlock(b),
-              typeof event.uuid === 'string' ? event.uuid : '',
-              true,
-            );
-            if (isToolUseContentBlock(b)) {
-              emitToolUseProgress({
-                id: b.id,
-                name: b.name,
-                input: b.input,
-              });
-            }
-          }
-        }
-      } else if (event.type === 'user') {
-        const blocks = (event as any).message?.content;
-        if (Array.isArray(blocks)) {
-          for (const b of blocks) {
-            if (b?.type === 'tool_result') {
-              const text = Array.isArray(b.content)
-                ? b.content.map((c: any) => (typeof c?.text === 'string' ? c.text : '')).join(' ')
-                : (typeof b.content === 'string' ? b.content : '');
-              const toolContext = toolContextById.get(b.tool_use_id);
-              const toolName = toolContext?.name || '<unknown>';
-              const toolUseId = typeof b.tool_use_id === 'string' ? b.tool_use_id : '';
-              commandOutputById.get(toolUseId)?.flush();
-              const echoedExit = parseEchoedExitCode(text);
-              const commandFailed = typeof echoedExit === 'number' && echoedExit !== 0;
-              const toolFailed = b.is_error === true || commandFailed;
-              onProgress?.({
-                type: 'tool_result',
-                data: {
-                  tool_use_id: typeof b.tool_use_id === 'string' ? b.tool_use_id : '',
-                  toolName,
-                  ...(toolContext?.command ? { command: toolContext.command } : {}),
-                  ok: !toolFailed,
-                  preview: truncateForStream(text, 500),
-                  outputSummary: summarizeToolOutput(text, state.appDir),
-                  status: toolFailed ? 'failed' : 'completed',
-                  endedAt: Date.now(),
-                },
-              });
-              // Detect sandbox infrastructure failures only on is_error=true tool
-              // results, avoiding false positives from normal text containing "Not Found".
-              if (b.is_error === true && !fatalError) {
-                const fatal = detectFatalToolError(text);
-                if (fatal) {
-                  fatalError = `${fatal} (tool=${toolName})`;
-                  console.warn('[fatal] aborting agent loop:', fatalError);
-                }
-              }
-            }
-          }
-        }
-      }
-      if (event.type === 'system' && event.subtype === 'init') {
-        debugLog(context, '[agent-init]', { mcpServers: event.mcp_servers });
-      }
-      if (event.type === 'result') {
-        resultMessage = event;
-        break;
-      }
-      // Exit the loop immediately after a fatal error instead of waiting for more model turns.
-      if (fatalError) {
-        break;
-      }
+      emitDomainEvent(domainEvent);
     }
 
-    abortSignal?.removeEventListener('abort', abortSdkQuery);
+    const turnResult = turn.result();
 
-    if (abortSignal?.aborted || sdkAbortController.signal.aborted) {
+    if (turnResult.outcome === 'stopped') {
       return {
         success: false,
         output: null,
@@ -790,58 +555,38 @@ export async function runCodingAgent(
       };
     }
 
-    // Fatal errors take priority over normal results, even if the SDK produced
-    // a result for this turn.
-    if (fatalError) {
-      try {
-        await (sdkQuery as any)?.return?.();
-      } catch {
-        // Ignore this because the SDK may not support return(); stop it when possible.
+    if (turnResult.outcome === 'failed') {
+      if (turnResult.fatal) {
+        console.warn('[fatal] aborting agent loop:', turnResult.error);
       }
       return {
         success: false,
         output: null,
-        error: fatalError,
+        error: turnResult.error || 'Model execution failed.',
         projectTouched,
         previewTouched,
         wasCreated: isNewProject && projectTouched,
-        fatal: true,
-      };
-    }
-
-    if (!resultMessage) {
-      return {
-        success: false,
-        output: null,
-        error: 'The model stream ended without returning a result.',
-        projectTouched,
-        previewTouched,
-        wasCreated: isNewProject && projectTouched,
-      };
-    }
-
-    if (resultMessage.subtype !== 'success') {
-      return {
-        success: false,
-        output: null,
-        error: Array.isArray(resultMessage.errors) && resultMessage.errors.length > 0
-          ? resultMessage.errors[0]
-          : 'Model execution failed.',
-        projectTouched,
-        previewTouched,
-        wasCreated: isNewProject && projectTouched,
+        ...(turnResult.fatal ? { fatal: true } : {}),
       };
     }
 
     return {
       success: true,
-      output: sanitizeAssistantText((resultMessage.result || '').trim()),
+      output: sanitizeAssistantText(turnResult.summary),
       error: null,
       projectTouched,
       previewTouched,
       wasCreated: isNewProject && projectTouched,
     };
   } catch(e) {
+    // Failing before the first event on a resumed session means the transcript
+    // could not be materialized. Forget the id so the next turn starts fresh
+    // rather than repeating the same failure for the rest of the conversation.
+    if (sessionRecovery?.resumed && !sessionRecovery.sawEvent) {
+      await sessionRecovery.forget().catch((error) => {
+        console.warn('[session] failed to clear the unusable sdk session id', error);
+      });
+    }
     if (abortSignal?.aborted || (e instanceof Error && e.name === 'AbortError')) {
       return {
         success: false,

@@ -1,9 +1,9 @@
-import type { BuildResult, BuildStatus, ProjectState, ScaffoldLog } from '../_types';
+import type { BuildResult, BuildStatus, ProjectState, ScaffoldLog } from '../_types.ts';
 import { createProjectFiles } from '../core/_project-files.ts';
 import { createMakersWorkspacePort } from '../core/adapters/_makers.ts';
-import { debugLog } from '../utils/_debug';
-import { detectFatalToolError } from '../utils/_text';
-import { runCommandCapturingExit, runSandboxCommand } from './_commands';
+import { debugLog } from '../utils/_debug.ts';
+import { detectFatalToolError } from '../utils/_text.ts';
+import { runCommandCapturingExit, runSandboxCommand } from './_commands.ts';
 
 function shellQuote(value: string) {
   return `'${value.replace(/'/g, `'\\''`)}'`;

@@ -1,14 +1,14 @@
-import { runChatPipeline } from './_pipelines';
+import { runChatPipeline } from './_pipelines.ts';
 import {
   appendTurn,
   getChatTask,
-  getModelPreference,
+  getTurnStartState,
   saveChatTask,
-  saveModelPreference,
-} from './_memory';
-import type { ChatTask, ChatTaskStatus, StreamSend } from './_types';
-import { createSSEResponse, sseEvent } from './_shared';
-import { resolveConversationId } from './utils/_request';
+  saveTurnStart,
+} from './_memory.ts';
+import type { ChatTask, ChatTaskStatus, StreamSend } from './_types.ts';
+import { createSSEResponse, sseEvent } from './_shared.ts';
+import { resolveConversationId } from './utils/_request.ts';
 
 type TaskEvent = Record<string, unknown>;
 
@@ -184,7 +184,9 @@ async function createChatTask(
   }
 
   const taskId = options.turnId || createTaskId();
-  const existing = await getChatTask(context, conversationId);
+  // One metadata read covers both: the task guards against a duplicate run, and
+  // the stored model is the fallback when the request did not name one.
+  const { task: existing, model: storedModel } = await getTurnStartState(context, conversationId);
   if (existing && existing.id === taskId && existing.message === message) {
     return { ok: true as const, conversationId, task: existing };
   }
@@ -207,7 +209,7 @@ async function createChatTask(
   // changes when someone changes it. Recording it on the task is what makes a
   // reconnect replay the run that actually happened.
   const requestedModel = (options.model || '').trim();
-  const model = requestedModel || await getModelPreference(context, conversationId);
+  const model = requestedModel || storedModel;
 
   const task: ChatTask = {
     id: taskId,
@@ -217,10 +219,7 @@ async function createChatTask(
     status: 'queued',
     createdAt: persistStartedAt,
   };
-  await saveChatTask(context, conversationId, task);
-  if (requestedModel) {
-    await saveModelPreference(context, conversationId, requestedModel);
-  }
+  await saveTurnStart(context, conversationId, task, requestedModel);
   return {
     ok: true as const,
     conversationId,
@@ -258,7 +257,12 @@ async function executeLiveTask(context: any, liveTask: LiveChatTask) {
   const taskContext = withTaskAbortSignal(context, liveTask.abortController.signal);
 
   try {
-    await saveChatTask(taskContext, liveTask.conversationId, runningTask);
+    // Durable bookkeeping for a reconnect that lands on another instance. A
+    // reconnect in this process is served from liveTask, which already carries
+    // the running status, so the model does not wait for this write.
+    void saveChatTask(taskContext, liveTask.conversationId, runningTask).catch((persistError) => {
+      console.warn('[chat-task] failed to persist running state', persistError);
+    });
     publish(liveTask, { type: 'status', message: 'Starting the chat task' });
     const dispatchAt = Date.now();
     await runChatPipeline(taskContext, liveTask.task.message, send, {

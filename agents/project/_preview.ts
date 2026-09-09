@@ -2,9 +2,9 @@ import {
   PREVIEW_PATH_PREFIX,
   PREVIEW_PUBLIC_PORT,
   PREVIEW_SERVER_PORT,
-} from '../_constants';
-import type { ProjectState } from '../_types';
-import { debugLog } from '../utils/_debug';
+} from '../_constants.ts';
+import type { ProjectState } from '../_types.ts';
+import { debugLog } from '../utils/_debug.ts';
 import {
   normalizePublicUrl,
   previewTargetsMatch as previewTargetsMatchCore,
@@ -14,7 +14,7 @@ import {
 } from '../core/_preview-url.ts';
 import { createProjectFiles } from '../core/_project-files.ts';
 import { createMakersWorkspacePort } from '../core/adapters/_makers.ts';
-import { runSandboxCommand } from './_commands';
+import { runSandboxCommand } from './_commands.ts';
 
 const projectFilesFor = (context: any, state: ProjectState) =>
   createProjectFiles(createMakersWorkspacePort(context), state.appDir);

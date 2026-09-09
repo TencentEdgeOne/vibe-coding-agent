@@ -1,9 +1,9 @@
 import type { SessionStore } from '@anthropic-ai/claude-agent-sdk';
-import { claudeSessionExportFilename, sessionEntriesToJsonl } from '../shared/claude-session-export';
-import { readBoundSdkSessionId } from './_session';
+import { claudeSessionExportFilename, sessionEntriesToJsonl } from '../shared/claude-session-export.ts';
+import { readBoundSdkSessionId } from './_session.ts';
 import { tryCreateMakersStorePort } from './core/adapters/_makers.ts';
-import { resolveConversationId } from './utils/_request';
-import { loadClaudeSessionEntries } from './utils/_sdk-transcript';
+import { resolveConversationId } from './utils/_request.ts';
+import { loadClaudeSessionEntries } from './utils/_sdk-transcript.ts';
 
 function json(data: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(data), {

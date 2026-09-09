@@ -1,32 +1,33 @@
 import type { SessionStore } from '@anthropic-ai/claude-agent-sdk';
-import { writeMetadataField } from './core/_conversation-state.ts';
+import { writeMetadataField, writeMetadataFields } from './core/_conversation-state.ts';
 import { tryCreateMakersStorePort } from './core/adapters/_makers.ts';
-import type { FileTreeItem } from './_types';
+import type { FileTreeItem } from './_types.ts';
 
 export type ClaudeSessionBinding = {
   resume?: string;
   sessionId?: string;
 };
 
-export type GetSessionInfoFn = (
-  sessionId: string,
-  options: { dir?: string; sessionStore?: SessionStore },
-) => Promise<unknown>;
-
 export type ResolveClaudeSessionOptions = {
   conversationId?: string;
   store?: {
     claudeSessionBinding?: (id: string) => Promise<unknown>;
     getConversation?: (input: { conversationId: string }) => Promise<{
-      metadata?: { sdkSessionId?: unknown };
+      metadata?: Record<string, unknown>;
     } | null>;
   } | null;
-  sessionStore?: SessionStore;
-  cwd?: string;
   reset?: boolean;
   storedSessionId?: string;
-  getSessionInfo?: GetSessionInfoFn;
 };
+
+/** Id of a session known to have a transcript, so a turn may resume it. */
+const STARTED_SESSION_FIELD = 'sdkSessionId';
+/**
+ * Id the next turn should open a *fresh* session on. Written when a session is
+ * discarded, so the replacement lands on a clean key rather than back on the
+ * one whose transcript could not be read.
+ */
+const NEXT_SESSION_FIELD = 'sdkSessionNextId';
 
 export const EXISTING_FILE_LIST_LIMIT = 80;
 
@@ -98,56 +99,48 @@ function extractBindingSessionId(binding: unknown): string {
   return '';
 }
 
-function isMemoryCorruptError(error: unknown): boolean {
-  const record = error && typeof error === 'object'
-    ? error as { code?: string; name?: string }
-    : {};
-  return record.code === 'MemoryCorruptError' || record.name === 'MemoryCorruptError';
-}
+type StoredSessionFields = {
+  /** Resumable id, or '' when this conversation has no started session. */
+  started: string;
+  /** Id to open fresh, or '' when there is no discarded session to replace. */
+  next: string;
+};
 
-async function defaultGetSessionInfo(
-  sessionId: string,
-  options: { dir?: string; sessionStore?: SessionStore },
-) {
-  const { getSessionInfo } = await import('@anthropic-ai/claude-agent-sdk');
-  return getSessionInfo(sessionId, options);
-}
-
-async function loadStoredSdkSessionId(
+/** One metadata read serving both session fields. */
+async function readStoredSessionFields(
   store: ResolveClaudeSessionOptions['store'],
   conversationId: string,
-): Promise<string> {
+): Promise<StoredSessionFields> {
   if (typeof store?.getConversation !== 'function') {
-    return '';
+    return { started: '', next: '' };
   }
   try {
     const conversation = await store.getConversation({ conversationId });
-    const stored = conversation?.metadata?.sdkSessionId;
-    return typeof stored === 'string' ? stored.trim() : '';
+    const metadata = conversation?.metadata;
+    const read = (field: string) => {
+      const value = metadata?.[field];
+      return typeof value === 'string' ? value.trim() : '';
+    };
+    return {
+      started: read(STARTED_SESSION_FIELD),
+      next: read(NEXT_SESSION_FIELD),
+    };
   } catch (error: any) {
     if (error?.code === 'MemoryNotFoundError') {
-      return '';
+      return { started: '', next: '' };
     }
     throw error;
   }
 }
 
-async function resolveBoundSessionId(
-  options: ResolveClaudeSessionOptions,
+/** The id a not-yet-started conversation should open its session on. */
+async function resolveUnstartedSessionId(
+  store: ResolveClaudeSessionOptions['store'],
   conversationId: string,
 ): Promise<string> {
-  if (options.storedSessionId?.trim()) {
-    return options.storedSessionId.trim();
-  }
-
-  const stored = await loadStoredSdkSessionId(options.store, conversationId);
-  if (stored) {
-    return stored;
-  }
-
-  if (typeof options.store?.claudeSessionBinding === 'function') {
+  if (typeof store?.claudeSessionBinding === 'function') {
     try {
-      const binding = await options.store.claudeSessionBinding(conversationId);
+      const binding = await store.claudeSessionBinding(conversationId);
       const sessionId = extractBindingSessionId(binding);
       if (sessionId) {
         return sessionId;
@@ -160,21 +153,35 @@ async function resolveBoundSessionId(
   return normalizeClaudeSessionUuid(conversationId) || '';
 }
 
-async function lookupSessionInfo(
-  sessionId: string,
+async function resolveBoundSessionId(
   options: ResolveClaudeSessionOptions,
-): Promise<unknown> {
-  const getSessionInfo = options.getSessionInfo || defaultGetSessionInfo;
-  const infoOptions: { dir?: string; sessionStore?: SessionStore } = {};
-  if (options.cwd) {
-    infoOptions.dir = options.cwd;
+  conversationId: string,
+): Promise<string> {
+  if (options.storedSessionId?.trim()) {
+    return options.storedSessionId.trim();
   }
-  if (options.sessionStore) {
-    infoOptions.sessionStore = options.sessionStore;
+
+  const stored = await readStoredSessionFields(options.store, conversationId);
+  if (stored.started) {
+    return stored.started;
   }
-  return getSessionInfo(sessionId, infoOptions);
+  if (stored.next) {
+    return stored.next;
+  }
+
+  return resolveUnstartedSessionId(options.store, conversationId);
 }
 
+/**
+ * Decide whether this turn resumes the conversation's Claude session.
+ *
+ * A persisted `sdkSessionId` is only written once the SDK has actually opened
+ * the session (see `markSessionStarted`), so its presence is already evidence
+ * that a transcript exists. Confirming that against the store would mean a full
+ * transcript load — the platform session store reads one key per mirrored frame,
+ * strongly consistent and serially — on the critical path before the model is
+ * asked anything, and that cost grows for the life of the conversation.
+ */
 export async function resolveClaudeSessionBinding(
   options: ResolveClaudeSessionOptions,
 ): Promise<ClaudeSessionBinding> {
@@ -187,23 +194,21 @@ export async function resolveClaudeSessionBinding(
     return { sessionId: crypto.randomUUID() };
   }
 
-  const sessionId = await resolveBoundSessionId(options, conversationId);
-  if (!sessionId) {
-    return {};
+  const override = options.storedSessionId?.trim();
+  if (override) {
+    return { resume: override };
   }
 
-  try {
-    const info = await lookupSessionInfo(sessionId, options);
-    if (info) {
-      return { resume: sessionId };
-    }
-  } catch (error) {
-    if (isMemoryCorruptError(error)) {
-      return { sessionId: crypto.randomUUID() };
-    }
+  const stored = await readStoredSessionFields(options.store, conversationId);
+  if (stored.started) {
+    return { resume: stored.started };
+  }
+  if (stored.next) {
+    return { sessionId: stored.next };
   }
 
-  return { sessionId };
+  const sessionId = await resolveUnstartedSessionId(options.store, conversationId);
+  return sessionId ? { sessionId } : {};
 }
 
 export async function readBoundSdkSessionId(
@@ -230,17 +235,29 @@ export async function persistConversationSdkSession(
   if (!trimmed || !store) {
     return;
   }
-  await writeMetadataField(store, conversationId, 'sdkSessionId', trimmed);
+  await writeMetadataField(store, conversationId, STARTED_SESSION_FIELD, trimmed);
 }
 
 export async function resolveAgentSdkSession(
   context: any,
   conversationId: string,
-  options: { reset?: boolean; cwd?: string; getSessionInfo?: GetSessionInfoFn } = {},
+  options: { reset?: boolean } = {},
 ): Promise<{
   binding: ClaudeSessionBinding;
   sessionStore: SessionStore | undefined;
   sessionResumed: boolean;
+  /**
+   * Record the id once the SDK has opened the session. Writing it before the
+   * query runs would leave behind an id that no transcript backs, and the next
+   * turn would resume into nothing.
+   */
+  markSessionStarted: () => Promise<void>;
+  /**
+   * Discard this session. The replacement id is recorded now so the next turn
+   * opens a clean session instead of landing back on the transcript that just
+   * failed to load.
+   */
+  forgetSession: () => Promise<void>;
 }> {
   const store = tryCreateMakersStorePort(context);
   const sessionStore = store?.claudeSessionStore?.() as SessionStore | undefined;
@@ -248,20 +265,38 @@ export async function resolveAgentSdkSession(
   const binding = await resolveClaudeSessionBinding({
     conversationId,
     store,
-    sessionStore,
-    cwd: options.cwd || process.cwd(),
     reset: options.reset === true,
-    getSessionInfo: options.getSessionInfo,
   });
 
-  const sessionId = binding.resume || binding.sessionId;
-  if (sessionId) {
-    await persistConversationSdkSession(context, conversationId, sessionId);
-  }
+  const sessionId = binding.resume || binding.sessionId || '';
+  // A resumed id is already recorded as started, so re-writing it every turn
+  // would only add a store round trip.
+  let started = Boolean(binding.resume);
 
   return {
     binding,
     sessionStore,
     sessionResumed: Boolean(binding.resume),
+    async markSessionStarted() {
+      if (started || !sessionId || !store) {
+        return;
+      }
+      started = true;
+      // This id is the started one now, so any pending replacement is spent.
+      await writeMetadataFields(store, conversationId, {
+        [STARTED_SESSION_FIELD]: sessionId,
+        [NEXT_SESSION_FIELD]: '',
+      });
+    },
+    async forgetSession() {
+      if (!store) {
+        return;
+      }
+      started = false;
+      await writeMetadataFields(store, conversationId, {
+        [STARTED_SESSION_FIELD]: '',
+        [NEXT_SESSION_FIELD]: crypto.randomUUID(),
+      });
+    },
   };
 }

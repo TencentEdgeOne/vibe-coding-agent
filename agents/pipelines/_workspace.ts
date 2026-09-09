@@ -1,15 +1,15 @@
-import { clearLegacyProjectSnapshot, getProjectState } from '../_memory';
+import { clearLegacyProjectSnapshot, getProjectState } from '../_memory.ts';
 import {
   createProjectState,
   ensureProjectScaffold,
   getFileTree,
   resetProjectWorkspace,
   restorePersistedProject,
-} from '../_project';
-import type { ProjectState, StreamSend } from '../_types';
+} from '../_project.ts';
+import type { ProjectState, StreamSend } from '../_types.ts';
 import { createProjectFiles } from '../core/_project-files.ts';
 import { createMakersWorkspacePort } from '../core/adapters/_makers.ts';
-import { createTurnTimer, formatTimingLog, type TurnTimer } from '../utils/_timing';
+import { createTurnTimer, formatTimingLog, type TurnTimer } from '../utils/_timing.ts';
 
 function emitTiming(
   send: StreamSend,

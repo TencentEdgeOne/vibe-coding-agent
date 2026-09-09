@@ -1,11 +1,11 @@
-import { appendTurn, saveActivityTurn, saveProjectState } from '../_memory';
+import { appendTurn, saveActivityTurn, saveProjectState } from '../_memory.ts';
 import type {
   AgentProgressEvent,
   PersistedActivity,
   ProjectState,
-} from '../_types';
+} from '../_types.ts';
 import type { TurnResult } from '../../shared/protocol.ts';
-import type { ProjectCheckpointController } from './_helpers';
+import type { ProjectCheckpointController } from './_helpers.ts';
 
 type TurnStatus = 'completed' | 'failed' | 'stopped';
 

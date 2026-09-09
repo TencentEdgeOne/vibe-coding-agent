@@ -1,4 +1,4 @@
-import { createProjectState } from './_project';
+import { createProjectState } from './_project.ts';
 import { createMakersStorePort } from './core/adapters/_makers.ts';
 import {
   ACTIVITY_ITEM_LIMIT,
@@ -6,10 +6,11 @@ import {
   appendConversationTurn,
   readHistory,
   readMetadataField,
+  readMetadataFields,
   readModelPreference,
   writeMetadataField,
   writeMetadataFieldStrict,
-  writeModelPreference,
+  writeMetadataFieldsStrict,
 } from './core/_conversation-state.ts';
 import type {
   ChatTask,
@@ -17,9 +18,9 @@ import type {
   PersistedActivityTurn,
   LegacyProjectSnapshot,
   ProjectState,
-} from './_types';
-import { sanitizeAssistantText } from './utils/_text';
-import { appendTrimmedActivityTurn, dedupeActivityTurns } from './utils/_activity';
+} from './_types.ts';
+import { sanitizeAssistantText } from './utils/_text.ts';
+import { appendTrimmedActivityTurn, dedupeActivityTurns } from './utils/_activity.ts';
 
 // Makers file routing hands every endpoint a `context`. These wrappers translate
 // it once and delegate to the port-based core, so the 11 existing call sites
@@ -34,11 +35,15 @@ export async function getHistory(
   return readHistory(portFor(context), conversationId, options);
 }
 
+function parseChatTask(value: unknown): ChatTask | null {
+  return value && typeof value === 'object' && typeof (value as ChatTask).id === 'string'
+    ? value as ChatTask
+    : null;
+}
+
 export async function getChatTask(context: any, conversationId: string): Promise<ChatTask | null> {
   const task = await readMetadataField(portFor(context), conversationId, 'chatTask', (value) =>
-    value && typeof value === 'object' && typeof (value as ChatTask).id === 'string'
-      ? value as ChatTask
-      : undefined,
+    parseChatTask(value) ?? undefined,
   );
   return task ?? null;
 }
@@ -47,6 +52,41 @@ export async function saveChatTask(context: any, conversationId: string, task: C
   // Deliberately not swallowing MemoryNotFoundError: /chat persists the user
   // message first, so the conversation exists and a failure here is real.
   await writeMetadataFieldStrict(portFor(context), conversationId, 'chatTask', task);
+}
+
+/**
+ * The two pieces of conversation state a turn needs before it can start.
+ *
+ * Read together because getConversation returns the whole metadata document:
+ * asking for the task and the model separately fetches that document twice, on
+ * the critical path, before the request has even been acknowledged.
+ */
+export function getTurnStartState(
+  context: any,
+  conversationId: string,
+): Promise<{ task: ChatTask | null; model: string }> {
+  return readMetadataFields(portFor(context), conversationId, (metadata) => ({
+    task: parseChatTask(metadata.chatTask),
+    model: typeof metadata.modelPreference === 'string' ? metadata.modelPreference.trim() : '',
+  }));
+}
+
+/**
+ * Record the task, and the model it runs on, in one write.
+ *
+ * `model` is only persisted when the request named one; otherwise the
+ * conversation keeps the preference it already had.
+ */
+export async function saveTurnStart(
+  context: any,
+  conversationId: string,
+  task: ChatTask,
+  model: string,
+) {
+  await writeMetadataFieldsStrict(portFor(context), conversationId, {
+    chatTask: task,
+    ...(model ? { modelPreference: model } : {}),
+  });
 }
 
 /**
@@ -60,14 +100,6 @@ export async function getModelPreference(
   conversationId: string,
 ): Promise<string> {
   return readModelPreference(portFor(context), conversationId);
-}
-
-export async function saveModelPreference(
-  context: any,
-  conversationId: string,
-  model: string,
-) {
-  await writeModelPreference(portFor(context), conversationId, model);
 }
 
 export async function appendTurn(

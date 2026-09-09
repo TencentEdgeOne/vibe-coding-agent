@@ -196,6 +196,60 @@ test('the core carries no presentation vocabulary', async () => {
   );
 });
 
+// The agent loop is the seam a different SDK would be swapped at, so running it
+// is the driver's exclusive job. `query()` or an MCP server built anywhere else
+// means a second loop has appeared and the seam is no longer load-bearing —
+// which is precisely how the previous abstraction here decayed into decoration.
+test('only the driver runs an agent loop', async () => {
+  const offenders: string[] = [];
+
+  for (const file of await sourceFiles('agents')) {
+    if (file.includes(`${path.sep}drivers${path.sep}`)) continue;
+
+    const source = stripComments(await readFile(file, 'utf8'));
+    if (/\bquery\(\{|createSdkMcpServer\(/.test(source)) offenders.push(file);
+  }
+
+  assert.deepEqual(
+    offenders,
+    [],
+    'these files drive an agent SDK directly; go through an AgentDriverPort instead',
+  );
+});
+
+/**
+ * Files still importing the vendor SDK outside the driver.
+ *
+ * A ratchet, not a permission list: entries may be removed as each dependency
+ * moves behind a port, and nothing may be added. What remains here is type-only
+ * or session-export surface, none of which runs the loop.
+ */
+const SDK_IMPORT_RATCHET = [
+  path.join('agents', '_session.ts'),
+  path.join('agents', '_types.ts'),
+  path.join('agents', 'sdk-session.ts'),
+  path.join('agents', 'tools', '_project-tools.ts'),
+  path.join('agents', 'utils', '_sdk-transcript.ts'),
+];
+
+test('the vendor SDK reaches no further than it already does', async () => {
+  const importers: string[] = [];
+
+  for (const file of await sourceFiles('agents')) {
+    if (file.includes(`${path.sep}drivers${path.sep}`)) continue;
+
+    const source = await readFile(file, 'utf8');
+    if (/@anthropic-ai\/claude-agent-sdk/.test(source)) importers.push(file);
+  }
+
+  const added = importers.filter((file) => !SDK_IMPORT_RATCHET.includes(file));
+  assert.deepEqual(
+    added,
+    [],
+    'these files newly import the vendor SDK; put the dependency behind a port or in the driver',
+  );
+});
+
 // Localized copy in the runtime is what forced "右侧预览面板" into an agent
 // reply. Failures cross the boundary as codes so each host writes its own words.
 test('the core ships no user-facing prose', async () => {

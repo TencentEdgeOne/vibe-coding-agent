@@ -77,6 +77,21 @@ function isToolUseBlock(block: unknown): block is {
   return record.type === 'tool_use' || record.type === 'mcp_tool_use';
 }
 
+/**
+ * Whether the SDK has handed over the tool's assembled arguments yet.
+ *
+ * Cheaper than comparing the arguments themselves, which for a file write is
+ * the entire file, and enough to tell the announcement apart from the
+ * refinement that follows it.
+ */
+function hasToolInput(input: unknown) {
+  return Boolean(
+    input
+    && typeof input === 'object'
+    && Object.keys(input as Record<string, unknown>).length > 0,
+  );
+}
+
 function textFromBlock(block: unknown) {
   const record = block && typeof block === 'object' ? block as Record<string, unknown> : {};
   return record.type === 'text' && typeof record.text === 'string' ? record.text : '';
@@ -143,9 +158,17 @@ export function createSdkTranslator(options: {
     const command = helpers.extractCommand(name, toolUse.input);
     const kind = helpers.classifyTool(name, toolUse.input);
 
-    // The same tool call is announced twice (start, then completed input), so
-    // skip the second one when nothing meaningful changed.
-    const signature = JSON.stringify({ name, command, kind });
+    // A tool is announced at content_block_start before its arguments have
+    // streamed, then again at content_block_stop with them assembled. Consumers
+    // key by toolUseId and upsert, so that refinement has to reach them — it is
+    // how a caller learns which path a file write is writing. What must not
+    // reach them is a repeat that carries nothing new.
+    const signature = JSON.stringify({
+      name,
+      command,
+      kind,
+      refined: hasToolInput(toolUse.input),
+    });
     if (toolUseId) {
       if (emittedSignatures.get(toolUseId) === signature) return;
       emittedSignatures.set(toolUseId, signature);

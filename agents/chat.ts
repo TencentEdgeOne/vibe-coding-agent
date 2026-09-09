@@ -1,8 +1,8 @@
 import {
   createChatTaskAndStreamResponse,
   createChatTaskStreamResponse,
-} from './_chat-tasks';
-import { resolveRequestedModel } from './_models';
+} from './_chat-tasks.ts';
+import { resolveRequestedModel } from './_models.ts';
 
 /** Create a durable task and stream it over the same HTTP request. */
 export async function onRequestPost(context: any) {

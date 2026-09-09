@@ -5,13 +5,13 @@ import {
   resolvePublicLinks,
   runSandboxCommand,
   startPreviewServer,
-} from '../_project';
-import type { ClaudeMcpTool, PreviewRestartSignal, ProjectState } from '../_types';
+} from '../_project.ts';
+import type { ClaudeMcpTool, PreviewRestartSignal, ProjectState } from '../_types.ts';
 import { createProjectFiles } from '../core/_project-files.ts';
 import { createMakersWorkspacePort } from '../core/adapters/_makers.ts';
-import { getBlockedProjectWriteReason, toAppRelPath } from '../utils/_paths';
-import { stringifyToolResult } from '../utils/_text';
-import { shouldReusePreviewServer } from '../utils/_tool-phase';
+import { getBlockedProjectWriteReason, toAppRelPath } from '../utils/_paths.ts';
+import { stringifyToolResult } from '../utils/_text.ts';
+import { shouldReusePreviewServer } from '../utils/_tool-phase.ts';
 
 const writeProjectFileInputSchema = {
   path: z.string().describe(

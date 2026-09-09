@@ -68,7 +68,10 @@ test('a complete assistant message does not repeat already streamed text', () =>
   assert.deepEqual(texts, ['Building the ', 'page.']);
 });
 
-test('a tool call is announced once even though the SDK reports it twice', () => {
+// The announcement carries no arguments yet, so the refinement that follows is
+// the only place a consumer learns which file is being written. Consumers key
+// by toolUseId and upsert, so two events describe one step, not two.
+test('a tool call is announced, then refined once its arguments arrive', () => {
   const { events } = translate([
     {
       type: 'stream_event',
@@ -90,8 +93,37 @@ test('a tool call is announced once even though the SDK reports it twice', () =>
   ]);
 
   const invoked = events.filter((event) => event.type === 'tool.invoked');
-  assert.equal(invoked.length, 1);
+  assert.equal(invoked.length, 2);
   assert.equal(invoked[0]?.type === 'tool.invoked' && invoked[0].kind, 'file.write');
+  // Same step, same id — the second one is what carries the path.
+  assert.equal(invoked[1]?.type === 'tool.invoked' && invoked[1].toolUseId, 't1');
+  assert.deepEqual(
+    invoked[1]?.type === 'tool.invoked' ? invoked[1].raw : null,
+    { path: 'a.tsx', content: 'x' },
+  );
+});
+
+test('a repeat that carries nothing new is not re-announced', () => {
+  const { events } = translate([
+    {
+      type: 'assistant',
+      message: {
+        content: [
+          { type: 'tool_use', id: 't1', name: 'mcp__edgeone-sandbox__files_read', input: { path: 'a.tsx' } },
+        ],
+      },
+    },
+    {
+      type: 'assistant',
+      message: {
+        content: [
+          { type: 'tool_use', id: 't1', name: 'mcp__edgeone-sandbox__files_read', input: { path: 'a.tsx' } },
+        ],
+      },
+    },
+  ]);
+
+  assert.equal(events.filter((event) => event.type === 'tool.invoked').length, 1);
 });
 
 // Partial JSON arrives across deltas; the assembled input must be parsed.

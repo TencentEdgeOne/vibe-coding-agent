@@ -3,8 +3,8 @@ import {
   createMakersWorkspacePort,
   tryCreateMakersWorkspacePort,
 } from '../core/adapters/_makers.ts';
-import type { ProjectState } from '../_types';
-import { debugLog } from '../utils/_debug';
+import type { ProjectState } from '../_types.ts';
+import { debugLog } from '../utils/_debug.ts';
 
 const SANDBOX_EXTENSION_SECONDS = 1800;
 

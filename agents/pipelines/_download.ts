@@ -1,6 +1,6 @@
-import { getProjectState } from '../_memory';
-import { createProjectArchive, restorePersistedProject } from '../_project';
-import { resolveConversationId } from '../utils/_request';
+import { getProjectState } from '../_memory.ts';
+import { createProjectArchive, restorePersistedProject } from '../_project.ts';
+import { resolveConversationId } from '../utils/_request.ts';
 
 export async function runProjectDownloadPipeline(context: any): Promise<Response> {
   const { conversationId } = resolveConversationId(context, { allowQuery: true });

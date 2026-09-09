@@ -22,23 +22,37 @@ test('missing conversation or store degrades to an empty binding', async () => {
   }), {});
 });
 
-test('an existing transcript resumes that session', async () => {
+// A persisted id is only written once the SDK has opened the session, so it is
+// already proof that a transcript exists. Confirming it would cost a full
+// transcript load — one strong read per mirrored frame — before every turn.
+test('a persisted session id resumes without loading the transcript', async () => {
   const binding = await resolveClaudeSessionBinding({
     conversationId: CONVERSATION_ID,
     storedSessionId: BOUND_SESSION_ID,
-    getSessionInfo: async (sessionId) => ({ sessionId }),
   });
   assert.deepEqual(binding, { resume: BOUND_SESSION_ID });
   assert.equal('sessionId' in binding, false);
 });
 
-test('a bound id with no transcript starts a new notebook on that id', async () => {
+test('a persisted id in conversation metadata resumes too', async () => {
+  const binding = await resolveClaudeSessionBinding({
+    conversationId: CONVERSATION_ID,
+    store: {
+      getConversation: async () => ({ metadata: { sdkSessionId: BOUND_SESSION_ID } }),
+      claudeSessionBinding: async () => {
+        throw new Error('a persisted id must not consult the platform binding');
+      },
+    },
+  });
+  assert.deepEqual(binding, { resume: BOUND_SESSION_ID });
+});
+
+test('a conversation with no persisted id opens the platform-bound id', async () => {
   const binding = await resolveClaudeSessionBinding({
     conversationId: CONVERSATION_ID,
     store: {
       claudeSessionBinding: async () => ({ sessionId: BOUND_SESSION_ID }),
     },
-    getSessionInfo: async () => undefined,
   });
   assert.deepEqual(binding, { sessionId: BOUND_SESSION_ID });
 });
@@ -48,9 +62,6 @@ test('reset opens a new notebook and never resumes', async () => {
     conversationId: CONVERSATION_ID,
     storedSessionId: BOUND_SESSION_ID,
     reset: true,
-    getSessionInfo: async () => {
-      throw new Error('reset must not look up the old transcript');
-    },
   });
   assert.equal(binding.resume, undefined);
   assert.match(binding.sessionId || '', UUID_RE);
@@ -58,79 +69,88 @@ test('reset opens a new notebook and never resumes', async () => {
   assert.notEqual(binding.sessionId, CONVERSATION_ID);
 });
 
-test('a stored override wins over the platform binding', async () => {
-  const binding = await resolveClaudeSessionBinding({
-    conversationId: CONVERSATION_ID,
-    storedSessionId: BOUND_SESSION_ID,
-    store: {
-      claudeSessionBinding: async () => CONVERSATION_ID,
-    },
-    getSessionInfo: async () => undefined,
-  });
-  assert.deepEqual(binding, { sessionId: BOUND_SESSION_ID });
-});
-
 test('legacy conversation ids are normalised when the binding API is missing', async () => {
   const binding = await resolveClaudeSessionBinding({
     conversationId: CONVERSATION_ID,
     store: {},
-    getSessionInfo: async () => undefined,
   });
   assert.deepEqual(binding, { sessionId: CONVERSATION_ID });
 });
 
-test('a corrupt transcript starts a fresh session instead of resuming', async () => {
-  const binding = await resolveClaudeSessionBinding({
-    conversationId: CONVERSATION_ID,
-    storedSessionId: BOUND_SESSION_ID,
-    getSessionInfo: async () => {
-      const error = new Error('bad jsonl');
-      (error as { code?: string }).code = 'MemoryCorruptError';
-      throw error;
+test('resolveAgentSdkSession persists the id only once the session has started', async () => {
+  const metadata: Record<string, unknown> = {};
+  const store = {
+    claudeSessionStore: () => ({ kind: 'platform' }),
+    // updateConversation shallow-merges, so the stub must too.
+    updateConversation: async (input: { metadata: Record<string, unknown> }) => {
+      Object.assign(metadata, input.metadata);
     },
-  });
-  assert.equal(binding.resume, undefined);
-  assert.match(binding.sessionId || '', UUID_RE);
-  assert.notEqual(binding.sessionId, BOUND_SESSION_ID);
+    getConversation: async () => ({ metadata }),
+  };
+  const context = { store };
+  const first = await resolveAgentSdkSession(context, CONVERSATION_ID);
+  assert.equal(first.sessionResumed, false);
+  assert.equal(first.binding.sessionId, CONVERSATION_ID);
+  // Nothing is recorded until the SDK confirms the session opened, so a turn
+  // that dies before its first event cannot leave a resumable id behind.
+  assert.equal(metadata.sdkSessionId, undefined);
+  await first.markSessionStarted();
+  assert.equal(metadata.sdkSessionId, CONVERSATION_ID);
+
+  const second = await resolveAgentSdkSession(context, CONVERSATION_ID);
+  assert.equal(second.sessionResumed, true);
+  assert.deepEqual(second.binding, { resume: CONVERSATION_ID });
 });
 
-test('other lookup failures fall back to starting on the same id', async () => {
+test('a resumed turn does not rewrite the id it already resumed from', async () => {
+  let writes = 0;
+  const session = await resolveAgentSdkSession({
+    store: {
+      getConversation: async () => ({ metadata: { sdkSessionId: BOUND_SESSION_ID } }),
+      updateConversation: async () => {
+        writes += 1;
+      },
+    },
+  }, CONVERSATION_ID);
+  assert.equal(session.sessionResumed, true);
+  await session.markSessionStarted();
+  assert.equal(writes, 0);
+});
+
+// Reopening on the same id would land the replacement session back on the keys
+// whose transcript could not be read, so the discard nominates a fresh id.
+test('forgetSession retires the id and nominates a clean replacement', async () => {
+  const writes: Array<Record<string, unknown>> = [];
+  const session = await resolveAgentSdkSession({
+    store: {
+      getConversation: async () => ({ metadata: { sdkSessionId: BOUND_SESSION_ID } }),
+      updateConversation: async (input: { metadata: Record<string, unknown> }) => {
+        writes.push(input.metadata);
+      },
+    },
+  }, CONVERSATION_ID);
+  await session.forgetSession();
+
+  // Both fields must land together, or a reader between two writes could see a
+  // retired session with no replacement named.
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].sdkSessionId, '');
+  const replacement = writes[0].sdkSessionNextId;
+  assert.match(String(replacement), UUID_RE);
+  assert.notEqual(replacement, BOUND_SESSION_ID);
+  assert.notEqual(replacement, CONVERSATION_ID);
+});
+
+test('a nominated replacement opens fresh rather than resuming', async () => {
   const binding = await resolveClaudeSessionBinding({
     conversationId: CONVERSATION_ID,
-    storedSessionId: BOUND_SESSION_ID,
-    getSessionInfo: async () => {
-      throw new Error('store unavailable');
+    store: {
+      getConversation: async () => ({
+        metadata: { sdkSessionId: '', sdkSessionNextId: BOUND_SESSION_ID },
+      }),
     },
   });
   assert.deepEqual(binding, { sessionId: BOUND_SESSION_ID });
-});
-
-test('resolveAgentSdkSession persists the id so the next call can resume', async () => {
-  let stored = '';
-  const store: {
-    claudeSessionStore: () => { kind: string };
-    updateConversation: (input: { metadata: { sdkSessionId: string } }) => Promise<void>;
-    getConversation?: () => Promise<{ metadata: { sdkSessionId: string } }>;
-  } = {
-    claudeSessionStore: () => ({ kind: 'platform' }),
-    updateConversation: async ({ metadata }) => {
-      stored = metadata.sdkSessionId;
-    },
-  };
-  const context = { store };
-  const first = await resolveAgentSdkSession(context, CONVERSATION_ID, {
-    getSessionInfo: async () => undefined,
-  });
-  assert.equal(first.sessionResumed, false);
-  assert.equal(first.binding.sessionId, CONVERSATION_ID);
-  assert.equal(stored, CONVERSATION_ID);
-
-  store.getConversation = async () => ({ metadata: { sdkSessionId: stored } });
-  const second = await resolveAgentSdkSession(context, CONVERSATION_ID, {
-    getSessionInfo: async (sessionId) => ({ sessionId }),
-  });
-  assert.equal(second.sessionResumed, true);
-  assert.deepEqual(second.binding, { resume: CONVERSATION_ID });
 });
 
 test('persistConversationSdkSession swallows a missing conversation', async () => {
@@ -200,20 +220,17 @@ test('a new project does not add follow-up reread guidance', () => {
   }), '');
 });
 
-test('the agent prompt and query wire session resume instead of a full reread', async () => {
+// The prompt's resume guidance is asserted against the built prompt in
+// prompt.test.ts; what stays here is how the turn is wired. The binding and the
+// transcript mirror now travel to the driver as one `session` argument, which
+// is what keeps the resume mechanism out of the SDK-agnostic layers.
+test('the agent turn wires session resume instead of a full reread', async () => {
   const agent = await readFile('agents/_agent.ts', 'utf8');
-  const promptBody = agent.slice(
-    agent.indexOf('export function buildPrompt'),
-    agent.indexOf('export async function runCodingAgent'),
-  );
   const chat = await readFile('agents/pipelines/_chat.ts', 'utf8');
 
-  assert.match(promptBody, /buildExistingProjectGuidance/);
-  assert.doesNotMatch(promptBody, /inspect the existing code first/);
-  assert.doesNotMatch(promptBody, /ensure_project_scaffold/);
   assert.match(agent, /resolveAgentSdkSession/);
-  assert.match(agent, /sessionStore: sdkSession\.sessionStore/);
   assert.match(agent, /\.\.\.sdkSession\.binding/);
+  assert.match(agent, /store: sdkSession\.sessionStore/);
   assert.match(chat, /resetSession: shouldResetProject/);
   const autoFixCall = chat.slice(chat.indexOf('const autoFixResult'), chat.indexOf('if (autoFixResult.stopped'));
   assert.match(autoFixCall, /model: options\.model/);

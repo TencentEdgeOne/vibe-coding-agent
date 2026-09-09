@@ -1,7 +1,7 @@
 import {
   createProjectResumeStreamResponse,
   runProjectResumePipeline,
-} from './_pipelines';
+} from './_pipelines.ts';
 
 /** Progressive initial restore: history and workspace arrive on one SSE request. */
 export async function onRequestGet(context: any) {

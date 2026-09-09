@@ -1,16 +1,16 @@
-import { PREVIEW_BATCH_MAX_FILES } from '../_constants';
-import { getProjectState } from '../_memory';
-import { readFileFromSandbox, readFilesFromSandbox } from '../_project';
-import { debugLog } from '../utils/_debug';
-import { toAppRelPath } from '../utils/_paths';
+import { PREVIEW_BATCH_MAX_FILES } from '../_constants.ts';
+import { getProjectState } from '../_memory.ts';
+import { readFileFromSandbox, readFilesFromSandbox } from '../_project.ts';
+import { debugLog } from '../utils/_debug.ts';
+import { toAppRelPath } from '../utils/_paths.ts';
 import {
   getRequestDebugSnapshot,
   getRequestHeader,
   getRequestQueryParam,
   maskConversationId,
   resolveConversationId,
-} from '../utils/_request';
-import { utf8ByteLength } from './_helpers';
+} from '../utils/_request.ts';
+import { utf8ByteLength } from './_helpers.ts';
 
 export async function runFileReadPipeline(context: any): Promise<Response> {
   const contextConversationId = String(context.conversation_id || '');

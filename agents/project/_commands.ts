@@ -3,7 +3,7 @@ import {
   runCommandCapturingExit as runCommandCapturingExitCore,
 } from '../core/_commands.ts';
 import { createMakersWorkspacePort } from '../core/adapters/_makers.ts';
-import { parseEchoedExitCode, stripEchoedExit, withExitCodeEcho } from '../utils/_tool-phase';
+import { parseEchoedExitCode, stripEchoedExit, withExitCodeEcho } from '../utils/_tool-phase.ts';
 
 type SandboxCommandOptions = {
   cwd?: string;

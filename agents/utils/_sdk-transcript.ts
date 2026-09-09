@@ -1,5 +1,14 @@
 import type { SessionStore, SessionStoreEntry } from '@anthropic-ai/claude-agent-sdk';
-import type { GetSessionInfoFn } from '../_session';
+
+/**
+ * Injectable `getSessionInfo`. Loading a whole transcript is deliberate here —
+ * this is the export endpoint, not the per-turn agent path, which resolves its
+ * session without touching the transcript at all.
+ */
+export type GetSessionInfoFn = (
+  sessionId: string,
+  options: { dir?: string; sessionStore?: SessionStore },
+) => Promise<unknown>;
 
 export type LoadClaudeSessionEntriesOptions = {
   sessionStore: SessionStore;

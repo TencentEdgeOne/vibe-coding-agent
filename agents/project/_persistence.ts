@@ -1,8 +1,8 @@
-import { clearLegacyProjectSnapshot, getLegacyProjectSnapshot } from '../_memory';
+import { clearLegacyProjectSnapshot, getLegacyProjectSnapshot } from '../_memory.ts';
 import { installProjectDependencies } from '../core/_project-files.ts';
 import { createMakersWorkspacePort } from '../core/adapters/_makers.ts';
-import type { ProjectState } from '../_types';
-import { restoreProjectArchive } from './_archive';
+import type { ProjectState } from '../_types.ts';
+import { restoreProjectArchive } from './_archive.ts';
 
 export async function restorePersistedProject(
   context: any,

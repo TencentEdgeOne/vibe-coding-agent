@@ -45,16 +45,16 @@ test('the named language is what the directive asks for', () => {
   assert.match(buildReplyLanguageReminder('把按钮改成蓝色'), /Reply language for this turn: Chinese\./);
 });
 
-// The system prompt used to show a Chinese narration example and a Chinese
-// identity answer, which the model copied into English conversations.
-test('the system prompt states the language rule and carries no example to copy from', async () => {
+// The prompt used to show a Chinese narration example and a Chinese identity
+// answer, which the model copied into English conversations. The rule itself is
+// asserted against the built prompts in prompt.test.ts; what this guards is that
+// no literal Chinese creeps back into the prompt source.
+test('the prompt source carries no example to copy from', async () => {
   const source = await readFile('agents/_agent.ts', 'utf8');
   const promptBody = source.slice(
-    source.indexOf('export function buildPrompt'),
+    source.indexOf('export function buildSystemPrompt'),
     source.indexOf('export async function runCodingAgent'),
   );
-  assert.match(promptBody, /buildReplyLanguageDirective\(languageAnchorMessage\)/);
-  assert.match(promptBody, /buildReplyLanguageReminder\(languageAnchorMessage\)/);
   assert.doesNotMatch(promptBody, /[\u4e00-\u9fff]/);
 });
 

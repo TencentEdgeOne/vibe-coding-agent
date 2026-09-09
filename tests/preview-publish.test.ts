@@ -26,14 +26,11 @@ test('publish_preview reuses or restarts from the turn signal and returns a smal
   assert.doesNotMatch(tools, /get_preview_link/);
 });
 
+// The prompt side of this is asserted against the built prompt in
+// prompt.test.ts; here it is the tool registration and restart wiring.
 test('the agent no longer exposes get_preview_link', async () => {
   const agent = await readFile('agents/_agent.ts', 'utf8');
-  const promptBody = agent.slice(
-    agent.indexOf('export function buildPrompt'),
-    agent.indexOf('export async function runCodingAgent'),
-  );
 
-  assert.doesNotMatch(promptBody, /get_preview_link/);
   assert.doesNotMatch(agent, /mcp__\$\{mcpServerName\}__get_preview_link/);
   assert.match(agent, /isPreviewRestartConfigPath/);
   assert.match(agent, /isInstallCommand\(command\)/);
