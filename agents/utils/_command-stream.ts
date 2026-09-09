@@ -1,22 +1,8 @@
 /**
- * Normalize and throttle sandbox command output so a chatty process
- * (`npm install`, compilers) does not flood the SSE stream.
+ * Throttle sandbox command output so a chatty process (`npm install`,
+ * compilers) does not flood the SSE stream. The toolkit already hands us
+ * normalized string chunks.
  */
-
-export type CommandStreamChunk = {
-  stream: 'stdout' | 'stderr';
-  data: string;
-};
-
-export function normalizeCommandChunk(data: unknown): string {
-  if (typeof data === 'string') return data;
-  if (data && typeof data === 'object') {
-    const record = data as { line?: unknown; text?: unknown };
-    if (typeof record.line === 'string') return record.line;
-    if (typeof record.text === 'string') return record.text;
-  }
-  return data == null ? '' : String(data);
-}
 
 export function createCommandOutputBuffer(options: {
   emit: (accumulated: string) => void;

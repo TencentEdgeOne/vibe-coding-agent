@@ -18,7 +18,7 @@ import {
   SANDBOX_MCP_SERVER_NAME,
 } from './_constants';
 import { resolveConfiguredModel } from './_models';
-import { createMakersConfigPort, createMakersWorkspacePort } from './core/adapters/_makers.ts';
+import { createMakersConfigPort } from './core/adapters/_makers.ts';
 import { resolveModelAccess } from './core/_model-access.ts';
 import { classifyTool, extractCommandFromInput } from './core/_tool-kind.ts';
 import type { ToolKind } from './core/_events.ts';
@@ -339,6 +339,9 @@ export async function runCodingAgent(
   // @anthropic-ai/sdk injects ANTHROPIC_CUSTOM_HEADERS into each model request.
   const sdkEnv: Record<string, string> = accessResult.access.env ?? {};
   const executablePath = pickEnvValue(context, 'CLAUDE_CODE_EXECUTABLE_PATH');
+  // Declared out here so the finally block can unsubscribe: the tools context
+  // outlives this turn, and a leaked handler would emit into a stale stream.
+  let stopCommandOutput: (() => void) | undefined;
   try {
     if (abortSignal?.aborted) {
       return {
@@ -388,12 +391,19 @@ export async function runCodingAgent(
       }
       buffer.push(chunk);
     };
-    const workspace = createMakersWorkspacePort(context);
+    // The runtime builds context.tools before this template runs, so live
+    // command output has to be subscribed to on the existing context.
+    if (typeof context.tools?.setCommandOutputHandler === 'function') {
+      stopCommandOutput = context.tools.setCommandOutputHandler(
+        (chunk: { data?: string; toolUseId?: string }) => {
+          emitCommandOutput(chunk.toolUseId || latestCommandToolUseId, chunk.data || '');
+        },
+      );
+    }
     const sandboxTools = wrapSandboxToolsForVerification(
       edgeoneMcp.tools.filter((tool: { name: string }) =>
         !isBrowserSandboxToolName(tool.name) && !isGenericProjectWriteToolName(tool.name)),
       {
-        runCommand: (command, commandOptions) => workspace.commands.run(command, commandOptions),
         onCommand: (command, meta) => {
           if (meta?.toolUseId) {
             latestCommandToolUseId = meta.toolUseId;
@@ -404,9 +414,6 @@ export async function runCodingAgent(
           if (isInstallCommand(command)) {
             previewRestart.mustRestart = true;
           }
-        },
-        onCommandOutput: (chunk) => {
-          emitCommandOutput(latestCommandToolUseId, chunk.data);
         },
       },
     );
@@ -857,6 +864,7 @@ export async function runCodingAgent(
       ...(fatal ? { fatal: true } : {}),
     };
   } finally {
+    stopCommandOutput?.();
     // sdkQuery.close();
   }
 }
