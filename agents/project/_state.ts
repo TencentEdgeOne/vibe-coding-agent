@@ -1,4 +1,5 @@
 import type { ProjectState } from '../_types';
+import { createMakersWorkspacePort } from '../core/adapters/_makers.ts';
 import { safeSegment } from '../utils/_paths';
 import { runSandboxCommand } from './_commands';
 
@@ -17,14 +18,15 @@ export async function resetProjectWorkspace(
 ) {
   assertResettableProjectPath(state);
 
-  const sandbox = context.sandbox;
+  const workspace = createMakersWorkspacePort(context);
 
-  await sandbox.files.makeDir(state.sessionDir);
+  await workspace.files.makeDir(state.sessionDir);
 
-  const appDirExists = await sandbox.files.exists(state.appDir);
+  const appDirExists = await workspace.files.exists(state.appDir);
   if (appDirExists) {
-    if (typeof sandbox.files.remove === 'function') {
-      await sandbox.files.remove(state.appDir);
+    // `remove` is optional on the port; hosts without it fall back to a shell rm.
+    if (typeof workspace.files.remove === 'function') {
+      await workspace.files.remove(state.appDir);
     } else {
       const result = await runSandboxCommand(context, 'rm -rf app', {
         cwd: state.sessionDir,
@@ -36,7 +38,7 @@ export async function resetProjectWorkspace(
     }
   }
 
-  await sandbox.files.makeDir(state.appDir);
+  await workspace.files.makeDir(state.appDir);
   state.created = false;
   state.previewUrl = undefined;
   state.previewPublished = undefined;

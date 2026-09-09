@@ -18,7 +18,12 @@ import {
   startPreviewServer,
 } from '../_project';
 import type { FileTreeItem, PersistedActivity, PersistedActivityTurn, ProjectState } from '../_types';
+import { createProjectFiles } from '../core/_project-files.ts';
+import { createMakersWorkspacePort } from '../core/adapters/_makers.ts';
 import { createSSEResponse, sseEvent } from '../_shared';
+
+const projectFilesFor = (context: any, state: ProjectState) =>
+  createProjectFiles(createMakersWorkspacePort(context), state.appDir);
 import { getRequestQueryParam, resolveConversationId } from '../utils/_request';
 import { withTimeout } from './_helpers';
 import { loadResumeFileContents } from './_resume-files';
@@ -164,7 +169,7 @@ export async function runProjectResumeHistoryPipeline(context: any): Promise<Res
 }
 
 async function probeSandboxHasFiles(context: any, state: ProjectState) {
-  if (!(await context.sandbox.files.exists(state.appDir))) {
+  if (!(await projectFilesFor(context, state).projectExists())) {
     return false;
   }
   const tree = await getFileTree(context, state);
@@ -172,11 +177,12 @@ async function probeSandboxHasFiles(context: any, state: ProjectState) {
 }
 
 async function ensureProjectDependencies(context: any, state: ProjectState) {
-  const hasPackageJson = await context.sandbox.files.exists(`${state.appDir}/package.json`);
+  const files = projectFilesFor(context, state);
+  const hasPackageJson = await files.hasPackageJson();
   if (!hasPackageJson) {
     return false;
   }
-  const hasNodeModules = await context.sandbox.files.exists(`${state.appDir}/node_modules`);
+  const hasNodeModules = await files.hasNodeModules();
   if (hasNodeModules) {
     return true;
   }
@@ -197,9 +203,7 @@ async function remintWarmPreview(context: any, state: ProjectState): Promise<Res
   }
 
   try {
-    const accessToken = typeof context.sandbox?.envdAccessToken === 'string'
-      ? context.sandbox.envdAccessToken
-      : '';
+    const accessToken = createMakersWorkspacePort(context).accessToken ?? '';
 
     const warmLinks = await resolvePublicLinks(context);
     if (state.previewUrl && accessToken && warmLinks.previewUrl

@@ -1,4 +1,8 @@
 import { detectReplyLanguage } from '../../shared/reply-language.ts';
+import {
+  createMakersWorkspacePort,
+  tryCreateMakersWorkspacePort,
+} from '../core/adapters/_makers.ts';
 import type { ProjectState } from '../_types';
 import { debugLog } from '../utils/_debug';
 
@@ -32,10 +36,6 @@ export async function withTimeout<T>(promise: Promise<T>, ms: number, label: str
     if (timer) clearTimeout(timer);
   }
 }
-
-type SandboxWithTimeoutExtension = {
-  extendTimeout?: (seconds: number) => unknown;
-};
 
 // Used when the model returns nothing usable. Only the two languages the template
 // ships copy for are localized; anything else falls back to English, which still
@@ -119,13 +119,15 @@ export function isGenericCompletionReply(text: string) {
 }
 
 export async function extendExistingSandboxTimeout(context: any) {
-  const sandbox = context?.sandbox as SandboxWithTimeoutExtension | undefined;
-  if (!sandbox || typeof sandbox.extendTimeout !== 'function') {
+  // Best-effort: a context without a sandbox, or a host that cannot extend a
+  // lease, is a silent no-op here rather than a failure.
+  const workspace = tryCreateMakersWorkspacePort(context);
+  if (typeof workspace?.extendTimeout !== 'function') {
     return;
   }
 
   try {
-    await sandbox.extendTimeout(SANDBOX_EXTENSION_SECONDS);
+    await workspace.extendTimeout(SANDBOX_EXTENSION_SECONDS);
     debugLog(context, '[sandbox]', {
       stage: 'extend-timeout',
       seconds: SANDBOX_EXTENSION_SECONDS,
@@ -147,7 +149,7 @@ export async function persistProjectSnapshot(
   state: ProjectState,
 ): Promise<boolean> {
   try {
-    await context.sandbox.persist({ path: state.appDir });
+    await createMakersWorkspacePort(context).persist({ path: state.appDir });
     return true;
   } catch (error) {
     debugLog(context, '[snapshot]', {

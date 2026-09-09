@@ -3,6 +3,7 @@ import {
   DOWNLOAD_ARCHIVE_MAX_BYTES,
 } from '../_constants';
 import type { LegacyProjectSnapshot, ProjectState } from '../_types';
+import { createMakersWorkspacePort } from '../core/adapters/_makers.ts';
 import { safeSegment } from '../utils/_paths';
 import { runSandboxCommand } from './_commands';
 import { assertResettableProjectPath } from './_state';
@@ -54,9 +55,9 @@ export async function createProjectArchive(
   context: any,
   state: ProjectState,
 ): Promise<ProjectArchiveResult> {
-  const sandbox = context.sandbox;
+  const workspace = createMakersWorkspacePort(context);
 
-  const appDirExists = await sandbox.files.exists(state.appDir);
+  const appDirExists = await workspace.files.exists(state.appDir);
   if (!appDirExists) {
     return { ok: false, error: 'Project workspace not found. Generate a project first.' };
   }
@@ -191,9 +192,9 @@ export async function restoreProjectArchive(
   }
   assertResettableProjectPath(state);
 
-  const sandbox = context.sandbox;
-  await sandbox.files.makeDir(state.sessionDir);
-  await sandbox.files.makeDir(state.appDir);
+  const workspace = createMakersWorkspacePort(context);
+  await workspace.files.makeDir(state.sessionDir);
+  await workspace.files.makeDir(state.appDir);
 
   const format = snapshot.filename.endsWith('.tar.gz') || snapshot.contentType === 'application/gzip'
     ? 'tar.gz'
@@ -204,7 +205,7 @@ export async function restoreProjectArchive(
 
   // Write the base64 as a UTF-8 temp file, then decode to binary and extract into
   // appDir. zip entries were packed relatively from appDir, so extraction targets appDir.
-  await sandbox.files.write(b64Path, snapshot.base64);
+  await workspace.files.write(b64Path, snapshot.base64);
 
   const extractCmd = format === 'tar.gz'
     ? `tar -xzf ${shellQuote(archivePath)} -C ${shellQuote(state.appDir)}`
@@ -233,7 +234,7 @@ export async function restoreProjectArchive(
   // agent can build/preview immediately.
   const shouldInstall = options.installDependencies !== false;
   if (shouldInstall) {
-    const hasPackageJson = await sandbox.files.exists(`${state.appDir}/package.json`);
+    const hasPackageJson = await workspace.files.exists(`${state.appDir}/package.json`);
     if (hasPackageJson) {
       try {
         await runSandboxCommand(context, 'npm install --no-audit --no-fund', {

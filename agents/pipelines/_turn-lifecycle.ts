@@ -70,6 +70,17 @@ export function createTurnLifecycle(options: TurnLifecycleOptions) {
       return;
     }
 
+    if (event.type === 'tool_output') {
+      const existing = activities.find(
+        (item): item is Extract<PersistedActivity, { kind: 'tool' }> =>
+          item.kind === 'tool' && item.toolUseId === event.data.tool_use_id,
+      );
+      if (existing && event.data.outputSummary) {
+        existing.outputSummary = event.data.outputSummary;
+      }
+      return;
+    }
+
     if (event.type === 'tool_use') {
       const existing = activities.find(
         (item): item is Extract<PersistedActivity, { kind: 'tool' }> =>

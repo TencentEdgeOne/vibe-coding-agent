@@ -6,6 +6,8 @@ import {
   PREVIEW_MAX_BYTES,
 } from '../_constants';
 import type { FileTreeItem, ProjectState } from '../_types';
+import { createProjectFiles } from '../core/_project-files.ts';
+import { createMakersWorkspacePort } from '../core/adapters/_makers.ts';
 import {
   capBatchReadResults,
   truncateUtf8,
@@ -106,7 +108,8 @@ export async function readFileFromSandbox(
 
   let content: string;
   try {
-    const result = await context.sandbox.files.read(`${state.appDir}/${relPath}`);
+    const result = await createProjectFiles(createMakersWorkspacePort(context), state.appDir)
+      .read(relPath);
     if (typeof result === 'string') {
       content = result;
     } else if (result instanceof Uint8Array) {

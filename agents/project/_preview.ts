@@ -5,112 +5,60 @@ import {
 } from '../_constants';
 import type { ProjectState } from '../_types';
 import { debugLog } from '../utils/_debug';
+import {
+  normalizePublicUrl,
+  previewTargetsMatch as previewTargetsMatchCore,
+  resolvePreviewAllowedHost as resolvePreviewAllowedHostCore,
+  resolvePreviewUrl,
+  rewritePreviewAccessToken as rewritePreviewAccessTokenCore,
+} from '../core/_preview-url.ts';
+import { createProjectFiles } from '../core/_project-files.ts';
+import { createMakersWorkspacePort } from '../core/adapters/_makers.ts';
 import { runSandboxCommand } from './_commands';
+
+const projectFilesFor = (context: any, state: ProjectState) =>
+  createProjectFiles(createMakersWorkspacePort(context), state.appDir);
 
 const PREVIEW_READY_ATTEMPTS = 75;
 const PREVIEW_READY_TIMEOUT_S = 90;
 
 export async function resolvePublicLinks(context: any) {
-  const previewHost = context.sandbox.getHost(PREVIEW_PUBLIC_PORT);
-  const accessToken = context.sandbox.envdAccessToken;
-  const browserLiveUrl = normalizePublicUrl(context.sandbox.browser?.liveUrl);
-  const previewBaseUrl = publicUrlOrigin(browserLiveUrl) || normalizePublicUrl(previewHost);
+  const workspace = createMakersWorkspacePort(context);
+  const previewHost = await workspace.getHost?.(PREVIEW_PUBLIC_PORT);
+  const accessToken = workspace.accessToken;
+  const browserLiveUrl = workspace.browserLiveUrl;
   debugLog(context, '[preview-link]', {
     internalPort: PREVIEW_SERVER_PORT,
     publicPort: PREVIEW_PUBLIC_PORT,
     proxyPath: PREVIEW_PATH_PREFIX,
-    hasPreviewHost: Boolean(previewBaseUrl),
+    hasPreviewHost: Boolean(normalizePublicUrl(previewHost) || normalizePublicUrl(browserLiveUrl)),
     hasEnvdAccessToken: Boolean(accessToken),
-    hasBrowserLiveUrl: Boolean(browserLiveUrl),
+    hasBrowserLiveUrl: Boolean(normalizePublicUrl(browserLiveUrl)),
   });
 
-  const previewUrl = (previewBaseUrl && accessToken)
-    ? buildPublicPreviewUrl(previewBaseUrl, accessToken)
-    : undefined;
-
-  return { previewUrl };
+  return {
+    previewUrl: resolvePreviewUrl({
+      previewHost,
+      accessToken,
+      browserLiveUrl,
+      pathPrefix: PREVIEW_PATH_PREFIX,
+    }),
+  };
 }
 
-function publicUrlOrigin(value: string | undefined) {
-  if (!value) return undefined;
-  try {
-    return new URL(value).origin;
-  } catch {
-    return undefined;
-  }
-}
-
-function normalizePublicUrl(value: unknown) {
-  if (typeof value !== 'string') {
-    return undefined;
-  }
-
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return undefined;
-  }
-
-  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
-}
-
-export function previewTargetsMatch(a: string, b: string) {
-  try {
-    const left = new URL(a);
-    const right = new URL(b);
-    return left.protocol === right.protocol
-      && left.hostname === right.hostname
-      && left.port === right.port
-      && left.pathname === right.pathname;
-  } catch {
-    return false;
-  }
-}
-
-function buildPublicPreviewUrl(baseUrl: string, token: string) {
-  try {
-    const parsed = new URL(baseUrl);
-    parsed.pathname = PREVIEW_PATH_PREFIX;
-    parsed.search = '';
-    parsed.hash = '';
-    return appendAccessToken(parsed.toString(), token);
-  } catch {
-    const trimmedBase = baseUrl.replace(/\/+$/, '');
-    return appendAccessToken(`${trimmedBase}${PREVIEW_PATH_PREFIX}`, token);
-  }
-}
-
-function appendAccessToken(url: string, token: string) {
-  try {
-    const parsed = new URL(url);
-    if (!parsed.searchParams.has('access_token')) {
-      parsed.searchParams.set('access_token', token);
-    }
-    return parsed.toString();
-  } catch {
-    const separator = url.includes('?') ? '&' : '?';
-    return `${url}${separator}access_token=${encodeURIComponent(token)}`;
-  }
-}
+export const previewTargetsMatch = previewTargetsMatchCore;
 
 /** Rotate envdAccessToken on an already-published preview URL (same host/path). */
-export function rewritePreviewAccessToken(existingUrl: string, token: string) {
-  try {
-    const parsed = new URL(existingUrl);
-    parsed.searchParams.set('access_token', token);
-    return parsed.toString();
-  } catch {
-    return undefined;
-  }
-}
+export const rewritePreviewAccessToken = rewritePreviewAccessTokenCore;
 
-function resolvePreviewAllowedHost(context: any) {
+// Async because WorkspacePort.getHost may return a promise. Resolving it in a
+// sync path would hand a Promise to URL parsing, which degrades silently to an
+// empty allowed host and breaks Vite preview rather than failing loudly.
+async function resolvePreviewAllowedHost(context: any) {
   try {
-    const previewHost = context.sandbox.getHost(PREVIEW_PUBLIC_PORT);
-    const previewUrl = normalizePublicUrl(previewHost);
-    if (!previewUrl) {
-      return '';
-    }
-    return new URL(previewUrl).hostname;
+    return resolvePreviewAllowedHostCore(
+      await createMakersWorkspacePort(context).getHost?.(PREVIEW_PUBLIC_PORT),
+    );
   } catch {
     return '';
   }
@@ -120,15 +68,15 @@ function shellQuote(value: string) {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
-function buildViteAllowedHostEnvPrefix(context: any) {
-  const allowedHost = resolvePreviewAllowedHost(context);
+async function buildViteAllowedHostEnvPrefix(context: any) {
+  const allowedHost = await resolvePreviewAllowedHost(context);
   return allowedHost
     ? `env __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=${shellQuote(allowedHost)} `
     : '';
 }
 
-function buildFrontendPreviewEnvPrefix(context: any) {
-  const allowedHost = resolvePreviewAllowedHost(context);
+async function buildFrontendPreviewEnvPrefix(context: any) {
+  const allowedHost = await resolvePreviewAllowedHost(context);
   return [
     `EDGEONE_PREVIEW_BASE_PATH=${shellQuote(PREVIEW_PATH_PREFIX.replace(/\/$/, ''))}`,
     // Tells the injected preview script to post its URL back to the parent
@@ -140,20 +88,14 @@ function buildFrontendPreviewEnvPrefix(context: any) {
 }
 
 async function findViteConfigFilename(context: any, state: ProjectState) {
-  const candidates = [
+  return projectFilesFor(context, state).findFirst([
     'vite.config.ts',
     'vite.config.mts',
     'vite.config.cts',
     'vite.config.js',
     'vite.config.mjs',
     'vite.config.cjs',
-  ];
-  for (const filename of candidates) {
-    if (await context.sandbox.files.exists(`${state.appDir}/${filename}`)) {
-      return filename;
-    }
-  }
-  return '';
+  ]);
 }
 
 async function prepareVitePreviewConfig(context: any, state: ProjectState, deps: Record<string, string>) {
@@ -165,9 +107,9 @@ async function prepareVitePreviewConfig(context: any, state: ProjectState, deps:
 
   const userConfigFilename = await findViteConfigFilename(context, state);
   const userConfigSpecifier = userConfigFilename ? `../${userConfigFilename}` : '';
-  const previewConfigPath = `${state.appDir}/.vite/edgeone-preview.config.mjs`;
-  await context.sandbox.files.makeDir(`${state.appDir}/.vite`);
-  await context.sandbox.files.write(previewConfigPath, [
+  const files = projectFilesFor(context, state);
+  await files.makeDir('.vite');
+  await files.write('.vite/edgeone-preview.config.mjs', [
     "import { defineConfig, loadConfigFromFile, mergeConfig } from 'vite';",
     '',
     "const reactDeps = ['react', 'react-dom', 'react-dom/client', 'react/jsx-runtime', 'react/jsx-dev-runtime'];",
@@ -256,8 +198,9 @@ async function assertNextPreviewConfig(context: any, state: ProjectState) {
     'next.config.cjs',
     'next.config.mts',
   ];
+  const files = projectFilesFor(context, state);
   for (const filename of candidates) {
-    if (!(await context.sandbox.files.exists(`${state.appDir}/${filename}`))) {
+    if (!(await files.exists(filename))) {
       continue;
     }
     const result = await runSandboxCommand(
@@ -394,14 +337,14 @@ async function detectPreviewStartCommand(
   state: ProjectState,
 ): Promise<PreviewStartCommand> {
   const port = PREVIEW_SERVER_PORT;
-  const packageExists = await context.sandbox.files.exists(`${state.appDir}/package.json`);
+  const packageExists = await projectFilesFor(context, state).hasPackageJson();
   if (packageExists) {
     const metadata = await readPackageMetadata(context, state);
     const scripts = metadata.scripts || {};
     const deps = metadata.deps || {};
     const scriptText = Object.values(scripts).join(' ');
-    const frontendPreviewEnv = buildFrontendPreviewEnvPrefix(context);
-    const viteAllowedHostEnv = buildViteAllowedHostEnvPrefix(context);
+    const frontendPreviewEnv = await buildFrontendPreviewEnvPrefix(context);
+    const viteAllowedHostEnv = await buildViteAllowedHostEnvPrefix(context);
 
     if (deps.next || /\bnext\b/.test(scriptText)) {
       await assertNextPreviewConfig(context, state);

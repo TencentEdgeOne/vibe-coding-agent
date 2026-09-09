@@ -154,6 +154,15 @@ export type AgentProgressEvent =
       };
     }
   | {
+      type: 'tool_output';
+      data: {
+        tool_use_id: string;
+        stream?: 'stdout' | 'stderr';
+        chunk?: string;
+        outputSummary?: string;
+      };
+    }
+  | {
       type: 'text_segment';
       data: {
         uuid: string;

@@ -7,6 +7,8 @@ import {
   restorePersistedProject,
 } from '../_project';
 import type { ProjectState, StreamSend } from '../_types';
+import { createProjectFiles } from '../core/_project-files.ts';
+import { createMakersWorkspacePort } from '../core/adapters/_makers.ts';
 import { createTurnTimer, formatTimingLog, type TurnTimer } from '../utils/_timing';
 
 function emitTiming(
@@ -44,7 +46,7 @@ export async function prepareProjectWorkspace(
     const resetStartedAt = Date.now();
     await resetProjectWorkspace(context, state);
     await clearLegacyProjectSnapshot(context, conversationId);
-    await context.sandbox.persist({ path: state.appDir });
+    await createMakersWorkspacePort(context).persist({ path: state.appDir });
     emitTiming(send, timer, 'workspace_reset', resetStartedAt, 'scaffold');
     return state;
   }
@@ -53,7 +55,7 @@ export async function prepareProjectWorkspace(
     let hasProjectFiles = false;
     const probeStartedAt = Date.now();
     try {
-      if (await context.sandbox.files.exists(state.appDir)) {
+      if (await createProjectFiles(createMakersWorkspacePort(context), state.appDir).projectExists()) {
         const tree = await getFileTree(context, state);
         hasProjectFiles = tree.some((item) => item.type === 'file');
       }

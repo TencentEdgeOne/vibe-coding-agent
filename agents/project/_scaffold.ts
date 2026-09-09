@@ -1,4 +1,6 @@
 import type { BuildResult, BuildStatus, ProjectState, ScaffoldLog } from '../_types';
+import { createProjectFiles } from '../core/_project-files.ts';
+import { createMakersWorkspacePort } from '../core/adapters/_makers.ts';
 import { debugLog } from '../utils/_debug';
 import { detectFatalToolError } from '../utils/_text';
 import { runCommandCapturingExit, runSandboxCommand } from './_commands';
@@ -18,7 +20,7 @@ export async function repairNestedAppDirLayout(
   const nestedRel = state.appDir;
   const nestedAbs = `${state.appDir}/${nestedRel}`;
   try {
-    if (!(await context.sandbox.files.exists(nestedAbs))) {
+    if (!(await createMakersWorkspacePort(context).files.exists(nestedAbs))) {
       return false;
     }
   } catch {
@@ -74,10 +76,10 @@ export async function ensureProjectScaffold(
   state: ProjectState,
   onLog?: (log: ScaffoldLog) => void,
 ) {
-  const sandbox = context.sandbox;
+  const workspace = createMakersWorkspacePort(context);
 
-  await sandbox.files.makeDir(state.sessionDir);
-  await sandbox.files.makeDir(state.appDir);
+  await workspace.files.makeDir(state.sessionDir);
+  await workspace.files.makeDir(state.appDir);
 
   await repairNestedAppDirLayout(context, state, onLog);
 
@@ -96,7 +98,9 @@ export async function ensureProjectScaffold(
   if (existing.exitCode !== 0) {
     throw new Error(existing.stderr || existing.stdout || 'Workspace inspection failed.');
   }
-  debugLog(context, '[sandbox-info]', { available: Boolean(context.sandbox.getInfo()) });
+  debugLog(context, '[sandbox-info]', {
+    available: Boolean(createMakersWorkspacePort(context).getInfo?.()),
+  });
 
   // true when the workspace is empty and ready for the agent to write files.
   return !existing.stdout.trim();
@@ -104,7 +108,10 @@ export async function ensureProjectScaffold(
 
 export async function runVerification(context: any, state: ProjectState): Promise<BuildResult> {
   try {
-    const packageExists = await context.sandbox.files.exists(`${state.appDir}/package.json`);
+    const packageExists = await createProjectFiles(
+      createMakersWorkspacePort(context),
+      state.appDir,
+    ).hasPackageJson();
     if (packageExists) {
       const hasBuildScript = await runSandboxCommand(
         context,

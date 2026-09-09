@@ -1,5 +1,16 @@
-import { HISTORY_FETCH_LIMIT } from './_constants';
 import { createProjectState } from './_project';
+import { createMakersStorePort } from './core/adapters/_makers.ts';
+import {
+  ACTIVITY_ITEM_LIMIT,
+  ACTIVITY_TURN_LIMIT,
+  appendConversationTurn,
+  readHistory,
+  readMetadataField,
+  readModelPreference,
+  writeMetadataField,
+  writeMetadataFieldStrict,
+  writeModelPreference,
+} from './core/_conversation-state.ts';
 import type {
   ChatTask,
   ConversationMessage,
@@ -10,65 +21,32 @@ import type {
 import { sanitizeAssistantText } from './utils/_text';
 import { appendTrimmedActivityTurn, dedupeActivityTurns } from './utils/_activity';
 
+// Makers file routing hands every endpoint a `context`. These wrappers translate
+// it once and delegate to the port-based core, so the 11 existing call sites
+// keep their signatures while the logic itself is host-agnostic.
+const portFor = (context: any) => createMakersStorePort(context);
+
 export async function getHistory(
   context: any,
   conversationId: string,
   options: { excludeLatestUserMessage?: string } = {},
 ): Promise<ConversationMessage[]> {
-  // context.store only exposes conversation-scoped message APIs, not a generic KV store.
-  // Read this conversation's messages and filter them into user/assistant text pairs.
-  try {
-    const messages = await context.store.getMessages({
-      conversationId,
-      limit: HISTORY_FETCH_LIMIT,
-      order: 'asc',
-    });
-    const items = Array.isArray(messages) ? messages : (messages?.items || []);
-    const history = items
-      .filter((item: any) => item.role === 'user' || item.role === 'assistant')
-      .map((item: any) => ({
-        role: item.role as 'user' | 'assistant',
-        content: typeof item.content === 'string'
-          ? item.content
-          : JSON.stringify(item.content ?? ''),
-      }));
-
-    // /chat persists the submitted user message before the detached task starts.
-    // Remove that one record from the prompt history; the pipeline passes
-    // it separately as the current user turn.
-    const currentMessage = options.excludeLatestUserMessage;
-    if (currentMessage && history.at(-1)?.role === 'user' && history.at(-1)?.content === currentMessage) {
-      history.pop();
-    }
-    return history;
-  } catch (error: any) {
-    if (error?.code === 'MemoryNotFoundError') {
-      return [];
-    }
-    throw error;
-  }
+  return readHistory(portFor(context), conversationId, options);
 }
 
 export async function getChatTask(context: any, conversationId: string): Promise<ChatTask | null> {
-  try {
-    const conversation = await context.store.getConversation({ conversationId });
-    const task = conversation?.metadata?.chatTask;
-    return task && typeof task === 'object' && typeof task.id === 'string'
-      ? task as ChatTask
-      : null;
-  } catch (error: any) {
-    if (error?.code === 'MemoryNotFoundError') {
-      return null;
-    }
-    throw error;
-  }
+  const task = await readMetadataField(portFor(context), conversationId, 'chatTask', (value) =>
+    value && typeof value === 'object' && typeof (value as ChatTask).id === 'string'
+      ? value as ChatTask
+      : undefined,
+  );
+  return task ?? null;
 }
 
 export async function saveChatTask(context: any, conversationId: string, task: ChatTask) {
-  await context.store.updateConversation({
-    conversationId,
-    metadata: { chatTask: task },
-  });
+  // Deliberately not swallowing MemoryNotFoundError: /chat persists the user
+  // message first, so the conversation exists and a failure here is real.
+  await writeMetadataFieldStrict(portFor(context), conversationId, 'chatTask', task);
 }
 
 /**
@@ -81,16 +59,7 @@ export async function getModelPreference(
   context: any,
   conversationId: string,
 ): Promise<string> {
-  try {
-    const conversation = await context.store.getConversation({ conversationId });
-    const stored = conversation?.metadata?.modelPreference;
-    return typeof stored === 'string' ? stored.trim() : '';
-  } catch (error: any) {
-    if (error?.code !== 'MemoryNotFoundError') {
-      throw error;
-    }
-    return '';
-  }
+  return readModelPreference(portFor(context), conversationId);
 }
 
 export async function saveModelPreference(
@@ -98,18 +67,7 @@ export async function saveModelPreference(
   conversationId: string,
   model: string,
 ) {
-  try {
-    await context.store.updateConversation({
-      conversationId,
-      metadata: { modelPreference: model },
-    });
-  } catch (error: any) {
-    // Same first-turn race as saveProjectState: until appendMessage creates the
-    // conversation, updateConversation has nothing to merge into.
-    if (error?.code !== 'MemoryNotFoundError') {
-      throw error;
-    }
-  }
+  await writeModelPreference(portFor(context), conversationId, model);
 }
 
 export async function appendTurn(
@@ -118,31 +76,24 @@ export async function appendTurn(
   role: 'user' | 'assistant',
   content: string,
 ) {
-  // Sanitize assistant content before writing history so control sequences or raw JSON
-  // from new concatenation paths do not pollute the next prompt.
-  const safeContent = role === 'assistant' ? sanitizeAssistantText(content) : content;
-  await context.store.appendMessage({
+  // Sanitize assistant content before writing history so control sequences or raw
+  // JSON from new concatenation paths do not pollute the next prompt.
+  await appendConversationTurn(
+    portFor(context),
     conversationId,
     role,
-    content: safeContent,
-  });
+    content,
+    sanitizeAssistantText,
+  );
 }
 
 export async function getProjectState(context: any, conversationId: string): Promise<ProjectState> {
-  // Project state is conversation metadata, not a chat message. On first access,
+  // Project state is conversation metadata, not a chat message. On first access
   // the conversation may not exist yet, so fall back to the default state.
-  try {
-    const conversation = await context.store.getConversation({ conversationId });
-    const stored = conversation?.metadata?.projectState as ProjectState | undefined;
-    if (stored && typeof stored === 'object') {
-      return stored;
-    }
-  } catch (error: any) {
-    if (error?.code !== 'MemoryNotFoundError') {
-      throw error;
-    }
-  }
-  return createProjectState(conversationId);
+  const stored = await readMetadataField(portFor(context), conversationId, 'projectState', (value) =>
+    value && typeof value === 'object' ? value as ProjectState : undefined,
+  );
+  return stored ?? createProjectState(conversationId);
 }
 
 export async function saveProjectState(
@@ -151,19 +102,7 @@ export async function saveProjectState(
   state: ProjectState,
 ) {
   // updateConversation shallow-merges metadata; replace projectState as a whole.
-  try {
-    await context.store.updateConversation({
-      conversationId,
-      metadata: { projectState: state },
-    });
-  } catch (error: any) {
-    // If no messages have been written, the conversation does not exist yet and
-    // updateConversation throws MemoryNotFoundError. appendMessage will create it
-    // later in this turn, and the next saveProjectState call can write normally.
-    if (error?.code !== 'MemoryNotFoundError') {
-      throw error;
-    }
-  }
+  await writeMetadataField(portFor(context), conversationId, 'projectState', state);
 }
 
 // Read-only compatibility for snapshots written by template versions that stored
@@ -172,50 +111,30 @@ export async function getLegacyProjectSnapshot(
   context: any,
   conversationId: string,
 ): Promise<LegacyProjectSnapshot | null> {
-  try {
-    const conversation = await context.store.getConversation({ conversationId });
-    const stored = conversation?.metadata?.projectSnapshot as LegacyProjectSnapshot | undefined;
-    if (stored && typeof stored === 'object' && typeof stored.base64 === 'string' && stored.base64) {
-      return stored;
-    }
-  } catch (error: any) {
-    if (error?.code !== 'MemoryNotFoundError') {
-      throw error;
-    }
-  }
-  return null;
+  const stored = await readMetadataField(portFor(context), conversationId, 'projectSnapshot', (value) => {
+    const snapshot = value as LegacyProjectSnapshot | undefined;
+    return snapshot
+      && typeof snapshot === 'object'
+      && typeof snapshot.base64 === 'string'
+      && snapshot.base64
+      ? snapshot
+      : undefined;
+  });
+  return stored ?? null;
 }
 
 export async function clearLegacyProjectSnapshot(context: any, conversationId: string) {
-  try {
-    await context.store.updateConversation({
-      conversationId,
-      metadata: { projectSnapshot: null },
-    });
-  } catch (error: any) {
-    if (error?.code !== 'MemoryNotFoundError') {
-      throw error;
-    }
-  }
+  await writeMetadataField(portFor(context), conversationId, 'projectSnapshot', null);
 }
-
-const ACTIVITY_TURN_LIMIT = 25;
-const ACTIVITY_ITEM_LIMIT = 50;
 
 export async function getActivityHistory(
   context: any,
   conversationId: string,
 ): Promise<PersistedActivityTurn[]> {
-  try {
-    const conversation = await context.store.getConversation({ conversationId });
-    const stored = conversation?.metadata?.activityHistory;
-    return Array.isArray(stored)
-      ? dedupeActivityTurns(stored.slice(-ACTIVITY_TURN_LIMIT))
-      : [];
-  } catch (error: any) {
-    if (error?.code !== 'MemoryNotFoundError') throw error;
-    return [];
-  }
+  const stored = await readMetadataField(portFor(context), conversationId, 'activityHistory', (value) =>
+    Array.isArray(value) ? value as PersistedActivityTurn[] : undefined,
+  );
+  return stored ? dedupeActivityTurns(stored.slice(-ACTIVITY_TURN_LIMIT)) : [];
 }
 
 export async function saveActivityTurn(
@@ -230,12 +149,5 @@ export async function saveActivityTurn(
     ACTIVITY_TURN_LIMIT,
     ACTIVITY_ITEM_LIMIT,
   );
-  try {
-    await context.store.updateConversation({
-      conversationId,
-      metadata: { activityHistory: next },
-    });
-  } catch (error: any) {
-    if (error?.code !== 'MemoryNotFoundError') throw error;
-  }
+  await writeMetadataField(portFor(context), conversationId, 'activityHistory', next);
 }

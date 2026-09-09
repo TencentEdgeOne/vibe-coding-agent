@@ -2,6 +2,11 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
+import {
+  previewTargetsMatch,
+  resolvePreviewUrl,
+} from '../agents/core/_preview-url.ts';
+
 test('preview address bar shows the current path, not the sandbox host or preview prefix', async () => {
   const screen = await readFile('app/features/workspace/workspace-screen.tsx', 'utf8');
 
@@ -55,12 +60,34 @@ test('expired preview credentials never fall back to the stale iframe URL', asyn
 });
 
 test('preview links use the browser live sandbox host when the SDK returns mismatched hosts', async () => {
-  const preview = await readFile('agents/project/_preview.ts', 'utf8');
+  // The URL logic moved to agents/core/_preview-url.ts, so assert the behavior
+  // itself rather than the shape of the source that implements it.
+  const browserWins = resolvePreviewUrl({
+    previewHost: 'raw-host.example.com',
+    browserLiveUrl: 'https://live-host.example.com/session/abc',
+    accessToken: 'token-1',
+  });
+  assert.equal(new URL(browserWins!).hostname, 'live-host.example.com');
 
-  assert.match(preview, /publicUrlOrigin\(browserLiveUrl\)/);
-  assert.match(preview, /\|\| normalizePublicUrl\(previewHost\)/);
-  assert.match(preview, /function previewTargetsMatch/);
-  assert.match(preview, /left\.hostname === right\.hostname/);
+  // Without a browser live URL the raw port host is used.
+  const rawHost = resolvePreviewUrl({
+    previewHost: 'raw-host.example.com',
+    accessToken: 'token-1',
+  });
+  assert.equal(new URL(rawHost!).hostname, 'raw-host.example.com');
+
+  // Host, port, and path identify a preview target; the rotating token does not.
+  assert.equal(
+    previewTargetsMatch(
+      'https://host.example.com/preview/?access_token=old',
+      'https://host.example.com/preview/?access_token=new',
+    ),
+    true,
+  );
+  assert.equal(
+    previewTargetsMatch('https://host-a.example.com/preview/', 'https://host-b.example.com/preview/'),
+    false,
+  );
 });
 
 test('resume only rotates a token when the old and current preview hosts match', async () => {

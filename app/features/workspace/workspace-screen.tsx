@@ -1134,9 +1134,20 @@ export function WorkspaceScreen() {
       setMessages((current) => current.map((item) => {
         if (item.id !== assistantMessageId) return item;
         const activities = [...(item.activities ?? [])];
-        const index = activities.findIndex(
+        let index = activities.findIndex(
           (activity) => activity.kind === 'tool' && activity.toolUseId === toolUseId,
         );
+        // Streamed command output can arrive before we know the tool_use id.
+        // Attach it to the latest running command rather than opening a ghost row.
+        if (index < 0 && patch.outputSummary && !patch.name) {
+          for (let i = activities.length - 1; i >= 0; i -= 1) {
+            const activity = activities[i];
+            if (activity.kind === 'tool' && activity.status === 'running') {
+              index = i;
+              break;
+            }
+          }
+        }
         if (index >= 0) {
           activities[index] = { ...activities[index], ...patch } as AssistantActivity;
         } else {
@@ -1327,6 +1338,14 @@ export function WorkspaceScreen() {
           command: event.data.command,
           phaseHint: event.data.phaseHint,
           startedAt: event.data.startedAt,
+        });
+        return;
+      }
+      if (event.type === 'tool_output' && event.data) {
+        sawProjectActivity = true;
+        upsertToolActivity(event.data.tool_use_id || '', {
+          outputSummary: event.data.outputSummary || event.data.chunk,
+          status: 'running',
         });
         return;
       }

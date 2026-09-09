@@ -70,8 +70,10 @@ test('workspace persistence uses the sandbox SDK and metadata snapshots are read
   const persistence = await readFile('agents/project/_persistence.ts', 'utf8');
   const memory = await readFile('agents/_memory.ts', 'utf8');
 
-  assert.match(helpers, /context\.sandbox\.persist\(\{ path: state\.appDir \}\)/);
-  assert.match(persistence, /context\.sandbox\.restore\(\{ path: state\.appDir \}\)/);
+  // Persistence still goes through the sandbox snapshot API, now reached via the
+  // workspace port rather than a raw context reference.
+  assert.match(helpers, /\.persist\(\{ path: state\.appDir \}\)/);
+  assert.match(persistence, /\.restore\(\{ path: state\.appDir \}\)/);
   assert.match(persistence, /getLegacyProjectSnapshot/);
   assert.match(persistence, /clearLegacyProjectSnapshot/);
   assert.doesNotMatch(memory, /saveProjectSnapshot/);
@@ -152,4 +154,3 @@ test('publish button sits in the workspace topbar and disables while the agent i
   assert.match(i18n, /publishStagePackaging/);
   assert.doesNotMatch(i18n, /签名参数/);
 });
-

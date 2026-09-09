@@ -1,4 +1,6 @@
 import type { SessionStore } from '@anthropic-ai/claude-agent-sdk';
+import { writeMetadataField } from './core/_conversation-state.ts';
+import { tryCreateMakersStorePort } from './core/adapters/_makers.ts';
 import type { FileTreeItem } from './_types';
 
 export type ClaudeSessionBinding = {
@@ -214,7 +216,7 @@ export async function readBoundSdkSessionId(
   }
   return resolveBoundSessionId({
     conversationId: trimmed,
-    store: context?.store,
+    store: tryCreateMakersStorePort(context),
   }, trimmed);
 }
 
@@ -224,19 +226,11 @@ export async function persistConversationSdkSession(
   sessionId: string,
 ) {
   const trimmed = sessionId.trim();
-  if (!trimmed || !context?.store?.updateConversation) {
+  const store = tryCreateMakersStorePort(context);
+  if (!trimmed || !store) {
     return;
   }
-  try {
-    await context.store.updateConversation({
-      conversationId,
-      metadata: { sdkSessionId: trimmed },
-    });
-  } catch (error: any) {
-    if (error?.code !== 'MemoryNotFoundError') {
-      throw error;
-    }
-  }
+  await writeMetadataField(store, conversationId, 'sdkSessionId', trimmed);
 }
 
 export async function resolveAgentSdkSession(
@@ -248,10 +242,8 @@ export async function resolveAgentSdkSession(
   sessionStore: SessionStore | undefined;
   sessionResumed: boolean;
 }> {
-  const store = context?.store;
-  const sessionStore = typeof store?.claudeSessionStore === 'function'
-    ? store.claudeSessionStore() as SessionStore
-    : undefined;
+  const store = tryCreateMakersStorePort(context);
+  const sessionStore = store?.claudeSessionStore?.() as SessionStore | undefined;
 
   const binding = await resolveClaudeSessionBinding({
     conversationId,

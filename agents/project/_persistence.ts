@@ -1,7 +1,8 @@
 import { clearLegacyProjectSnapshot, getLegacyProjectSnapshot } from '../_memory';
+import { installProjectDependencies } from '../core/_project-files.ts';
+import { createMakersWorkspacePort } from '../core/adapters/_makers.ts';
 import type { ProjectState } from '../_types';
 import { restoreProjectArchive } from './_archive';
-import { runSandboxCommand } from './_commands';
 
 export async function restorePersistedProject(
   context: any,
@@ -18,7 +19,8 @@ export async function restorePersistedProject(
 }> {
   try {
     const restoreStartedAt = Date.now();
-    const restored = await context.sandbox.restore({ path: state.appDir });
+    const restored = await createMakersWorkspacePort(context)
+      .restore({ path: state.appDir }) as { restored?: boolean } | undefined;
     const restoreMs = Date.now() - restoreStartedAt;
     if (restored?.restored) {
       if (options.installDependencies === false) {
@@ -45,7 +47,7 @@ export async function restorePersistedProject(
   if (!restoredLegacy.ok) return { restored: false, error: restoredLegacy.error, restoreMs };
 
   try {
-    await context.sandbox.persist({ path: state.appDir });
+    await createMakersWorkspacePort(context).persist({ path: state.appDir });
     await clearLegacyProjectSnapshot(context, conversationId);
   } catch {
     // Keep the legacy metadata until migration has durably completed.
@@ -54,11 +56,5 @@ export async function restorePersistedProject(
 }
 
 async function installDependencies(context: any, state: ProjectState) {
-  if (!(await context.sandbox.files.exists(`${state.appDir}/package.json`))) return false;
-  if (await context.sandbox.files.exists(`${state.appDir}/node_modules`)) return false;
-  await runSandboxCommand(context, 'npm install --no-audit --no-fund', {
-    cwd: state.appDir,
-    timeout: 300,
-  });
-  return true;
+  return installProjectDependencies(createMakersWorkspacePort(context), state.appDir);
 }

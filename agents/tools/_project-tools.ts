@@ -7,6 +7,8 @@ import {
   startPreviewServer,
 } from '../_project';
 import type { ClaudeMcpTool, PreviewRestartSignal, ProjectState } from '../_types';
+import { createProjectFiles } from '../core/_project-files.ts';
+import { createMakersWorkspacePort } from '../core/adapters/_makers.ts';
 import { getBlockedProjectWriteReason, toAppRelPath } from '../utils/_paths';
 import { stringifyToolResult } from '../utils/_text';
 import { shouldReusePreviewServer } from '../utils/_tool-phase';
@@ -46,11 +48,8 @@ export function buildWriteProjectFileTool(
           throw new Error(`Refusing to write ${relPath}: ${blockedReason}`);
         }
 
-        const parent = relPath.split('/').slice(0, -1).join('/');
-        if (parent) {
-          await context.sandbox.files.makeDir(`${state.appDir}/${parent}`);
-        }
-        await context.sandbox.files.write(`${state.appDir}/${relPath}`, file.content);
+        await createProjectFiles(createMakersWorkspacePort(context), state.appDir)
+          .writeFile(relPath, file.content);
         state.created = true;
         await onResult?.({ written: relPath, content: file.content });
         return {
@@ -131,7 +130,8 @@ async function assertPreviewableProject(context: any, state: ProjectState) {
     throw new Error('There is no previewable project yet. Please describe the page or feature you want to build first.');
   }
 
-  const appDirExists = await context.sandbox.files.exists(state.appDir);
+  const appDirExists = await createProjectFiles(createMakersWorkspacePort(context), state.appDir)
+    .projectExists();
   if (!appDirExists) {
     throw new Error(`Project workspace does not exist: ${state.appDir}`);
   }

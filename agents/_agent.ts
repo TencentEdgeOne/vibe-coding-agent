@@ -9,7 +9,6 @@ import {
   buildReplyLanguageReminder,
 } from '../shared/reply-language.ts';
 import {
-  DEFAULT_PATH,
   GATEWAY_CONVERSATION_ID_HEADER_NAME,
   GATEWAY_QUOTA_BYPASS_HEADER,
   GATEWAY_QUOTA_PROMPT_HEADER,
@@ -19,13 +18,18 @@ import {
   SANDBOX_MCP_SERVER_NAME,
 } from './_constants';
 import { resolveConfiguredModel } from './_models';
+import { createMakersConfigPort, createMakersWorkspacePort } from './core/adapters/_makers.ts';
+import { resolveModelAccess } from './core/_model-access.ts';
+import { classifyTool, extractCommandFromInput } from './core/_tool-kind.ts';
+import type { ToolKind } from './core/_events.ts';
 import { getFileTree } from './_project';
 import {
   buildExistingProjectGuidance,
   formatExistingFilePaths,
   resolveAgentSdkSession,
 } from './_session';
-import { wrapSandboxToolsForVerification } from './tools/_commands-wrap';
+import { extractToolUseId, wrapSandboxToolsForVerification } from './tools/_commands-wrap';
+import { createCommandOutputBuffer } from './utils/_command-stream';
 import {
   buildPublishPreviewTool,
   buildWriteProjectFileTool,
@@ -60,32 +64,6 @@ import {
 function pickEnvValue(context: any, key: string) {
   const value = context?.env?.[key];
   return typeof value === 'string' ? value.trim() : '';
-}
-
-function sanitizeHeaderValue(value: string) {
-  return value.replace(/[\r\n]+/g, ' ').trim();
-}
-
-function buildAnthropicCustomHeaders(customHeaders: string, conversationId: string) {
-  const safeConversationId = sanitizeHeaderValue(conversationId);
-  return [
-    customHeaders,
-    GATEWAY_QUOTA_BYPASS_HEADER,
-    GATEWAY_QUOTA_PROMPT_HEADER,
-    safeConversationId
-      ? `${GATEWAY_CONVERSATION_ID_HEADER_NAME}: ${safeConversationId}`
-      : '',
-  ].filter(Boolean).join('\n');
-}
-
-function extractSandboxCommand(input: unknown) {
-  const record = input && typeof input === 'object' ? input as Record<string, unknown> : {};
-  const command = typeof record.command === 'string'
-    ? record.command
-    : typeof record.cmd === 'string'
-      ? record.cmd
-      : '';
-  return command.trim();
 }
 
 function isBrowserSandboxToolName(name: string) {
@@ -195,30 +173,30 @@ function summarizeSdkMessage(event: SDKMessage): Record<string, unknown> {
 
 type ToolProgressPhase = 'code' | 'install' | 'preview' | 'link';
 
+// Progress phases are this UI's vocabulary, so they are derived here from the
+// core's ToolKind rather than classified a second time. Keeping one classifier
+// means a new tool cannot be understood differently in two places.
+const PHASE_BY_TOOL_KIND: Partial<Record<ToolKind, ToolProgressPhase>> = {
+  'file.write': 'code',
+  'file.remove': 'code',
+  'dir.create': 'code',
+  'dependency.install': 'install',
+  'preview.publish': 'preview',
+};
+
 function inferToolProgress(name: string, input: unknown): {
   phaseHint?: ToolProgressPhase;
   fileCount?: number;
 } {
-  const toolName = shortenToolName(name);
-  if (toolName === 'publish_preview' || toolName === 'get_preview_link') {
-    return { phaseHint: 'preview' };
-  }
-  if (toolName === 'files_write' || toolName === 'write_files' || toolName === 'files_make_dir' || toolName === 'files_remove') {
-    return { phaseHint: 'code' };
-  }
-  if (toolName === 'write_project_file') {
-    return { phaseHint: 'code', fileCount: 1 };
-  }
-  if (toolName === 'commands') {
-    const cmd = extractSandboxCommand(input);
-    if (isInstallCommand(cmd)) {
-      return { phaseHint: 'install' };
-    }
-    if (isPreviewCommand(cmd)) {
-      return { phaseHint: 'preview' };
-    }
-  }
-  return {};
+  const kind = classifyTool(name, input, { isInstallCommand, isPreviewCommand });
+  const phaseHint = PHASE_BY_TOOL_KIND[kind];
+  // write_project_file writes exactly one file per call, which the UI counts.
+  const fileCount = shortenToolName(name) === 'write_project_file' ? 1 : undefined;
+
+  return {
+    ...(phaseHint ? { phaseHint } : {}),
+    ...(fileCount ? { fileCount } : {}),
+  };
 }
 
 // Prompt-level guardrails: understand the request, generate or modify the project,
@@ -334,62 +312,33 @@ export async function runCodingAgent(
     onTiming?: (stage: string, startedAt: number, fields?: Record<string, string | number | boolean | undefined>) => void;
   } = {},
 ): Promise<CodingAgentResult> {
-  // Prefer AI Gateway for model access, with backward-compatible Anthropic / DeepSeek config.
-  const apiKey = pickEnvValue(context, 'AI_GATEWAY_API_KEY')
-    || pickEnvValue(context, 'ANTHROPIC_API_KEY')
-    || pickEnvValue(context, 'DEEPSEEK_API_KEY');
-  const authToken = pickEnvValue(context, 'ANTHROPIC_AUTH_TOKEN')
-    || pickEnvValue(context, 'DEEPSEEK_API_KEY');
-  // A model picked in the composer outranks the deployment default. The choice
-  // was checked against this deployment's catalogue before it got here, so an
-  // unrecognized ID arrives as '' and the configured model still runs.
-  const model = (runOptions.model || '').trim() || resolveConfiguredModel(context);
-  const baseURL = pickEnvValue(context, 'AI_GATEWAY_BASE_URL')
-    || pickEnvValue(context, 'ANTHROPIC_BASE_URL')
-    || pickEnvValue(context, 'DEEPSEEK_BASE_URL')
-    || '';
-  const customHeaders = pickEnvValue(context, 'ANTHROPIC_CUSTOM_HEADERS');
+  // Credential, base URL, and model resolution now lives in the core, reachable
+  // through a ConfigPort. The messages below stay here: they are host-facing
+  // copy, and the core deliberately returns reason codes instead of prose.
+  const accessResult = resolveModelAccess(createMakersConfigPort(context), {
+    conversationId,
+    requestedModel: runOptions.model,
+    defaultModel: resolveConfiguredModel(context),
+    extraHeaders: [GATEWAY_QUOTA_BYPASS_HEADER, GATEWAY_QUOTA_PROMPT_HEADER],
+    conversationIdHeaderName: GATEWAY_CONVERSATION_ID_HEADER_NAME,
+  });
+
+  if (!accessResult.ok) {
+    return {
+      success: false,
+      output: null,
+      error: accessResult.reason === 'missing_credentials'
+        ? 'Missing AI_GATEWAY_API_KEY / ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN / DEEPSEEK_API_KEY. The agent cannot call the model.'
+        : 'Missing AI_GATEWAY_BASE_URL / ANTHROPIC_BASE_URL / DEEPSEEK_BASE_URL. The agent cannot call the model.',
+      projectTouched: false,
+      wasCreated: false,
+    };
+  }
+
+  const { model } = accessResult.access;
+  // @anthropic-ai/sdk injects ANTHROPIC_CUSTOM_HEADERS into each model request.
+  const sdkEnv: Record<string, string> = accessResult.access.env ?? {};
   const executablePath = pickEnvValue(context, 'CLAUDE_CODE_EXECUTABLE_PATH');
-
-  if (!apiKey && !authToken) {
-    return {
-      success: false,
-      output: null,
-      error: 'Missing AI_GATEWAY_API_KEY / ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN / DEEPSEEK_API_KEY. The agent cannot call the model.',
-      projectTouched: false,
-      wasCreated: false,
-    };
-  }
-
-  if (!baseURL) {
-    return {
-      success: false,
-      output: null,
-      error: 'Missing AI_GATEWAY_BASE_URL / ANTHROPIC_BASE_URL / DEEPSEEK_BASE_URL. The agent cannot call the model.',
-      projectTouched: false,
-      wasCreated: false,
-    };
-  }
-
-  const sdkEnv: Record<string, string> = {
-    ANTHROPIC_BASE_URL: baseURL,
-    ANTHROPIC_MODEL: model,
-    // @anthropic-ai/sdk injects ANTHROPIC_CUSTOM_HEADERS into each model request.
-    ANTHROPIC_CUSTOM_HEADERS: buildAnthropicCustomHeaders(customHeaders, conversationId),
-    PATH: pickEnvValue(context, 'PATH') || DEFAULT_PATH,
-    HOME: pickEnvValue(context, 'HOME') || '/tmp',
-    CLAUDE_CONFIG_DIR: pickEnvValue(context, 'CLAUDE_CONFIG_DIR') || '/tmp/.claude',
-  };
-
-  if (apiKey) {
-    sdkEnv.ANTHROPIC_API_KEY = apiKey;
-  }
-  if (authToken) {
-    sdkEnv.ANTHROPIC_AUTH_TOKEN = authToken;
-  }
-  if (!sdkEnv.ANTHROPIC_API_KEY && authToken) {
-    sdkEnv.ANTHROPIC_API_KEY = authToken;
-  }
   try {
     if (abortSignal?.aborted) {
       return {
@@ -408,14 +357,56 @@ export async function runCodingAgent(
     const setupStartedAt = Date.now();
     const edgeoneMcp = context.tools.toClaudeMcpServer(mcpServerName, { alwaysLoad: true });
     const previewRestart: PreviewRestartSignal = { mustRestart: false };
+    const commandOutputById = new Map<string, ReturnType<typeof createCommandOutputBuffer>>();
+    let latestCommandToolUseId = '';
+    const resolveCommandToolUseId = (preferred = '') => {
+      if (preferred) return preferred;
+      if (latestCommandToolUseId) return latestCommandToolUseId;
+      for (const [id, ctx] of [...toolContextById.entries()].reverse()) {
+        if (shortenToolName(ctx.name) === 'commands') return id;
+      }
+      return '';
+    };
+    const emitCommandOutput = (toolUseId: string, chunk: string) => {
+      if (!chunk) return;
+      const id = resolveCommandToolUseId(toolUseId);
+      const bufferKey = id || '__latest_command__';
+      let buffer = commandOutputById.get(bufferKey);
+      if (!buffer) {
+        buffer = createCommandOutputBuffer({
+          emit: (accumulated) => {
+            onProgress?.({
+              type: 'tool_output',
+              data: {
+                tool_use_id: id,
+                outputSummary: summarizeToolOutput(accumulated, state.appDir),
+              },
+            });
+          },
+        });
+        commandOutputById.set(bufferKey, buffer);
+      }
+      buffer.push(chunk);
+    };
+    const workspace = createMakersWorkspacePort(context);
     const sandboxTools = wrapSandboxToolsForVerification(
       edgeoneMcp.tools.filter((tool: { name: string }) =>
         !isBrowserSandboxToolName(tool.name) && !isGenericProjectWriteToolName(tool.name)),
       {
-        onCommand: (command) => {
+        runCommand: (command, commandOptions) => workspace.commands.run(command, commandOptions),
+        onCommand: (command, meta) => {
+          if (meta?.toolUseId) {
+            latestCommandToolUseId = meta.toolUseId;
+          } else {
+            const resolved = resolveCommandToolUseId();
+            if (resolved) latestCommandToolUseId = resolved;
+          }
           if (isInstallCommand(command)) {
             previewRestart.mustRestart = true;
           }
+        },
+        onCommandOutput: (chunk) => {
+          emitCommandOutput(latestCommandToolUseId, chunk.data);
         },
       },
     );
@@ -585,7 +576,7 @@ export async function runCodingAgent(
       const toolName = typeof toolUse.name === 'string' ? toolUse.name : '<unknown>';
       const toolUseId = typeof toolUse.id === 'string' ? toolUse.id : '';
       const shortToolName = shortenToolName(toolName);
-      const command = shortToolName === 'commands' ? extractSandboxCommand(toolUse.input) : '';
+      const command = shortToolName === 'commands' ? extractCommandFromInput(toolUse.input) : '';
       const progress = typeof toolUse.name === 'string'
         ? inferToolProgress(toolName, toolUse.input)
         : {};
@@ -616,6 +607,9 @@ export async function runCodingAgent(
           name: toolUse.name,
           ...(command ? { command } : {}),
         });
+        if (shortToolName === 'commands') {
+          latestCommandToolUseId = toolUseId;
+        }
       }
       const startedAt = toolUseId
         ? toolStartedAtById.get(toolUseId) || Date.now()
@@ -645,7 +639,7 @@ export async function runCodingAgent(
         sdkAbortController.abort();
         break;
       }
-      debugLog(context, '[agent-event]', summarizeSdkMessage(event));
+      // debugLog(context, '[agent-event]', summarizeSdkMessage(event));
       // Forward structured tool progress and high-level model narration. Tool
       // input JSON and non-text stream deltas stay out of the UI.
       if (event.type === 'stream_event') {
@@ -731,6 +725,8 @@ export async function runCodingAgent(
                 : (typeof b.content === 'string' ? b.content : '');
               const toolContext = toolContextById.get(b.tool_use_id);
               const toolName = toolContext?.name || '<unknown>';
+              const toolUseId = typeof b.tool_use_id === 'string' ? b.tool_use_id : '';
+              commandOutputById.get(toolUseId)?.flush();
               const echoedExit = parseEchoedExitCode(text);
               const commandFailed = typeof echoedExit === 'number' && echoedExit !== 0;
               const toolFailed = b.is_error === true || commandFailed;

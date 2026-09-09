@@ -3,7 +3,8 @@
 export const PREVIEW_SERVER_PORT = 3000;
 export const PREVIEW_PUBLIC_PORT = 9000;
 export const PREVIEW_PATH_PREFIX = '/preview/';
-export const HISTORY_FETCH_LIMIT = 50;
+// Single source of truth lives in the core, which is what actually reads it.
+export { HISTORY_FETCH_LIMIT } from './core/_conversation-state.ts';
 export const AUTO_FIX_MAX_ATTEMPTS = 1;
 export const BUILD_ERROR_PROMPT_LIMIT = 12000;
 export const BUILD_RELATED_PATH_LIMIT = 12;

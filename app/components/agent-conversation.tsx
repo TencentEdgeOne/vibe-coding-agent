@@ -84,7 +84,16 @@ function ToolActivityRow({ activity, copy, previouslyReadPaths }: {
   previouslyReadPaths: ReadonlySet<string>;
 }) {
   const [open, setOpen] = useState(false);
+  const autoOpenedRef = useRef(false);
   const presentation = presentToolActivity(activity, previouslyReadPaths);
+
+  useEffect(() => {
+    if (autoOpenedRef.current) return;
+    if (activity.status === 'running' && activity.outputSummary) {
+      autoOpenedRef.current = true;
+      setOpen(true);
+    }
+  }, [activity.status, activity.outputSummary]);
   const label = activity.status === 'running'
     ? copy.running
     : activity.status === 'completed'

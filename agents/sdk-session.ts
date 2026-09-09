@@ -1,5 +1,7 @@
+import type { SessionStore } from '@anthropic-ai/claude-agent-sdk';
 import { claudeSessionExportFilename, sessionEntriesToJsonl } from '../shared/claude-session-export';
 import { readBoundSdkSessionId } from './_session';
+import { tryCreateMakersStorePort } from './core/adapters/_makers.ts';
 import { resolveConversationId } from './utils/_request';
 import { loadClaudeSessionEntries } from './utils/_sdk-transcript';
 
@@ -19,10 +21,8 @@ export async function onRequestGet(context: any) {
     return json({ ok: false, error: 'missing conversation_id' }, 400);
   }
 
-  const store = context?.store;
-  const sessionStore = typeof store?.claudeSessionStore === 'function'
-    ? store.claudeSessionStore()
-    : undefined;
+  const store = tryCreateMakersStorePort(context);
+  const sessionStore = store?.claudeSessionStore?.() as SessionStore | undefined;
   if (!sessionStore || typeof sessionStore.load !== 'function') {
     return json({ ok: false, error: 'claude session store is unavailable' }, 404);
   }
