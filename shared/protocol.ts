@@ -43,6 +43,16 @@ export type AssistantActivity =
       message: string;
       startedAt?: number;
       endedAt?: number;
+    }
+  | {
+      kind: 'publish';
+      status: 'completed' | 'failed';
+      url?: string;
+      projectId?: string;
+      deploymentId?: string;
+      error?: string;
+      startedAt?: number;
+      endedAt?: number;
     };
 
 export type PersistedActivityTurn = {
@@ -127,6 +137,16 @@ export type ChatResponse = {
   stopped?: boolean;
 };
 
+export type PublishResult = {
+  ok?: boolean;
+  previewUrl?: string;
+  projectId?: string;
+  deploymentId?: string;
+  error?: string;
+};
+
+export type PublishStage = 'packaging' | 'uploading' | 'deploying';
+
 export type ChatStreamEvent =
   | {
       type: 'task_started';
@@ -183,6 +203,7 @@ export type ChatStreamEvent =
       };
     }
   | { type: 'text_segment'; data?: { uuid?: string; text?: string } }
+  | { type: 'publish_result'; data?: PublishResult }
   | { type: 'error'; error?: string }
   | {
       type: 'log';
@@ -207,20 +228,5 @@ export type ResumeStreamEvent =
         mtime?: number;
       };
     }
-  | { type: 'error'; error?: string }
-  | { type: 'ping'; ts?: number };
-
-export type PublishResult = {
-  ok?: boolean;
-  previewUrl?: string;
-  projectId?: string;
-  deploymentId?: string;
-};
-
-export type PublishStage = 'packaging' | 'uploading' | 'deploying';
-
-export type PublishStreamEvent =
-  | { type: 'status'; stage?: PublishStage; status?: string }
-  | { type: 'result'; data?: PublishResult }
   | { type: 'error'; error?: string }
   | { type: 'ping'; ts?: number };

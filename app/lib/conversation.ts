@@ -82,8 +82,17 @@ export function extractProjectName() {
   };
 }
 
-const EDGEONE_AI_DEPLOY_URL = 'https://edgeone.ai/makers/new?template=vibe-coding-agent&from=within&fromAgent=1&agentLang=typescript';
-export const TENCENT_CLOUD_DEPLOY_URL = 'https://console.cloud.tencent.com/edgeone/makers/new?template=vibe-coding-agent&from=within&fromAgent=1&agentLang=typescript';
+// Where this template's own code lives, for a reader who wants it rather than a copy.
+export const TEMPLATE_SOURCE_URL = 'https://github.com/TencentEdgeOne/vibe-coding-agent';
+
+// Taking a copy of this template is a console flow, so the button is a link out
+// rather than an action this app can finish. The query string is the one the
+// README badge uses — it is what tells the console which template to open — and
+// the host splits the same way the contact URL does, because the two consoles are
+// separate deployments and neither can sign in the other's accounts.
+const TEMPLATE_DEPLOY_QUERY = 'template=vibe-coding-agent&from=within&fromAgent=1&agentLang=typescript';
+const EDGEONE_AI_DEPLOY_URL = `https://edgeone.ai/makers/new?${TEMPLATE_DEPLOY_QUERY}`;
+export const TENCENT_CLOUD_DEPLOY_URL = `https://console.cloud.tencent.com/edgeone/makers/new?${TEMPLATE_DEPLOY_QUERY}`;
 const EDGEONE_AI_CONTACT_URL = 'https://pages.edgeone.ai/contact?source=pages-home';
 export const TENCENT_CLOUD_CONTACT_URL = 'https://cloud.tencent.com/online-service?from=connect-us';
 // 认领部署（EdgeOne）功能暂不上线，先隐藏入口。上线时改回 true 即可。

@@ -18,7 +18,7 @@ Vibe Coding Agent 是一个基于 Claude Agent SDK 的开源 Vibe Coding 平台�
 
 **会话与源码持久化：** 对话历史写入 Makers Store；源码检查点通过 `sandbox.persist()` 落到当前项目保留的 `__sandbox` Blob Store，归档字节不经过对话元数据。页面刷新后自动恢复对话、文件树和预览；沙箱回收后 `restore()` 拉回工作区并重装依赖。
 
-**凭证不出沙箱：** `MAKERS_API_TOKEN` 只留在 Agent Runtime，用于 SDK 发布。沙箱与模型上下文看不到主 Token。预览使用运行时注入的沙箱访问令牌（`envdAccessToken`），随沙箱回收失效。每个会话对应独立项目名 `vibe-{conversationId}`，互不撞名。
+**凭证不出沙箱：** `API_TOKEN` 只留在 Agent Runtime，用于 SDK 发布。沙箱与模型上下文看不到主 Token。预览使用运行时注入的沙箱访问令牌（`envdAccessToken`），随沙箱回收失效。每个会话对应独立项目名 `vibe-{conversationId}`，互不撞名。
 
 **构建校验与自动修复：** 生成完成后，Node 项目执行 `npm run build`，Python 项目执行 `python -m compileall`。失败时流水线自动发起一轮修复，再决定是否展示预览。
 
@@ -38,7 +38,7 @@ flowchart LR
     R -->|"persist / restore"| B["Makers Blob<br/>__sandbox"]
     R -->|"write_project_file<br/>commands · publish_preview"| X["EdgeOne 沙箱"]
     X -->|"getHost(9000)/preview/"| U
-    R -->|"MAKERS_API_TOKEN<br/>projects.create + deployments.deploy"| P["Makers SDK"]
+    R -->|"API_TOKEN<br/>projects.create + deployments.deploy"| P["Makers SDK"]
     P --> E["EdgeOne Pages<br/>线上站点"]
 
     style U fill:#dbeafe,stroke:#60a5fa
@@ -76,7 +76,7 @@ flowchart LR
 
 - **Runtime 代发：** 打包沙箱工作区 → 改写预览路径 → `makers.projects.create`（按会话）→ `makers.deployments.deploy`（等待完成并回传状态）。
 - **区域推断：** `.dev` 走国际站 + 海外加速，`.cool` 及其他域名走国内站。
-- **能力降级：** 未配置 `MAKERS_API_TOKEN` 时仍可生成与预览，发布入口提示补齐 Token，不阻断主流程。
+- **能力降级：** 未配置 `API_TOKEN` 时仍可生成与预览，发布入口提示补齐 Token，不阻断主流程。
 
 ### 安全边界
 
@@ -101,7 +101,7 @@ cp .env.example .env
 |------|------|
 | `AI_GATEWAY_API_KEY` | Makers Models API Key，或任意 OpenAI 兼容供应商 Key |
 | `AI_GATEWAY_BASE_URL` | 网关地址，Makers Models 填 `https://ai-gateway.edgeone.link/v1` |
-| `MAKERS_API_TOKEN` | Makers API Token，用于一键发布。仅发布需要，生成和预览可不填 |
+| `API_TOKEN` | Makers API Token，用于一键发布。仅发布需要，生成和预览可不填 |
 
 安装 EdgeOne CLI 并启动本地开发：
 

@@ -118,6 +118,32 @@ export function createTurnLifecycle(options: TurnLifecycleOptions) {
     }
   };
 
+  const recordPublish = (result: {
+    ok?: boolean;
+    url?: string;
+    projectId?: string;
+    deploymentId?: string;
+    error?: string;
+  }) => {
+    const now = Date.now();
+    const next: Extract<PersistedActivity, { kind: 'publish' }> = {
+      kind: 'publish',
+      status: result.ok === false ? 'failed' : 'completed',
+      ...(result.url ? { url: result.url } : {}),
+      ...(result.projectId ? { projectId: result.projectId } : {}),
+      ...(result.deploymentId ? { deploymentId: result.deploymentId } : {}),
+      ...(result.error ? { error: result.error } : {}),
+      startedAt: now,
+      endedAt: now,
+    };
+    const index = activities.findIndex((item) => item.kind === 'publish');
+    if (index >= 0) {
+      activities[index] = next;
+      return;
+    }
+    activities.push(next);
+  };
+
   const finalize = async (
     assistant: string,
     status: TurnStatus,
@@ -167,5 +193,5 @@ export function createTurnLifecycle(options: TurnLifecycleOptions) {
     });
   };
 
-  return { recordProgress, recordLog, finalize };
+  return { recordProgress, recordLog, recordPublish, finalize };
 }

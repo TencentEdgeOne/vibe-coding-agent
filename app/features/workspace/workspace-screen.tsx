@@ -2,16 +2,11 @@
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  AlertCircle,
-  Check,
   Code2,
-  Copy,
   Download,
-  ExternalLink,
   Eye,
   Laptop,
   Smartphone,
-  Upload,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -31,6 +26,7 @@ import { useFileContentCache } from '@/app/hooks/use-file-content-cache';
 import { useTypewriterPlaceholder } from '@/app/hooks/use-typewriter-placeholder';
 import {
   CLAIM_DEPLOY_ENABLED,
+  TEMPLATE_SOURCE_URL,
   TENCENT_CLOUD_CONTACT_URL,
   TENCENT_CLOUD_DEPLOY_URL,
   base64ToBlob,
@@ -46,11 +42,21 @@ import {
   getStoredConversationId,
   sanitizeThinkingContent,
 } from '@/app/lib/conversation';
-import { LANGUAGE_STORAGE_KEY, TRANSLATIONS, type Locale, type UiCopy } from '@/app/i18n';
+import {
+  isAgentActionPublishPrompt,
+  LANGUAGE_STORAGE_KEY,
+  TRANSLATIONS,
+  type Locale,
+} from '@/app/i18n';
 import { claudeSessionExportFilename } from '../../../shared/claude-session-export';
 import { conversationExportFilename, conversationToJsonl } from '../../../shared/conversation-export';
-import { displayPublishOrigin } from '../../../shared/publish-target';
+import { previewDisplayPathFromPath } from '../../../shared/preview-display-path';
 import { buildStoppedReply } from '../../../shared/reply-language';
+import {
+  isPublishProjectToolName,
+  lastFinishedAssistant,
+  resolveDeployOffer,
+} from '@/app/lib/deploy-prompt';
 import type {
   AssistantActivity,
   AssistantStatus,
@@ -61,8 +67,6 @@ import type {
   FileTree,
   LinkInfo,
   PublishResult,
-  PublishStage,
-  PublishStreamEvent,
   ResumeData,
   ResumeStreamEvent,
 } from '@/app/types/workspace';
@@ -77,7 +81,6 @@ import {
   fetchResumePreview,
   fetchSdkSessionTranscript,
   openResumeStream,
-  publishProject,
   startChatTask,
   stopChatTask,
 } from './workspace-api';
@@ -89,183 +92,8 @@ import type { ModelOption } from '../../../shared/models';
 const PREVIEW_CREDENTIAL_REFRESH_MS = 8 * 60_000;
 const PREVIEW_REFRESH_POLL_MS = 60_000;
 
-// Mirror of the sandbox preview base path (agents/_constants.ts). Defined
-// locally so the frontend does not cross the app -> agents boundary.
-const PREVIEW_PATH_PREFIX = '/preview/';
-
-// Render a mirrored preview route (pathname[+search][+hash]) as the address-bar
-// display value: the /preview/ base (and any other leading slashes) is stripped
-// so only the route relative to the app root is shown, with a leading '/'.
-function previewDisplayPathFromPath(path: string) {
-  if (!path) return '/';
-  const stripped = path.startsWith(PREVIEW_PATH_PREFIX)
-    ? path.slice(PREVIEW_PATH_PREFIX.length)
-    : path.replace(/^\/+/, '');
-  return stripped === '' ? '/' : `/${stripped}`;
-}
-
-function publishButtonTitle(
-  copy: UiCopy,
-  options: {
-    canDownload: boolean;
-    loading: boolean;
-    publishBusy: boolean;
-    lastPublishUrl: string | null;
-  },
-) {
-  if (options.publishBusy) return copy.workspace.publishDisabledPublishing;
-  if (options.loading) return copy.workspace.publishDisabledAgentRunning;
-  if (!options.canDownload) return copy.workspace.publishDisabledNoProject;
-  return options.lastPublishUrl ? copy.republishLabel : copy.publishLabel;
-}
-
-function publishStageLabel(copy: UiCopy, stage: PublishStage | null) {
-  if (stage === 'uploading') return copy.workspace.publishStageUploading;
-  if (stage === 'deploying') return copy.workspace.publishStageDeploying;
-  return copy.workspace.publishStagePackaging;
-}
-
-function PublishControl({
-  copy,
-  busy,
-  disabled,
-  stage,
-  error,
-  result,
-  lastPublishUrl,
-  copied,
-  idleTooltip,
-  onPublish,
-  onCopy,
-  onOpen,
-}: {
-  copy: UiCopy;
-  busy: boolean;
-  disabled: boolean;
-  stage: PublishStage | null;
-  error: string | null;
-  result: PublishResult | null;
-  lastPublishUrl: string | null;
-  copied: boolean;
-  idleTooltip: string;
-  onPublish: () => void;
-  onCopy: () => void;
-  onOpen: () => void;
-}) {
-  const previewUrl = result?.previewUrl || lastPublishUrl || '';
-  const origin = previewUrl ? displayPublishOrigin(previewUrl) : '';
-  const failed = Boolean(error) && !busy;
-  const finishedWithoutUrl = !busy && !error && Boolean(result) && !previewUrl;
-  const tokenMissing = Boolean(error?.includes('MAKERS_API_TOKEN'));
-  const succeeded = !busy && !failed && !finishedWithoutUrl && Boolean(origin);
-  const state = busy
-    ? 'busy'
-    : failed || finishedWithoutUrl
-      ? 'failed'
-      : succeeded
-        ? 'success'
-        : 'idle';
-
-  const failDetail = tokenMissing
-    ? copy.workspace.publishTokenMissing
-    : failed
-      ? error
-      : finishedWithoutUrl
-        ? copy.workspace.publishNoUrl
-        : null;
-
-  const label = busy
-    ? publishStageLabel(copy, stage)
-    : state === 'failed'
-      ? (finishedWithoutUrl ? copy.workspace.publishNoUrl : copy.workspace.publishFailedTitle)
-      : origin;
-
-  const iconAria = state === 'idle'
-    ? idleTooltip
-    : state === 'busy'
-      ? label
-      : state === 'failed'
-        ? copy.workspace.publishRetry
-        : copy.republishLabel;
-
-  const iconDisabled = busy || (state !== 'failed' && disabled);
-
-  return (
-    <div className="workspace-publish-chip" data-state={state}>
-      <button
-        type="button"
-        className={
-          state === 'idle'
-            ? 'workspace-publish-chip-icon workspace-icon-button is-publish'
-            : 'workspace-publish-chip-icon'
-        }
-        disabled={iconDisabled}
-        aria-label={iconAria}
-        data-tooltip={state === 'busy' ? undefined : iconAria}
-        onClick={() => {
-          if (busy) return;
-          onPublish();
-        }}
-      >
-        {busy
-          ? <span className="workspace-publish-chip-spinner" />
-          : state === 'failed'
-            ? <AlertCircle className="size-3.5" />
-            : <Upload className="size-3.5" />}
-      </button>
-      {state !== 'idle' && (
-        <>
-          {state === 'success' ? (
-            <button
-              type="button"
-              className="workspace-publish-chip-label"
-              onClick={onOpen}
-              aria-label={`${copy.workspace.publishOpen} ${origin}`}
-              data-tooltip={copy.workspace.publishOpen}
-            >
-              <span className="workspace-publish-chip-label-text">{label}</span>
-            </button>
-          ) : state === 'failed' ? (
-            <button
-              type="button"
-              className="workspace-publish-chip-label"
-              disabled={disabled}
-              aria-label={copy.workspace.publishRetry}
-              data-tooltip={copy.workspace.publishRetry}
-              title={failDetail || undefined}
-              onClick={onPublish}
-            >
-              <span className="workspace-publish-chip-label-text">{label}</span>
-            </button>
-          ) : (
-            <span className="workspace-publish-chip-label">{label}</span>
-          )}
-          {state === 'success' && (
-            <>
-              <button
-                type="button"
-                className="workspace-publish-chip-action"
-                aria-label={copied ? copy.workspace.publishCopied : copy.workspace.publishCopy}
-                data-tooltip={copied ? copy.workspace.publishCopied : copy.workspace.publishCopy}
-                onClick={onCopy}
-              >
-                {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-              </button>
-              <button
-                type="button"
-                className="workspace-publish-chip-action"
-                aria-label={copy.workspace.publishOpen}
-                data-tooltip={copy.workspace.publishOpen}
-                onClick={onOpen}
-              >
-                <ExternalLink className="size-3.5" />
-              </button>
-            </>
-          )}
-        </>
-      )}
-    </div>
-  );
+function userMessageOrigin(content: string): ChatMessage['origin'] {
+  return isAgentActionPublishPrompt(content) ? 'agent-action' : 'user';
 }
 
 function isSamePreviewTarget(a: string, b: string) {
@@ -302,12 +130,10 @@ export function WorkspaceScreen() {
   const [download, setDownload] = useState<LinkInfo | null>(null);
   const [downloadBusy, setDownloadBusy] = useState(false);
   const [exportSessionBusy, setExportSessionBusy] = useState(false);
-  const [publishBusy, setPublishBusy] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
   const [publishResult, setPublishResult] = useState<PublishResult | null>(null);
-  const [publishStage, setPublishStage] = useState<PublishStage | null>(null);
-  const [publishCopied, setPublishCopied] = useState(false);
   const [lastPublishUrl, setLastPublishUrl] = useState<string | null>(null);
+  const [dismissedDeployTurnId, setDismissedDeployTurnId] = useState('');
   const [build, setBuild] = useState<BuildInfo | null>(null);
   const [loading, setLoading] = useState(false);
   const [sandboxTab, setSandboxTab] = useState<'preview' | 'files'>('preview');
@@ -384,13 +210,23 @@ export function WorkspaceScreen() {
   const shareablePreviewUrl = preview?.url || activePreviewUrl;
   const hasWorkspace = messages.length > 0 || Boolean(preview) || Boolean(build) || workspaceRestoring;
   const canDownload = Boolean(download?.url);
-  const publishDisabled = !hasWorkspace || !canDownload || loading || publishBusy;
-  const publishTitleText = publishButtonTitle(t, {
+  const publishDisabled = !hasWorkspace || !canDownload || loading;
+  const deployOfferKind = resolveDeployOffer(messages, {
     canDownload,
-    loading,
-    publishBusy,
-    lastPublishUrl,
+    loading: loading || workspaceRestoring,
   });
+  const deployOfferTurnId = lastFinishedAssistant(messages)?.id || '';
+  const deployOffer = deployOfferKind && deployOfferTurnId && deployOfferTurnId !== dismissedDeployTurnId
+    ? {
+      prompt: deployOfferKind === 'retry'
+        ? t.workspace.publishOfferRetry
+        : deployOfferKind === 'again'
+          ? t.workspace.publishOfferAgain
+          : t.workspace.publishOffer,
+      deploy: deployOfferKind === 'retry' ? t.workspace.publishRetry : t.workspace.publishOfferAction,
+      dismiss: t.workspace.publishOfferDismiss,
+    }
+    : null;
   // Address bar shows the preview's current route (relative to the /preview/
   // base) once the injected tracker reports it; before that it falls back to
   // a bare root path so neither the host domain nor the preview base path is
@@ -505,6 +341,7 @@ export function WorkspaceScreen() {
                 id: `${turn.id}-user`,
                 role: 'user' as const,
                 content: turn.user,
+                origin: userMessageOrigin(turn.user),
                 status: 'done' as AssistantStatus,
                 startedAt,
                 endedAt: startedAt,
@@ -525,6 +362,7 @@ export function WorkspaceScreen() {
             id: createMessageId(item.role),
             role: item.role,
             content: item.content,
+            ...(item.role === 'user' ? { origin: userMessageOrigin(item.content) } : {}),
             status: 'done' as AssistantStatus,
           }));
 
@@ -553,7 +391,13 @@ export function WorkspaceScreen() {
             if (last?.role === 'user' && last.content === activeTask.message) {
               nextMessages = [
                 ...nextMessages.slice(0, -1),
-                { ...last, id: userId, startedAt: last.startedAt ?? inFlightStartedAt, endedAt: last.endedAt ?? inFlightStartedAt },
+                {
+                  ...last,
+                  id: userId,
+                  origin: last.origin ?? userMessageOrigin(last.content),
+                  startedAt: last.startedAt ?? inFlightStartedAt,
+                  endedAt: last.endedAt ?? inFlightStartedAt,
+                },
                 {
                   id: assistantId,
                   role: 'assistant',
@@ -570,6 +414,7 @@ export function WorkspaceScreen() {
                   id: userId,
                   role: 'user',
                   content: activeTask.message,
+                  origin: userMessageOrigin(activeTask.message),
                   status: 'done',
                   startedAt: inFlightStartedAt,
                   endedAt: inFlightStartedAt,
@@ -600,6 +445,17 @@ export function WorkspaceScreen() {
       });
 
       setMessages(nextMessages);
+      const resumedPublish = [...nextMessages]
+        .reverse()
+        .flatMap((item) => item.activities ?? [])
+        .find((activity) => activity.kind === 'publish' && Boolean(activity.url));
+      const resumedPublishUrl = resumedPublish?.kind === 'publish'
+        ? resumedPublish.url
+        : undefined;
+      if (resumedPublishUrl) {
+        setLastPublishUrl(resumedPublishUrl);
+        setPublishResult({ ok: true, previewUrl: resumedPublishUrl });
+      }
       if (data.hasPreview) {
         hadPublishedPreviewRef.current = true;
         setHadPublishedPreview(true);
@@ -1168,6 +1024,34 @@ export function WorkspaceScreen() {
       }));
     };
 
+    const upsertPublishActivity = (result: {
+      status: 'completed' | 'failed';
+      url?: string;
+      projectId?: string;
+      deploymentId?: string;
+      error?: string;
+    }) => {
+      const now = Date.now();
+      setMessages((current) => current.map((item) => {
+        if (item.id !== assistantMessageId) return item;
+        const activities = [...(item.activities ?? [])];
+        const next: AssistantActivity = {
+          kind: 'publish',
+          status: result.status,
+          url: result.url,
+          projectId: result.projectId,
+          deploymentId: result.deploymentId,
+          error: result.error,
+          startedAt: now,
+          endedAt: now,
+        };
+        const index = activities.findIndex((activity) => activity.kind === 'publish');
+        if (index >= 0) activities[index] = next;
+        else activities.push(next);
+        return { ...item, activities };
+      }));
+    };
+
     const finalizeAssistant = (
       finalContent: string,
       finalStatus: AssistantStatus,
@@ -1309,6 +1193,33 @@ export function WorkspaceScreen() {
         applyResponse(event.data);
         return;
       }
+      if (event.type === 'publish_result' && event.data) {
+        const published = event.data;
+        const failed = published.ok === false || Boolean(published.error);
+        setPublishResult({
+          ok: published.ok,
+          previewUrl: published.previewUrl,
+          projectId: published.projectId,
+          deploymentId: published.deploymentId,
+          error: published.error,
+        });
+        if (published.previewUrl) {
+          setLastPublishUrl(published.previewUrl);
+        }
+        setPublishError(failed
+          ? (published.error || t.workspace.publishFailedTitle)
+          : published.previewUrl
+            ? null
+            : t.workspace.publishNoUrl);
+        upsertPublishActivity({
+          status: failed ? 'failed' : 'completed',
+          url: published.previewUrl,
+          projectId: published.projectId,
+          deploymentId: published.deploymentId,
+          error: published.error || (!published.previewUrl ? t.workspace.publishNoUrl : undefined),
+        });
+        return;
+      }
       if (event.type === 'agent' && event.data) {
         const agentData = event.data;
         const text = agentData.reply || agentData.error || t.response.noDisplay;
@@ -1357,6 +1268,9 @@ export function WorkspaceScreen() {
           outputSummary: event.data.outputSummary || event.data.preview,
           endedAt: event.data.endedAt || Date.now(),
         });
+        if (isPublishProjectToolName(event.data.toolName) && event.data.ok === false) {
+          setPublishError(event.data.outputSummary || event.data.preview || t.workspace.publishFailedTitle);
+        }
         return;
       }
       if (event.type === 'file_content' && event.data?.path) {
@@ -1475,7 +1389,7 @@ export function WorkspaceScreen() {
 
   attachChatStreamRef.current = attachChatStream;
 
-  async function sendMessage(message: string) {
+  async function sendMessage(message: string, options: { origin?: ChatMessage['origin'] } = {}) {
     const trimmed = message.trim();
     if (!trimmed || loading) {
       return;
@@ -1523,6 +1437,7 @@ export function WorkspaceScreen() {
         id: userMessageId,
         role: 'user',
         content: trimmed,
+        origin: options.origin ?? 'user',
         status: 'done',
         startedAt: turnStartedAt,
         endedAt: turnStartedAt,
@@ -1552,6 +1467,7 @@ export function WorkspaceScreen() {
         turnId: assistantMessageId,
         resetProject: isStartingFromHome,
         ...(model ? { model } : {}),
+        siteDomain: extractProjectName().domain,
         signal: requestAbortController.signal,
       });
       await attachChatStream({
@@ -1773,82 +1689,16 @@ export function WorkspaceScreen() {
     }
   }
 
-  async function handlePublish() {
-    if (!conversationId || !hasWorkspace || !download?.url || loading || publishBusy) {
+  function handlePublish() {
+    if (publishDisabled) {
       return;
     }
-
-    setPublishBusy(true);
     setPublishError(null);
     setPublishResult(null);
-    setPublishStage('packaging');
-    setPublishCopied(false);
-
-    try {
-      const { domain } = extractProjectName();
-      const response = await publishProject(conversationId, domain);
-      const contentType = response.headers.get('content-type') || '';
-      if (!response.body || !contentType.includes('text/event-stream')) {
-        const data = await response.json().catch(() => null) as { error?: string } | null;
-        setPublishError(data?.error || `${response.status}`);
-        return;
-      }
-
-      let gotResult = false;
-      let gotError = false;
-      await consumeEventStream<PublishStreamEvent>(response, (event) => {
-        if (event.type === 'ping') return;
-        if (event.type === 'status' && event.stage) {
-          setPublishStage(event.stage);
-          return;
-        }
-        if (event.type === 'result' && event.data) {
-          gotResult = true;
-          setPublishResult({
-            ok: event.data.ok,
-            previewUrl: event.data.previewUrl,
-            projectId: event.data.projectId,
-            deploymentId: event.data.deploymentId,
-          });
-          if (event.data.previewUrl) {
-            setLastPublishUrl(event.data.previewUrl);
-          }
-          return;
-        }
-        if (event.type === 'error') {
-          gotError = true;
-          setPublishError(event.error || t.workspace.publishFailedTitle);
-        }
-      });
-      if (!gotResult && !gotError) {
-        setPublishError(t.workspace.publishFailedTitle);
-      }
-    } catch (error) {
-      setPublishError(error instanceof Error ? error.message : t.response.unknownError);
-    } finally {
-      setPublishBusy(false);
+    if (deployOfferTurnId) {
+      setDismissedDeployTurnId(deployOfferTurnId);
     }
-  }
-
-  function handleOpenPublishUrl() {
-    const url = publishResult?.previewUrl || lastPublishUrl;
-    if (url) {
-      window.open(url, '_blank', 'noopener,noreferrer');
-    }
-  }
-
-  async function handleCopyPublishUrl() {
-    const url = publishResult?.previewUrl || lastPublishUrl;
-    if (!url || !navigator.clipboard) {
-      return;
-    }
-    try {
-      await navigator.clipboard.writeText(url);
-      setPublishCopied(true);
-      window.setTimeout(() => setPublishCopied(false), 1600);
-    } catch {
-      setPublishCopied(false);
-    }
+    void sendMessage(t.workspace.publishPrompt, { origin: 'agent-action' });
   }
 
   // Placeholder for "claim deployment" (plan §3.1). Until the platform drop/claim API
@@ -1919,12 +1769,10 @@ export function WorkspaceScreen() {
     setPreview(null);
     setDownload(null);
     setDownloadBusy(false);
-    setPublishBusy(false);
     setPublishError(null);
     setPublishResult(null);
-    setPublishStage(null);
-    setPublishCopied(false);
     setLastPublishUrl(null);
+    setDismissedDeployTurnId('');
     setBuild(null);
     setFileTree(null);
     setFilesRefreshing(false);
@@ -1986,6 +1834,8 @@ export function WorkspaceScreen() {
         language={language}
         hasWorkspace={hasWorkspace}
         contactUrl={contactUrl}
+        templateSourceUrl={TEMPLATE_SOURCE_URL}
+        templateDeployUrl={deployUrl}
         showDeploy={CLAIM_DEPLOY_ENABLED}
         showExportTranscript={process.env.NODE_ENV === 'development'}
         canExportTranscript={messages.length > 0}
@@ -2069,10 +1919,21 @@ export function WorkspaceScreen() {
             stop: t.workspace.stop,
             modelLabel: t.workspace.modelLabel,
             toolActions: t.workspace.toolActions,
+            siteLabel: t.workspace.publishSiteLabel,
+            siteOpen: t.workspace.publishOpen,
+            siteCopy: t.workspace.publishCopy,
+            siteCopied: t.workspace.publishCopied,
+            siteFailed: t.workspace.publishFailedTitle,
+            siteNoUrl: t.workspace.publishNoUrl,
           }}
           onInputChange={setInput}
           onSubmit={() => void sendMessage(input)}
           onStop={() => void handleStop()}
+          deployOffer={deployOffer}
+          onDeployOffer={() => void handlePublish()}
+          onDismissDeployOffer={() => {
+            if (deployOfferTurnId) setDismissedDeployTurnId(deployOfferTurnId);
+          }}
         />
 
         {resultPanelOpen && (
@@ -2105,40 +1966,40 @@ export function WorkspaceScreen() {
 
             <div className="workspace-topbar-center">
               {sandboxTab === 'preview' && shareablePreviewUrl && !previewRefreshing && !previewRefreshFailed && (
-                <>
-                  <PreviewUrlChip
-                    path={previewDisplayPath}
-                    copied={previewCopied}
-                    copy={t.workspace}
-                    onCopy={handleCopyPreviewUrl}
-                    onRefresh={handleRefreshPreview}
-                    onOpen={handleOpenPreview}
-                  />
-                  <div className="workspace-viewport-switch" role="group" aria-label={t.workspace.previewViewport}>
-                    <button
-                      type="button"
-                      aria-pressed={previewViewport === 'desktop'}
-                      aria-label={t.workspace.previewDesktop}
-                      data-tooltip={t.workspace.previewDesktop}
-                      onClick={() => setPreviewViewport('desktop')}
-                    >
-                      <Laptop />
-                    </button>
-                    <button
-                      type="button"
-                      aria-pressed={previewViewport === 'mobile'}
-                      aria-label={t.workspace.previewMobile}
-                      data-tooltip={t.workspace.previewMobile}
-                      onClick={() => setPreviewViewport('mobile')}
-                    >
-                      <Smartphone />
-                    </button>
-                  </div>
-                </>
+                <PreviewUrlChip
+                  path={previewDisplayPath}
+                  copied={previewCopied}
+                  copy={t.workspace}
+                  onCopy={handleCopyPreviewUrl}
+                  onRefresh={handleRefreshPreview}
+                  onOpen={handleOpenPreview}
+                />
               )}
             </div>
 
             <div className="workspace-topbar-actions">
+              {sandboxTab === 'preview' && shareablePreviewUrl && !previewRefreshing && !previewRefreshFailed && (
+                <div className="workspace-viewport-switch" role="group" aria-label={t.workspace.previewViewport}>
+                  <button
+                    type="button"
+                    aria-pressed={previewViewport === 'desktop'}
+                    aria-label={t.workspace.previewDesktop}
+                    data-tooltip={t.workspace.previewDesktop}
+                    onClick={() => setPreviewViewport('desktop')}
+                  >
+                    <Laptop />
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={previewViewport === 'mobile'}
+                    aria-label={t.workspace.previewMobile}
+                    data-tooltip={t.workspace.previewMobile}
+                    onClick={() => setPreviewViewport('mobile')}
+                  >
+                    <Smartphone />
+                  </button>
+                </div>
+              )}
               {sandboxTab === 'files' && canDownload && (
                 <button
                   type="button"
@@ -2153,20 +2014,6 @@ export function WorkspaceScreen() {
                     : <Download className="size-3.5" />}
                 </button>
               )}
-              <PublishControl
-                copy={t}
-                busy={publishBusy}
-                disabled={publishDisabled}
-                stage={publishStage}
-                error={publishError}
-                result={publishResult}
-                lastPublishUrl={lastPublishUrl}
-                copied={publishCopied}
-                idleTooltip={publishTitleText}
-                onPublish={() => void handlePublish()}
-                onCopy={() => void handleCopyPublishUrl()}
-                onOpen={handleOpenPublishUrl}
-              />
             </div>
           </div>
 

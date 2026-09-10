@@ -5,4 +5,3 @@ export {
   runProjectResumePipeline,
 } from './pipelines/_resume.ts';
 export { runChatPipeline } from './pipelines/_chat.ts';
-export { runProjectPublishPipeline } from './pipelines/_publish.ts';

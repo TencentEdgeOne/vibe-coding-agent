@@ -82,6 +82,7 @@ export function startChatTask(options: {
   resetProject: boolean;
   /** Omitted runs the deployment default; the server drops anything it does not offer. */
   model?: string;
+  siteDomain?: string;
   signal?: AbortSignal;
 }) {
   return fetch('/chat', {
@@ -92,6 +93,7 @@ export function startChatTask(options: {
       turnId: options.turnId,
       ...(options.resetProject ? { resetProject: true } : {}),
       ...(options.model ? { model: options.model } : {}),
+      ...(options.siteDomain ? { siteDomain: options.siteDomain } : {}),
     }),
     signal: options.signal,
   });
@@ -161,10 +163,3 @@ export async function fetchSdkSessionTranscript(conversationId: string) {
   }
 }
 
-export function publishProject(conversationId: string, siteDomain: string) {
-  return fetch('/publish', {
-    method: 'POST',
-    headers: conversationHeaders(conversationId),
-    body: JSON.stringify({ siteDomain }),
-  });
-}

@@ -50,6 +50,11 @@ test('the system prompt scopes the agent to the project directory and the MCP se
 
   assert.match(prompt, /projects\/c1\/app/);
   assert.match(prompt, new RegExp(MCP_SERVER));
+  assert.match(prompt, /publish_project/);
+  assert.match(prompt, /edgeone-deploy/);
+  assert.match(prompt, /site card/);
+  assert.match(prompt, /The project is live/);
+  assert.doesNotMatch(prompt, /must include the production URL/);
 });
 
 // Localized copy in the prompt is what once made the agent answer an English

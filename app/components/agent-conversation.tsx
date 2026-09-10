@@ -4,19 +4,24 @@ import { FormEvent, useEffect, useRef, useState } from 'react';
 import {
   AppWindow,
   ArrowUp,
+  Check,
   ChevronRight,
   CircleAlert,
+  Copy,
+  ExternalLink,
   FilePenLine,
   FilePlus2,
   FolderPlus,
   FolderSearch,
   Monitor,
+  Rocket,
   Search,
   Square,
   SquareTerminal,
   Trash2,
   X,
 } from 'lucide-react';
+import { displayPublishOrigin } from '../../shared/publish-target';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
@@ -34,6 +39,7 @@ export type ConversationMessage = {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  origin?: 'user' | 'agent-action';
   activities?: AssistantActivity[];
   status?: 'running' | 'done' | 'error' | 'stopped';
 };
@@ -50,6 +56,18 @@ type ConversationCopy = {
   stop: string;
   modelLabel: string;
   toolActions: Record<ToolAction, string>;
+  siteLabel: string;
+  siteOpen: string;
+  siteCopy: string;
+  siteCopied: string;
+  siteFailed: string;
+  siteNoUrl: string;
+};
+
+export type DeployOfferCopy = {
+  prompt: string;
+  deploy: string;
+  dismiss: string;
 };
 
 function actionLabel(action: ToolAction, copy: ConversationCopy) {
@@ -66,6 +84,7 @@ function ActionIcon({ action }: { action: ToolAction }) {
   if (action === 'Create folder') return <FolderPlus {...props} />;
   if (action === 'Delete file') return <Trash2 {...props} />;
   if (action === 'Create preview') return <AppWindow {...props} />;
+  if (action === 'Deploy project') return <Rocket {...props} />;
   return <SquareTerminal {...props} />;
 }
 
@@ -143,6 +162,78 @@ function ToolActivityRow({ activity, copy, previouslyReadPaths }: {
   );
 }
 
+function PublishSiteCard({
+  activity,
+  copy,
+}: {
+  activity: Extract<AssistantActivity, { kind: 'publish' }>;
+  copy: ConversationCopy;
+}) {
+  const [copied, setCopied] = useState(false);
+  const origin = activity.url ? displayPublishOrigin(activity.url) : '';
+  const failed = activity.status === 'failed' || Boolean(activity.error) || (!activity.url && activity.status === 'completed');
+  const detail = activity.error || (!activity.url ? copy.siteNoUrl : '');
+
+  const openSite = () => {
+    if (!activity.url) return;
+    window.open(activity.url, '_blank', 'noopener,noreferrer');
+  };
+
+  const copySite = async () => {
+    if (!activity.url || !navigator.clipboard) return;
+    try {
+      await navigator.clipboard.writeText(activity.url);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
+    } catch {
+      setCopied(false);
+    }
+  };
+
+  return (
+    <div className={`publish-site-card${failed ? ' is-failed' : ''}`}>
+      <span className="publish-site-card-icon" aria-hidden="true">
+        {failed ? <CircleAlert /> : <Rocket />}
+      </span>
+      <div className="publish-site-card-body">
+        <span className="publish-site-card-caption">{failed ? copy.siteFailed : copy.siteLabel}</span>
+        {failed ? (
+          <p className="publish-site-card-error">{detail}</p>
+        ) : (
+          <button
+            type="button"
+            className="publish-site-card-origin"
+            onClick={openSite}
+            aria-label={`${copy.siteOpen} ${origin}`}
+          >
+            {origin}
+          </button>
+        )}
+      </div>
+      {!failed && activity.url && (
+        <div className="publish-site-card-actions">
+          <button
+            type="button"
+            className="publish-site-card-action"
+            aria-label={copied ? copy.siteCopied : copy.siteCopy}
+            onClick={() => void copySite()}
+          >
+            {copied ? <Check /> : <Copy />}
+          </button>
+          <button
+            type="button"
+            className="publish-site-card-action"
+            aria-label={copy.siteOpen}
+            onClick={openSite}
+          >
+            <ExternalLink />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Markdown({ content }: { content: string }) {
   return (
     <div className="agent-markdown">
@@ -172,6 +263,7 @@ function AssistantTurn({ message, copy }: {
   const isFinalTextDuplicate = (content: string) => {
     if (message.status === 'running' || !normalizedFinal) return false;
     const normalizedActivity = content.replace(/\s+/g, '');
+    if (normalizedActivity === normalizedFinal) return true;
     return normalizedActivity.length > 24
       && (normalizedActivity.includes(normalizedFinal) || normalizedFinal.includes(normalizedActivity));
   };
@@ -182,12 +274,15 @@ function AssistantTurn({ message, copy }: {
   const showWaiting = message.status === 'running'
     && !hasRunningTool
     && lastActivity?.kind !== 'text';
+  const publishActivities = activities.flatMap((activity, index) => (
+    activity.kind === 'publish' ? [{ activity, index }] : []
+  ));
 
   return (
     <section className="conversation-turn conversation-assistant-turn">
       <div className="conversation-body">
         {activities.map((activity, index) => {
-          if (activity.kind === 'log') {
+          if (activity.kind === 'log' || activity.kind === 'publish') {
             return null;
           }
           if (activity.kind === 'text') {
@@ -216,6 +311,9 @@ function AssistantTurn({ message, copy }: {
             <Markdown content={message.content} />
           )
         )}
+        {publishActivities.map(({ activity, index }) => (
+          <PublishSiteCard key={`publish-${index}`} activity={activity} copy={copy} />
+        ))}
         {showWaiting && (
           <div className="agent-waiting" aria-label={copy.running}>
             <span />
@@ -241,6 +339,9 @@ export function AgentConversation({
   onInputChange,
   onSubmit,
   onStop,
+  deployOffer,
+  onDeployOffer,
+  onDismissDeployOffer,
 }: {
   messages: ConversationMessage[];
   input: string;
@@ -254,6 +355,9 @@ export function AgentConversation({
   onInputChange: (value: string) => void;
   onSubmit: () => void;
   onStop: () => void;
+  deployOffer?: DeployOfferCopy | null;
+  onDeployOffer?: () => void;
+  onDismissDeployOffer?: () => void;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const followOutputRef = useRef(true);
@@ -264,6 +368,7 @@ export function AgentConversation({
     message.activities?.map((activity) => {
       if (activity.kind === 'text') return activity.content;
       if (activity.kind === 'log') return `log:${activity.message}`;
+      if (activity.kind === 'publish') return `publish:${activity.status}:${activity.url || activity.error || ''}`;
       return `${activity.toolUseId}:${activity.status}:${activity.outputSummary || ''}`;
     }).join('|'),
   ].join(':')).join('\n');
@@ -290,7 +395,10 @@ export function AgentConversation({
       >
         <div className="conversation-stream">
           {messages.map((message) => message.role === 'user' ? (
-            <section key={message.id} className="conversation-turn conversation-user-turn">
+            <section
+              key={message.id}
+              className={`conversation-turn conversation-user-turn${message.origin === 'agent-action' ? ' is-simulated' : ''}`}
+            >
               <div className="conversation-body whitespace-pre-wrap">{message.content}</div>
             </section>
           ) : (
@@ -298,6 +406,28 @@ export function AgentConversation({
           ))}
         </div>
       </div>
+      <div className="conversation-composer-dock">
+        {deployOffer && (
+          <div className="deploy-offer" role="status">
+            <span className="deploy-offer-copy">{deployOffer.prompt}</span>
+            <div className="deploy-offer-actions">
+              <button
+                type="button"
+                className="deploy-offer-dismiss"
+                onClick={onDismissDeployOffer}
+              >
+                {deployOffer.dismiss}
+              </button>
+              <button
+                type="button"
+                className="deploy-offer-accept"
+                onClick={onDeployOffer}
+              >
+                {deployOffer.deploy}
+              </button>
+            </div>
+          </div>
+        )}
       <form onSubmit={submit} className="conversation-composer">
         <textarea
           value={input}
@@ -330,6 +460,7 @@ export function AgentConversation({
           </button>
         )}
       </form>
+      </div>
     </div>
   );
 }

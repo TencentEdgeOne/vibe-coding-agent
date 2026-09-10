@@ -15,6 +15,7 @@ export const GATEWAY_QUOTA_PROMPT_HEADER = 'X-Prompt-Log: true';
 export const GATEWAY_CONVERSATION_ID_HEADER_NAME = 'Makers-Conversation-Id';
 
 export const SANDBOX_MCP_SERVER_NAME = 'edgeone-sandbox';
+export const DEPLOY_MCP_SERVER_NAME = 'edgeone-deploy';
 
 // Upper bound for the downloadable source archive, guarding against streaming an
 // unexpectedly huge archive out of the sandbox and through the function response.

@@ -167,6 +167,7 @@ type ChatTaskOptions = {
   turnId?: string;
   /** Already validated against this deployment's catalogue; '' means no choice. */
   model?: string;
+  siteDomain?: string;
 };
 
 async function createChatTask(
@@ -210,11 +211,13 @@ async function createChatTask(
   // reconnect replay the run that actually happened.
   const requestedModel = (options.model || '').trim();
   const model = requestedModel || storedModel;
+  const siteDomain = (options.siteDomain || '').trim();
 
   const task: ChatTask = {
     id: taskId,
     message,
     ...(model ? { model } : {}),
+    ...(siteDomain ? { siteDomain } : {}),
     resetProject: options.resetProject === true,
     status: 'queued',
     createdAt: persistStartedAt,
@@ -270,6 +273,7 @@ async function executeLiveTask(context: any, liveTask: LiveChatTask) {
       turnId: liveTask.task.id,
       userMessagePersisted: true,
       model: liveTask.task.model,
+      siteDomain: liveTask.task.siteDomain,
       timingOriginMs: liveTask.task.createdAt || dispatchAt,
       persistMs: liveTask.persistMs,
       dispatchMs: Math.max(0, dispatchAt - (liveTask.task.createdAt || dispatchAt)),

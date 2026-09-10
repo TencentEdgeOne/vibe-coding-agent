@@ -51,11 +51,16 @@ export function createClaudeDriver(options: ClaudeDriverOptions): AgentDriverPor
           return;
         }
 
-        const mcpServer = createSdkMcpServer({
-          name: input.toolNamespace,
-          tools: input.tools as never[],
-          alwaysLoad: true,
-        });
+        const mcpServers = Object.fromEntries(
+          input.servers.map((server) => [
+            server.name,
+            createSdkMcpServer({
+              name: server.name,
+              tools: server.tools as never[],
+              alwaysLoad: true,
+            }),
+          ]),
+        );
 
         const sdkQuery = query({
           prompt: input.prompt,
@@ -67,7 +72,7 @@ export function createClaudeDriver(options: ClaudeDriverOptions): AgentDriverPor
             // only read, write, and execute through the host's sandbox tools.
             tools: [],
             includePartialMessages: true,
-            mcpServers: { [input.toolNamespace]: mcpServer },
+            mcpServers,
             allowedTools: input.allowedTools,
             strictMcpConfig: true,
             systemPrompt: input.systemPrompt,

@@ -35,12 +35,10 @@ export type AgentTurnInput = {
   /** The per-turn half: this request, its language, its context. */
   prompt: string;
   model: string;
-  /** Tool definitions, already in the shape this driver's SDK consumes. */
-  tools: unknown[];
+  /** In-process MCP servers this turn may call. */
+  servers: { name: string; tools: unknown[] }[];
   /** Names the model is permitted to call. */
   allowedTools: string[];
-  /** Namespace the tools are registered under. */
-  toolNamespace: string;
   session?: AgentSessionBinding;
   /** Extra process environment, for drivers that spawn a subprocess. */
   env?: Record<string, string>;

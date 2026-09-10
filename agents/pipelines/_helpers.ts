@@ -65,6 +65,13 @@ export function buildRequirementConclusionFallback(
   return `Handled your request: ${summary}. Verification and preview results are being prepared.`;
 }
 
+export function buildDeployConclusionFallback(request: string, ok: boolean) {
+  if (detectReplyLanguage(request)?.code === 'zh') {
+    return ok ? '项目已部署上线。' : '项目部署失败。';
+  }
+  return ok ? 'The project is live.' : 'The project failed to deploy.';
+}
+
 // Verification / preview caveats appended to the model's own conclusion. They
 // follow the request's language so the bubble does not end up bilingual.
 export function buildOutcomeSuffix(

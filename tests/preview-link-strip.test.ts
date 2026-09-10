@@ -44,4 +44,8 @@ test('the chat pipeline streams narration without trimming the fragments', async
     source,
     /stripReturnedPreviewLinks\(event\.data\.text, state\.previewUrl, \{ preserveEdges: true \}\)/,
   );
+  assert.match(
+    source,
+    /stripReturnedPublishLinks\(strippedPreview, state\.makersPreviewUrl, \{\s*preserveEdges: true,\s*\}\)/,
+  );
 });

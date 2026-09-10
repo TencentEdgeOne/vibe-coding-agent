@@ -3,8 +3,10 @@
  * Runtime-agnostic so tests can cover the format without the browser.
  *
  * Flatten the UI's {messages, activities} dump into a readable transcript:
- *   session → user → assistant (narration) → tool → log → result → …
+ *   session → user → assistant (narration) → tool → log → publish → result → …
  */
+
+import { displayPublishOrigin } from './publish-target.ts';
 
 const EXPORT_TEXT_LIMIT = 2_000;
 
@@ -21,6 +23,8 @@ export type ConversationExportActivity = {
   phase?: string;
   stream?: string;
   message?: string;
+  url?: string;
+  error?: string;
   startedAt?: number;
   endedAt?: number;
 };
@@ -160,6 +164,17 @@ export function conversationToJsonl(input: ConversationExportInput): string {
           stream: activity.stream,
           message: truncateExportText(redactExportText(activity.message)),
           ...timingFields(startedAt, activity.endedAt ?? startedAt),
+        }));
+        continue;
+      }
+
+      if (activity.kind === 'publish') {
+        events.push(compact({
+          type: 'publish',
+          status: activity.status,
+          url: activity.url ? displayPublishOrigin(activity.url) : undefined,
+          error: activity.error ? redactExportText(activity.error) : undefined,
+          ...timingFields(activity.startedAt, activity.endedAt),
         }));
       }
     }

@@ -9,6 +9,12 @@ test('publish_preview is create preview, not a command', () => {
   assert.equal(preview.target, undefined);
 });
 
+test('publish_project is deploy project, not a command', () => {
+  const deploy = presentToolActivity({ name: 'mcp__edgeone-deploy__publish_project' });
+  assert.equal(deploy.action, 'Deploy project');
+  assert.equal(deploy.target, undefined);
+});
+
 test('npm run build is a run command', () => {
   const build = presentToolActivity({
     name: 'mcp__edgeone-sandbox__commands',
@@ -45,6 +51,7 @@ test('zh and en tool action labels cover every action', () => {
     'Create folder',
     'Delete file',
     'Create preview',
+    'Deploy project',
     'Run command',
   ] as const;
   for (const action of actions) {

@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { displayPublishOrigin, resolveMakersPublishTarget } from '../shared/publish-target.ts';
+import {
+  displayPublishOrigin,
+  resolveMakersPublishTarget,
+  stripReturnedPublishLinks,
+} from '../shared/publish-target.ts';
 
 test('international .dev sites use the global endpoint and overseas area', () => {
   assert.deepEqual(resolveMakersPublishTarget('edgeone.dev'), {
@@ -36,4 +40,29 @@ test('displayPublishOrigin strips signed query params from the visible host', ()
     'https://vibe-ad99404c5f7a4321.edgeone.cool',
   );
   assert.equal(displayPublishOrigin(''), '');
+});
+
+test('stripReturnedPublishLinks removes Pages URLs and leftover labels', () => {
+  const signed = 'https://vibe-ad99404c5f7a4321.edgeone.cool/?eo_token=abc&eo_time=123';
+  const origin = 'https://vibe-ad99404c5f7a4321.edgeone.cool';
+
+  assert.equal(
+    stripReturnedPublishLinks(`项目已成功部署上线，访问地址：${signed}`, signed),
+    '项目已成功部署上线',
+  );
+  assert.equal(
+    stripReturnedPublishLinks(`The project is live: [site](${signed})`, signed),
+    'The project is live:',
+  );
+  assert.equal(
+    stripReturnedPublishLinks(`Done. ${origin}?eo_token=leaked`, signed),
+    'Done.',
+  );
+  assert.equal(
+    stripReturnedPublishLinks(' open https://other.edgeone.dev/path?eo_token=x ', undefined, {
+      preserveEdges: true,
+    }),
+    ' open  ',
+  );
+  assert.equal(stripReturnedPublishLinks('  项目已部署上线。  '), '项目已部署上线。');
 });

@@ -5,12 +5,19 @@ export type Locale = 'zh' | 'en';
 
 export const LANGUAGE_STORAGE_KEY = 'web-dev-agent-language';
 
+// Header chrome for this template (source + a console copy), kept next to the
+// session-owned publish labels so the two "deploy" words stay distinct.
+
 export const TRANSLATIONS = {
   zh: {
     languageToggleAria: 'Switch language to English',
     deployLabel: '一键部署',
     publishLabel: '部署项目',
     republishLabel: '重新发布',
+    // The top-bar button takes a copy of this template itself. Publishing the
+    // project the user just generated is a different action (publishLabel).
+    templateDeployLabel: '部署模板',
+    templateSourceLabel: '模板源码',
     home: {
       titleBefore: '今天想',
       titleAccent: '创建',
@@ -50,6 +57,7 @@ export const TRANSLATIONS = {
         'Create folder': '创建目录',
         'Delete file': '删除文件',
         'Create preview': '创建预览',
+        'Deploy project': '部署项目',
         'Run command': '运行命令',
       },
       preview: '预览',
@@ -68,7 +76,7 @@ export const TRANSLATIONS = {
       downloading: '打包中...',
       publishing: '发布中...',
       publishFailedTitle: '发布失败',
-      publishTokenMissing: '未配置 MAKERS_API_TOKEN。请在项目环境变量中填写后再试。',
+      publishTokenMissing: '未配置 API_TOKEN。请在项目环境变量中填写后再试。',
       publishOpen: '打开站点',
       publishCopy: '复制链接',
       publishCopied: '已复制',
@@ -80,6 +88,13 @@ export const TRANSLATIONS = {
       publishStagePackaging: '打包项目中',
       publishStageUploading: '上传制品中',
       publishStageDeploying: '部署上线中',
+      publishPrompt: '帮我把当前项目部署上线',
+      publishOffer: '要把当前项目部署上线吗？',
+      publishOfferAgain: '项目有更新，要重新部署吗？',
+      publishOfferRetry: '部署失败，要再试一次吗？',
+      publishOfferAction: '部署',
+      publishOfferDismiss: '暂不',
+      publishSiteLabel: '线上站点',
       exportTranscript: '导出 Log',
       exportTranscriptEmpty: '暂无对话可导出',
       exportSession: '导出 Session',
@@ -127,6 +142,8 @@ export const TRANSLATIONS = {
     deployLabel: 'Deploy',
     publishLabel: 'Deploy project',
     republishLabel: 'Republish',
+    templateDeployLabel: 'Deploy template',
+    templateSourceLabel: 'Template source',
     home: {
       titleBefore: 'What will you',
       titleAccent: 'create',
@@ -166,6 +183,7 @@ export const TRANSLATIONS = {
         'Create folder': 'Create folder',
         'Delete file': 'Delete file',
         'Create preview': 'Create preview',
+        'Deploy project': 'Deploy project',
         'Run command': 'Run command',
       },
       preview: 'Preview',
@@ -184,7 +202,7 @@ export const TRANSLATIONS = {
       downloading: 'Packaging...',
       publishing: 'Publishing...',
       publishFailedTitle: 'Publish failed',
-      publishTokenMissing: 'MAKERS_API_TOKEN is not configured. Add it to the project environment variables and try again.',
+      publishTokenMissing: 'API_TOKEN is not configured. Add it to the project environment variables and try again.',
       publishOpen: 'Open site',
       publishCopy: 'Copy link',
       publishCopied: 'Copied',
@@ -196,6 +214,13 @@ export const TRANSLATIONS = {
       publishStagePackaging: 'Package project',
       publishStageUploading: 'Upload artifact',
       publishStageDeploying: 'Deploy',
+      publishPrompt: 'Deploy this project to production',
+      publishOffer: 'Deploy this project to production?',
+      publishOfferAgain: 'The project has updates. Deploy again?',
+      publishOfferRetry: 'Deploy failed. Try again?',
+      publishOfferAction: 'Deploy',
+      publishOfferDismiss: 'Not now',
+      publishSiteLabel: 'Live site',
       exportTranscript: 'Export log',
       exportTranscriptEmpty: 'No conversation to export yet',
       exportSession: 'Export session',
@@ -242,3 +267,13 @@ export const TRANSLATIONS = {
 
 export type UiCopy = (typeof TRANSLATIONS)[Locale];
 export type FileCopy = UiCopy['files'];
+
+export const AGENT_ACTION_PUBLISH_PROMPTS = [
+  TRANSLATIONS.zh.workspace.publishPrompt,
+  TRANSLATIONS.en.workspace.publishPrompt,
+] as const;
+
+export function isAgentActionPublishPrompt(content: string) {
+  const trimmed = content.trim();
+  return AGENT_ACTION_PUBLISH_PROMPTS.some((prompt) => prompt === trimmed);
+}

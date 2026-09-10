@@ -34,6 +34,9 @@ export function classifyTool(
 ): ToolKind {
   const shortName = shortenToolName(name);
 
+  if (shortName === 'publish_project') {
+    return 'project.deploy';
+  }
   if (shortName === 'publish_preview' || shortName === 'get_preview_link') {
     return 'preview.publish';
   }

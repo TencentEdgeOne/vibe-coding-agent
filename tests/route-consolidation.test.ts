@@ -81,76 +81,76 @@ test('workspace persistence uses the sandbox SDK and metadata snapshots are read
   assert.doesNotMatch(memory, /deleteConversation/);
 });
 
-test('publish is a dedicated agent route with a private pipeline', async () => {
-  const route = await readFile('agents/publish.ts', 'utf8');
-  const pipeline = await readFile('agents/pipelines/_publish.ts', 'utf8');
+test('publish is an MCP deploy tool instead of a dedicated HTTP route', async () => {
   const client = await readFile('app/features/workspace/workspace-api.ts', 'utf8');
   const screen = await readFile('app/features/workspace/workspace-screen.tsx', 'utf8');
+  const deploy = await readFile('agents/project/_deploy.ts', 'utf8');
+  const tool = await readFile('agents/tools/_deploy-tools.ts', 'utf8');
 
-  assert.match(route, /onRequestPost/);
-  assert.match(route, /runProjectPublishPipeline/);
-  const sseCall = pipeline.lastIndexOf('return createSSEResponse');
-  const packCall = pipeline.indexOf('await createProjectArchive');
-  assert.ok(sseCall >= 0 && packCall > sseCall, 'packaging must start after the SSE stream opens');
-  assert.match(pipeline, /type: 'status'/);
-  assert.match(pipeline, /stage: 'packaging'/);
-  assert.match(pipeline, /stage: 'uploading'/);
-  assert.match(pipeline, /stage: 'deploying'/);
-  assert.match(pipeline, /onStatusChange/);
-  assert.match(pipeline, /rewritePublishZip/);
-  assert.match(pipeline, /resolveMakersPublishTarget/);
-  assert.match(pipeline, /makersProjectId/);
-  assert.match(pipeline, /context\.env/);
-  assert.match(pipeline, /MAKERS_API_TOKEN/);
-  assert.doesNotMatch(pipeline, /process\.env/);
-  assert.doesNotMatch(pipeline, /MAKERS_REGION/);
-  assert.match(client, /fetch\('\/publish'/);
-  assert.match(client, /makers-conversation-id/);
+  await assert.rejects(access('agents/publish.ts'));
+  await assert.rejects(access('agents/pipelines/_publish.ts'));
+  await access('agents/project/_deploy.ts');
+  await access('agents/tools/_deploy-tools.ts');
+
+  assert.doesNotMatch(client, /fetch\('\/publish'/);
   assert.match(client, /siteDomain/);
+  assert.match(screen, /sendMessage\(t\.workspace\.publishPrompt/);
+  assert.match(screen, /origin: 'agent-action'/);
+  assert.match(screen, /upsertPublishActivity/);
+  assert.match(await readFile('app/components/agent-conversation.tsx', 'utf8'), /function PublishSiteCard/);
+  assert.match(await readFile('app/globals.css', 'utf8'), /\.publish-site-card/);
   assert.match(screen, /extractProjectName\(\)/);
-  await assert.rejects(access('agents/pipelines/publish.ts'));
-  await access('agents/pipelines/_publish.ts');
-  await access('agents/publish.ts');
+  assert.match(deploy, /deployProjectToMakers/);
+  assert.match(deploy, /rewritePublishZip/);
+  assert.match(deploy, /resolveMakersPublishTarget/);
+  assert.match(deploy, /makersProjectId/);
+  assert.match(deploy, /context\.env/);
+  assert.match(deploy, /env\?\.API_TOKEN/);
+  assert.doesNotMatch(deploy, /process\.env/);
+  assert.doesNotMatch(deploy, /MAKERS_REGION/);
+  assert.match(tool, /publish_project/);
+  assert.match(tool, /type: 'tool_output'/);
 });
 
-test('publish button sits in the workspace topbar and disables while the agent is running', async () => {
+test('publish is offered above the composer after a finished project turn', async () => {
   const header = await readFile('app/features/workspace/components/site-header.tsx', 'utf8');
   const screen = await readFile('app/features/workspace/workspace-screen.tsx', 'utf8');
+  const conversation = await readFile('app/components/agent-conversation.tsx', 'utf8');
+  const styles = await readFile('app/globals.css', 'utf8');
 
   assert.doesNotMatch(header, /onPublish/);
   assert.doesNotMatch(header, /site-publish-button/);
   assert.doesNotMatch(header, /workspace-publish-button/);
-  assert.match(screen, /disabled=\{publishDisabled\}/);
-  assert.match(screen, /loading \|\| publishBusy/);
-  assert.match(screen, /publishDisabledAgentRunning/);
-  assert.match(screen, /handleOpenPublishUrl/);
+  assert.doesNotMatch(screen, /<PublishControl/);
+  assert.doesNotMatch(screen, /workspace-publish-chip/);
+  assert.doesNotMatch(screen, /function PublishControl/);
+  assert.doesNotMatch(styles, /workspace-publish-chip/);
+  assert.match(screen, /resolveDeployOffer/);
+  assert.match(screen, /deployOffer=\{deployOffer\}/);
+  assert.match(screen, /onDeployOffer=\{\(\) => void handlePublish\(\)\}/);
+  assert.match(conversation, /className="deploy-offer"/);
+  assert.match(conversation, /className="conversation-composer-dock"/);
+  assert.match(styles, /\.deploy-offer/);
+  assert.match(screen, /!hasWorkspace \|\| !canDownload \|\| loading/);
   assert.doesNotMatch(screen, /Globe/);
   assert.doesNotMatch(screen, /workspace-publish-button/);
   assert.doesNotMatch(screen, /<PublishDialog/);
-  assert.match(screen, /<PublishControl/);
-  assert.match(screen, /onPublish=\{\(\) => void handlePublish\(\)\}/);
-  const actionsIndex = screen.indexOf('workspace-topbar-actions');
-  const publishChip = screen.indexOf('<PublishControl');
-  assert.ok(actionsIndex >= 0 && publishChip > actionsIndex);
   assert.match(screen, /showDeploy=\{CLAIM_DEPLOY_ENABLED\}/);
   assert.doesNotMatch(screen, /showDeploy=\{true\}/);
-  assert.match(screen, /const url = publishResult\?\.previewUrl \|\| lastPublishUrl/);
-  assert.match(screen, /clipboard\.writeText\(url\)/);
+  assert.match(header, /href=\{templateSourceUrl\}/);
+  assert.match(header, /href=\{templateDeployUrl\}/);
+  assert.match(screen, /templateSourceUrl=\{TEMPLATE_SOURCE_URL\}/);
+  assert.match(screen, /templateDeployUrl=\{deployUrl\}/);
   assert.doesNotMatch(screen, /makersPreviewUrl/);
   assert.match(screen, /setLastPublishUrl\(null\)/);
-
-  assert.match(screen, /workspace-publish-chip/);
-  assert.match(screen, /displayPublishOrigin/);
-  assert.match(screen, /republishLabel/);
-  assert.match(screen, /function PublishControl/);
   assert.doesNotMatch(screen, /eo_token/);
   assert.doesNotMatch(screen, /publishCannotClose/);
 
   const i18n = await readFile('app/i18n.ts', 'utf8');
-  assert.match(i18n, /republishLabel/);
+  assert.match(i18n, /publishOffer/);
+  assert.match(i18n, /publishOfferAgain/);
+  assert.match(i18n, /publishOfferDismiss/);
   assert.match(i18n, /publishRetry/);
   assert.doesNotMatch(i18n, /publishCannotClose/);
-  assert.match(i18n, /publishDisabledNoProject/);
-  assert.match(i18n, /publishStagePackaging/);
   assert.doesNotMatch(i18n, /签名参数/);
 });

@@ -24,7 +24,7 @@ Web Dev Agent 可以把自然语言需求转换为可运行的 Web 项目。每�
 | `AI_GATEWAY_BASE_URL` | 是 | 网关 Base URL。使用 Makers Models 时填写 `https://ai-gateway.edgeone.link/v1`。 |
 | `AI_GATEWAY_MODEL` | 否 | 模型 ID。默认值为 `@makers/deepseek-v4-flash`（Makers 内置模型）。它同时是输入框模型选择器的初始项，以及没人手动选择时实际运行的模型。 |
 | `AI_GATEWAY_EXTRA_MODELS` | 否 | 为输入框的模型选择器追加条目，格式为逗号分隔的 `id\|展示名`（展示名可省略）。内置模型已经在列表中，这里用于填写已在控制台绑定 Key 的厂商模型，例如 `deepseek/deepseek-v4-pro\|DeepSeek V4 Pro`。所有条目共用同一套网关 Key 与 Base URL，因此它扩展的是可选模型而不是可选厂商。不在最终列表中的模型会被服务端拒绝。 |
-| `MAKERS_API_TOKEN` | 是（发布） | 右上角【发布】用于把生成项目部署到 EdgeOne Pages 的 Makers API Token。部署区域根据站点根域名（`.dev` / `.cool`）判断，不使用环境变量。 |
+| `API_TOKEN` | 是（发布） | 右上角【发布】用于把生成项目部署到 EdgeOne Pages 的 Makers API Token。部署区域根据站点根域名（`.dev` / `.cool`）判断，不使用环境变量。 |
 | `WEB_DEV_AGENT_DEBUG` | 否 | 设置为 `true` 或 `1` 时启用脱敏的服务端调试日志。默认关闭。 |
 
 本模板遵循 OpenAI 兼容标准，可以将这些变量指向 Makers Models 或任意兼容供应商。

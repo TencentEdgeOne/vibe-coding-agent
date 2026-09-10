@@ -168,6 +168,28 @@ test('conversationToJsonl flattens UI messages into one event per line', () => {
   assert.match(jsonl, /\n$/);
 });
 
+test('conversationToJsonl exports a publish card as the clean origin', () => {
+  const jsonl = conversationToJsonl({
+    exportedAt: '2026-08-17T12:00:00.000Z',
+    messages: [{
+      role: 'assistant',
+      content: '项目已部署上线。',
+      activities: [{
+        kind: 'publish',
+        status: 'completed',
+        url: 'https://vibe-1.edgeone.cool/?eo_token=secret&eo_time=1',
+      }],
+    }],
+  });
+  const events = jsonl.trimEnd().split('\n').slice(1).map((line) => JSON.parse(line));
+  assert.equal(events.some((event) => (
+    event.type === 'publish'
+    && event.url === 'https://vibe-1.edgeone.cool'
+  )), true);
+  assert.doesNotMatch(jsonl, /eo_token/);
+  assert.doesNotMatch(jsonl, /secret/);
+});
+
 test('conversationToJsonl does not duplicate the final assistant reply already in activities', () => {
   const jsonl = conversationToJsonl({
     conversationId: 'c1',

@@ -49,6 +49,8 @@ export type ChatTask = {
   message: string;
   /** Model this turn runs on. Absent means the deployment's configured default. */
   model?: string;
+  /** Host domain used to pick the Makers publish region. */
+  siteDomain?: string;
   resetProject: boolean;
   status: ChatTaskStatus;
   createdAt: number;
@@ -84,6 +86,16 @@ export type PersistedActivity =
       message: string;
       startedAt?: number;
       endedAt?: number;
+    }
+  | {
+      kind: 'publish';
+      status: 'completed' | 'failed';
+      url?: string;
+      projectId?: string;
+      deploymentId?: string;
+      error?: string;
+      startedAt?: number;
+      endedAt?: number;
     };
 
 export type PersistedActivityTurn = {
@@ -111,6 +123,7 @@ export type CodingAgentResult = {
   error: string | null;
   projectTouched: boolean;
   previewTouched?: boolean;
+  publishTouched?: boolean;
   wasCreated: boolean;
   fatal?: boolean;
   stopped?: boolean;

@@ -24,7 +24,7 @@ Web Dev Agent turns natural-language requests into runnable web projects. For ea
 | `AI_GATEWAY_BASE_URL` | Yes | Gateway base URL. For Makers Models, use `https://ai-gateway.edgeone.link/v1`. |
 | `AI_GATEWAY_MODEL` | No | Model ID. Defaults to `@makers/deepseek-v4-flash` (a built-in Makers model). This is what the composer's model picker starts on and what runs when nobody picks. |
 | `AI_GATEWAY_EXTRA_MODELS` | No | Extra entries for the composer's model picker, as comma-separated `id\|Label` pairs (label optional). Built-in models are listed already; use this for vendor models whose key you bound in the console, e.g. `deepseek/deepseek-v4-pro\|DeepSeek V4 Pro`. One gateway key and base URL serve every entry, so this extends the choice of model, not of provider. Anything not in the resulting list is rejected server-side. |
-| `MAKERS_API_TOKEN` | Yes (Publish) | Makers API token used by the header **Publish** action to deploy the generated project to EdgeOne Pages. Region is inferred from the site hostname (`.dev` vs `.cool`), not from an environment variable. |
+| `API_TOKEN` | Yes (Publish) | Makers API token used by the header **Publish** action to deploy the generated project to EdgeOne Pages. Region is inferred from the site hostname (`.dev` vs `.cool`), not from an environment variable. |
 | `WEB_DEV_AGENT_DEBUG` | No | Set to `true` or `1` to enable redacted server-side debug logs. Defaults to off. |
 
 This template follows the OpenAI-compatible standard — point these at Makers Models or any compatible provider.

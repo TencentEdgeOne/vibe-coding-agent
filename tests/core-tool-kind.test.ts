@@ -31,6 +31,11 @@ test('preview tools map to preview.publish', () => {
   assert.equal(kind('get_preview_link'), 'preview.publish');
 });
 
+test('publish_project maps to project.deploy', () => {
+  assert.equal(kind('publish_project'), 'project.deploy');
+  assert.equal(kind('mcp__edgeone-deploy__publish_project'), 'project.deploy');
+});
+
 test('ensure_project_scaffold is its own kind', () => {
   assert.equal(kind('ensure_project_scaffold'), 'scaffold');
 });

@@ -28,6 +28,7 @@ const PHASE_BY_TOOL_KIND: Record<ToolKind, ProgressPhase | undefined> = {
   'command.run': undefined,
   'dependency.install': 'install',
   'preview.publish': 'preview',
+  'project.deploy': 'link',
   scaffold: 'scaffold',
   other: undefined,
 };

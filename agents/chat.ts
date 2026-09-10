@@ -25,6 +25,7 @@ export async function onRequestPost(context: any) {
       // Anything this deployment does not offer resolves to '', so a client
       // cannot name an arbitrary model and have it billed through the gateway.
       model: resolveRequestedModel(context, body?.model),
+      siteDomain: String(body?.siteDomain || '').trim() || undefined,
     });
   } catch (error) {
     return new Response(JSON.stringify({

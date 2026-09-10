@@ -9,7 +9,6 @@ export type {
   LinkInfo,
   PublishResult,
   PublishStage,
-  PublishStreamEvent,
   ResumeData,
   ResumeStreamEvent,
 } from '../../shared/protocol';
@@ -20,6 +19,8 @@ export type ChatMessage = {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  /** Simulated toolbar actions use a distinct bubble from typed user input. */
+  origin?: 'user' | 'agent-action';
   activities?: AssistantActivity[];
   status?: AssistantStatus;
   startedAt?: number;

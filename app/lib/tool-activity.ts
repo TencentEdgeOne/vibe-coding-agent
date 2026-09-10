@@ -7,6 +7,7 @@ export type ToolAction =
   | 'Create folder'
   | 'Delete file'
   | 'Create preview'
+  | 'Deploy project'
   | 'Run command';
 
 export type ToolPresentation = {
@@ -68,6 +69,9 @@ export function presentToolActivity(
   }
   if (name.includes('publish preview') || name.includes('preview link')) {
     return { action: 'Create preview' };
+  }
+  if (name.includes('publish project')) {
+    return { action: 'Deploy project' };
   }
   if (name === 'commands' || name.includes('command')) {
     return { action: 'Run command', target };

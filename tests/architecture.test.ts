@@ -229,6 +229,7 @@ const SDK_IMPORT_RATCHET = [
   path.join('agents', '_types.ts'),
   path.join('agents', 'sdk-session.ts'),
   path.join('agents', 'tools', '_project-tools.ts'),
+  path.join('agents', 'tools', '_deploy-tools.ts'),
   path.join('agents', 'utils', '_sdk-transcript.ts'),
 ];
 

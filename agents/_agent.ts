@@ -3,6 +3,7 @@ import {
   buildReplyLanguageReminder,
 } from '../shared/reply-language.ts';
 import {
+  DEPLOY_MCP_SERVER_NAME,
   GATEWAY_CONVERSATION_ID_HEADER_NAME,
   GATEWAY_QUOTA_BYPASS_HEADER,
   GATEWAY_QUOTA_PROMPT_HEADER,
@@ -26,12 +27,14 @@ import {
   formatExistingFilePaths,
   resolveAgentSdkSession,
 } from './_session.ts';
-import { extractToolUseId, wrapSandboxToolsForVerification } from './tools/_commands-wrap.ts';
+import { wrapSandboxToolsForVerification } from './tools/_commands-wrap.ts';
 import { createCommandOutputBuffer } from './utils/_command-stream.ts';
+import { buildPublishProjectTool } from './tools/_deploy-tools.ts';
 import {
   buildPublishPreviewTool,
   buildWriteProjectFileTool,
 } from './tools/_project-tools.ts';
+import type { PublishResult } from '../shared/protocol.ts';
 import type {
   AgentProgressEvent,
   CodingAgentResult,
@@ -87,6 +90,7 @@ const PHASE_BY_TOOL_KIND: Partial<Record<ToolKind, ToolProgressPhase>> = {
   'dir.create': 'code',
   'dependency.install': 'install',
   'preview.publish': 'preview',
+  'project.deploy': 'link',
 };
 
 /**
@@ -103,14 +107,18 @@ const PHASE_BY_TOOL_KIND: Partial<Record<ToolKind, ToolProgressPhase>> = {
 export function buildSystemPrompt(
   state: ProjectState,
   mcpServerName: string,
+  deployServerName: string = DEPLOY_MCP_SERVER_NAME,
 ) {
   return [
     'You are a Web Dev Agent that creates and modifies runnable web projects in a remote sandbox.',
     'You may create Next.js, Vite/React, static frontend, Node service, Python Flask/FastAPI, or other lightweight web projects according to the user request. Do not force every project to be Next.js. For ordinary UI pages, prefer a modular Vite/React (or split HTML/CSS/JS) project instead of one self-contained HTML file.',
     `The only project directory you may modify is ${state.appDir} (relative path, no leading slash).`,
     `All file, command, browser, and code-execution operations must be performed through the ${mcpServerName} MCP tools in the remote sandbox.`,
+    `Production deploy uses the ${deployServerName} MCP tool publish_project.`,
     'If the user asks who you are, what you are, or what kind of agent you are, answer directly, in the reply language, that you are the Vibe Coding Agent sample on EdgeOne Makers, an out-of-the-box Agent template that helps create and modify runnable web projects. Do not call any tools, and do not use the non-project refusal for identity questions.',
     'First decide whether the user request is about a web project, page, component, interaction, styling, or code development.',
+    'If the user explicitly asks to deploy, publish, or go live with the existing project, that is a project request. Call publish_project once. Do not treat it as an off-topic request.',
+    'If the user request is only to deploy the existing project online, call publish_project immediately. Do not write files, do not install dependencies, and do not call publish_preview.',
     'If the user request is not related to project development, reply with only this message, written in the reply language: I can only help create or modify web projects. Please describe the page or feature you want to build. Do not call any tools.',
     'If the user request requires creating or modifying a project, first respond with one brief natural-language sentence that you are starting, then begin writing files with write_project_file. Do not call files_list, files_make_dir, files_write, or commands before the first write_project_file.',
     'That first sentence must be concise, user-visible progress narration, not a plan, and written in the reply language. For an English request it reads like: I will start building now.',
@@ -138,8 +146,10 @@ export function buildSystemPrompt(
     'Nothing may follow that conclusion. No headings or sections such as "What\'s included", no bullet or numbered lists, no feature-by-feature walkthrough, no file or dependency inventory, no tech-stack notes, no verification log recital, no usage instructions, and no suggested next steps. The user can see the running preview and the file tree, so re-describing the work is noise.',
     'Do not claim success for anything that was not verified successfully. If it failed, briefly explain the failure point and the next step.',
     `After code changes and dependency installation, you must call publish_preview to publish the getHost(${PREVIEW_PUBLIC_PORT})${PREVIEW_PATH_PREFIX} preview for the user. publish_preview reuses a ready internal ${PREVIEW_SERVER_PORT} service when possible, otherwise starts and validates it.`,
+    'publish_project deploys the current project to a permanent EdgeOne Pages URL. Call it only when the user explicitly asks to deploy, publish, or go live, and at most once per request. Do not call it after ordinary builds or preview work.',
     'Do not synthesize preview URLs. Use only the url field returned by publish_preview.',
-    'Do not include preview buttons, preview links, or preview URLs in the final response. The preview is shown only in the right preview panel.',
+    'Do not include sandbox preview buttons, preview links, or preview URLs in the final response. The sandbox preview is shown only in the right preview panel.',
+    'When publish_project succeeds or fails, do not include the production URL, signed query string, or any Pages host in the final response. The UI shows a site card. The conclusion is one short sentence such as: The project is live.',
     'Do not take screenshots.',
     'Do not include emoji in the response.',
     'If the user request is unclear, ask the user for the specific requirement.',
@@ -228,6 +238,8 @@ export async function runCodingAgent(
   runOptions: {
     model?: string;
     resetSession?: boolean;
+    siteDomain?: string;
+    onProjectPublished?: (result: PublishResult) => void;
     onTiming?: (stage: string, startedAt: number, fields?: Record<string, string | number | boolean | undefined>) => void;
   } = {},
 ): Promise<CodingAgentResult> {
@@ -342,17 +354,33 @@ export async function runCodingAgent(
       !isBrowserSandboxToolName(toolName) && !isGenericProjectWriteToolName(toolName));
     let projectTouched = false;
     let previewTouched = false;
+    let publishTouched = false;
     const handlePreviewPublished = (preview: { url?: string }) => {
       previewTouched = true;
       if (preview.url) {
         onPreviewReady?.(preview);
       }
     };
+    const handleProjectPublished = (result: PublishResult) => {
+      publishTouched = true;
+      runOptions.onProjectPublished?.(result);
+    };
     const publishPreviewTool = buildPublishPreviewTool(
       context,
       state,
       handlePreviewPublished,
       previewRestart,
+    );
+    const publishProjectTool = buildPublishProjectTool(
+      context,
+      conversationId,
+      state,
+      {
+        siteDomain: runOptions.siteDomain,
+        onProgress,
+        onPublished: handleProjectPublished,
+        signal: abortSignal,
+      },
     );
     const writeProjectFileTool = buildWriteProjectFileTool(
       context,
@@ -374,6 +402,7 @@ export async function runCodingAgent(
       ...sandboxAllowedTools,
       `mcp__${mcpServerName}__write_project_file`,
       `mcp__${mcpServerName}__publish_preview`,
+      `mcp__${DEPLOY_MCP_SERVER_NAME}__publish_project`,
     ];
 
     const sessionStartedAt = Date.now();
@@ -438,9 +467,11 @@ export async function runCodingAgent(
         },
       ),
       model,
-      tools: mcpTools,
+      servers: [
+        { name: mcpServerName, tools: mcpTools },
+        { name: DEPLOY_MCP_SERVER_NAME, tools: [publishProjectTool] },
+      ],
       allowedTools: mcpAllowedTools,
-      toolNamespace: mcpServerName,
       session: {
         ...sdkSession.binding,
         ...(sdkSession.sessionStore ? { store: sdkSession.sessionStore } : {}),
@@ -550,6 +581,7 @@ export async function runCodingAgent(
         error: null,
         projectTouched,
         previewTouched,
+        publishTouched,
         wasCreated: isNewProject && projectTouched,
         stopped: true,
       };
@@ -565,6 +597,7 @@ export async function runCodingAgent(
         error: turnResult.error || 'Model execution failed.',
         projectTouched,
         previewTouched,
+        publishTouched,
         wasCreated: isNewProject && projectTouched,
         ...(turnResult.fatal ? { fatal: true } : {}),
       };
@@ -576,6 +609,7 @@ export async function runCodingAgent(
       error: null,
       projectTouched,
       previewTouched,
+      publishTouched,
       wasCreated: isNewProject && projectTouched,
     };
   } catch(e) {

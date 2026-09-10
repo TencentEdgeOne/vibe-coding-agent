@@ -32,6 +32,7 @@ export type ToolKind =
   | 'command.run'
   | 'dependency.install'
   | 'preview.publish'
+  | 'project.deploy'
   | 'scaffold'
   | 'other';
 

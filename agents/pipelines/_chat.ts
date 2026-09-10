@@ -1,4 +1,5 @@
 import { stripReturnedPreviewLinks } from '../../shared/preview-links.ts';
+import { stripReturnedPublishLinks } from '../../shared/publish-target.ts';
 import { buildStoppedReply } from '../../shared/reply-language.ts';
 import { runCodingAgent } from '../_agent.ts';
 import { AUTO_FIX_MAX_ATTEMPTS } from '../_constants.ts';
@@ -19,6 +20,7 @@ import { resolveConversationId } from '../utils/_request.ts';
 import {
   FILE_PUSH_MAX_BYTES,
   FILE_PUSH_TURN_BUDGET_BYTES,
+  buildDeployConclusionFallback,
   buildOutcomeSuffix,
   buildRequirementConclusionFallback,
   createProjectCheckpointController,
@@ -39,6 +41,8 @@ export async function runChatPipeline(
     userMessagePersisted?: boolean;
     /** Validated model for this turn; '' or absent runs the configured default. */
     model?: string;
+    /** Host domain used to pick the Makers publish region. */
+    siteDomain?: string;
     /** Server clock when the user message was persisted; first-visible metrics are since this. */
     timingOriginMs?: number;
     persistMs?: number;
@@ -201,6 +205,7 @@ export async function runChatPipeline(
     checkpoint,
   });
   const recordProgress = turn.recordProgress;
+  const recordPublish = turn.recordPublish;
   const finalizeTurn = turn.finalize;
   recordLog = turn.recordLog;
   for (const log of pendingLogs) recordLog(log);
@@ -224,9 +229,12 @@ export async function runChatPipeline(
   const forwardProgress = (event: AgentProgressEvent) => {
     // Forward structured progress events directly; the frontend renders by type.
     if (event.type === 'text_segment') {
-      const text = state.previewUrl
+      const strippedPreview = state.previewUrl
         ? stripReturnedPreviewLinks(event.data.text, state.previewUrl, { preserveEdges: true })
         : event.data.text;
+      const text = stripReturnedPublishLinks(strippedPreview, state.makersPreviewUrl, {
+        preserveEdges: true,
+      });
       if (text.length === 0) {
         return;
       }
@@ -298,6 +306,26 @@ export async function runChatPipeline(
     checkpoint.schedule();
   };
 
+  const handleProjectPublished = (result: {
+    ok?: boolean;
+    previewUrl?: string;
+    projectId?: string;
+    deploymentId?: string;
+    error?: string;
+  }) => {
+    recordPublish({
+      ok: result.ok,
+      url: result.previewUrl,
+      projectId: result.projectId,
+      deploymentId: result.deploymentId,
+      error: result.error,
+    });
+    send({
+      type: 'publish_result',
+      data: result,
+    });
+  };
+
   // Switch the iframe the moment publish_preview returns — do not wait for
   // verification / finalizeTurn, which can take several more seconds.
   const handlePreviewReady = (preview: { url?: string }) => {
@@ -336,6 +364,8 @@ export async function runChatPipeline(
     {
       model: options.model,
       resetSession: shouldResetProject,
+      siteDomain: options.siteDomain,
+      onProjectPublished: handleProjectPublished,
       onTiming: reportTiming,
     },
   );
@@ -376,12 +406,19 @@ export async function runChatPipeline(
   const modelOutput = sanitizedModelOutput && !isGenericCompletionReply(sanitizedModelOutput)
     ? sanitizedModelOutput
     : '';
-  const fallbackReply = modelResult.success
-    ? buildRequirementConclusionFallback(message, state.previewUrl ? 'ready' : 'pending')
-    : (modelResult.error || 'An error occurred during processing. Please try again.');
-  const assistantReply = stripReturnedPreviewLinks(sanitizeAssistantText(
-    modelOutput || fallbackReply
-  ) || fallbackReply, state.previewUrl);
+  const fallbackReply = modelResult.publishTouched && !modelResult.projectTouched
+    ? (modelResult.success
+      ? buildDeployConclusionFallback(message, true)
+      : (modelResult.error || buildDeployConclusionFallback(message, false)))
+    : modelResult.success
+      ? buildRequirementConclusionFallback(message, state.previewUrl ? 'ready' : 'pending')
+      : (modelResult.error || 'An error occurred during processing. Please try again.');
+  const assistantReply = stripReturnedPublishLinks(
+    stripReturnedPreviewLinks(sanitizeAssistantText(
+      modelOutput || fallbackReply
+    ) || fallbackReply, state.previewUrl),
+    state.makersPreviewUrl,
+  ) || fallbackReply;
 
   send({
     type: 'agent',
@@ -538,7 +575,12 @@ export async function runChatPipeline(
       message,
       // Repairing on a different model than the one that wrote the code would
       // make a failed build hard to attribute to either.
-      { model: options.model, onTiming: reportTiming },
+      {
+        model: options.model,
+        siteDomain: options.siteDomain,
+        onProjectPublished: handleProjectPublished,
+        onTiming: reportTiming,
+      },
     );
     if (autoFixResult.stopped || abortSignal?.aborted) {
       const stoppedReply = buildStoppedReply(message);
@@ -556,11 +598,11 @@ export async function runChatPipeline(
       });
       return;
     }
-    autoFixReply = stripReturnedPreviewLinks(sanitizeAssistantText(
+    autoFixReply = stripReturnedPublishLinks(stripReturnedPreviewLinks(sanitizeAssistantText(
       autoFixResult.success && autoFixResult.output
         ? autoFixResult.output
         : autoFixResult.error || ''
-    ), state.previewUrl);
+    ), state.previewUrl), state.makersPreviewUrl);
 
     if (autoFixReply) {
       send({
@@ -629,9 +671,12 @@ export async function runChatPipeline(
     buildFailed: build.status === 'failed',
     hasPreview: Boolean(state.previewUrl),
   });
-  const reply = stripReturnedPreviewLinks(
-    `${baseReply}${outcomeSuffix}`,
-    state.previewUrl,
+  const reply = stripReturnedPublishLinks(
+    stripReturnedPreviewLinks(
+      `${baseReply}${outcomeSuffix}`,
+      state.previewUrl,
+    ),
+    state.makersPreviewUrl,
   );
 
   // Code first, then state, then conversation — so a crash mid-finalize still
