@@ -56,7 +56,7 @@ test('a successful deploy turn does not ask again', () => {
   );
 });
 
-test('a failed deploy turn offers a retry', () => {
+test('a failed deploy turn does not offer again — the stream already has the failure', () => {
   assert.equal(
     resolveDeployOffer([{
       id: 'a3',
@@ -64,7 +64,18 @@ test('a failed deploy turn offers a retry', () => {
       status: 'done',
       activities: [{ kind: 'publish', status: 'failed' }],
     }], { canDownload: true, loading: false }),
-    'retry',
+    null,
+  );
+  assert.equal(
+    resolveDeployOffer([{
+      id: 'a3b',
+      role: 'assistant',
+      status: 'done',
+      activities: [
+        { kind: 'tool', name: 'mcp__edgeone-deploy__publish_project', status: 'failed' },
+      ],
+    }], { canDownload: true, loading: false }),
+    null,
   );
 });
 

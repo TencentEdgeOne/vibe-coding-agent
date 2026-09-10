@@ -1,12 +1,13 @@
 /**
  * When the composer should offer a production deploy.
  *
- * The topbar no longer has a persistent publish button. A short prompt appears
- * above the input after a finished project turn — not while the agent is busy,
- * not after a successful deploy of that same turn, and not after a pure Q&A.
+ * The topbar rocket can start a deploy at any idle moment. A short prompt also
+ * appears above the input after a finished project turn — not while the agent
+ * is busy, not after a successful or failed deploy of that same turn, and not
+ * after a pure Q&A. A failed deploy already has its own card in the stream.
  */
 
-export type DeployOfferKind = 'first' | 'again' | 'retry';
+export type DeployOfferKind = 'first' | 'again';
 
 export type DeployOfferActivity = {
   kind?: string;
@@ -82,7 +83,7 @@ export function resolveDeployOffer(
 
   const lastActivities = activitiesOf(last);
   if (hasSuccessfulPublish(lastActivities)) return null;
-  if (hasFailedPublish(lastActivities)) return 'retry';
+  if (hasFailedPublish(lastActivities)) return null;
   if (usedPublishTool(lastActivities)) return null;
 
   const everPublished = messages.some((message) => hasSuccessfulPublish(activitiesOf(message)));

@@ -11,6 +11,10 @@ export const LANGUAGE_STORAGE_KEY = 'web-dev-agent-language';
 export const TRANSLATIONS = {
   zh: {
     languageToggleAria: 'Switch language to English',
+    // Two editions of this template ship side by side and share a wordmark.
+    // The pill is the only thing on screen that says this is the general
+    // agent, not the platform-wired edition.
+    brandTag: '通用版',
     deployLabel: '一键部署',
     publishLabel: '部署项目',
     republishLabel: '重新发布',
@@ -139,6 +143,7 @@ export const TRANSLATIONS = {
   },
   en: {
     languageToggleAria: '切换语言为中文',
+    brandTag: 'Universal edition',
     deployLabel: 'Deploy',
     publishLabel: 'Deploy project',
     republishLabel: 'Republish',

@@ -2,11 +2,12 @@
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Check,
   Code2,
+  Copy,
   Download,
   Eye,
-  Laptop,
-  Smartphone,
+  Rocket,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -21,7 +22,7 @@ import {
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AgentConversation } from '@/app/components/agent-conversation';
 import { FilesPanel } from '@/app/components/files-panel';
-import { PreviewUrlChip } from '@/app/features/workspace/components/preview-url-chip';
+import { PreviewControls } from './components/preview-controls';
 import { useFileContentCache } from '@/app/hooks/use-file-content-cache';
 import { useTypewriterPlaceholder } from '@/app/hooks/use-typewriter-placeholder';
 import {
@@ -210,7 +211,20 @@ export function WorkspaceScreen() {
   const shareablePreviewUrl = preview?.url || activePreviewUrl;
   const hasWorkspace = messages.length > 0 || Boolean(preview) || Boolean(build) || workspaceRestoring;
   const canDownload = Boolean(download?.url);
-  const publishDisabled = !hasWorkspace || !canDownload || loading;
+  const publishDisabled = !hasWorkspace || !canDownload || loading || workspaceRestoring;
+  const publishHint = !hasWorkspace || !canDownload
+    ? t.workspace.publishDisabledNoProject
+    : publishDisabled
+      ? t.workspace.publishDisabledAgentRunning
+      : t.publishLabel;
+  const downloadHint = downloadBusy ? t.workspace.downloading : t.workspace.downloadSource;
+  const previewControlsCopy = useMemo(() => ({
+    viewportGroup: t.workspace.previewViewport,
+    desktop: t.workspace.previewDesktop,
+    mobile: t.workspace.previewMobile,
+    refresh: t.workspace.refreshPreview,
+    open: t.workspace.openPreview,
+  }), [t]);
   const deployOfferKind = resolveDeployOffer(messages, {
     canDownload,
     loading: loading || workspaceRestoring,
@@ -218,12 +232,10 @@ export function WorkspaceScreen() {
   const deployOfferTurnId = lastFinishedAssistant(messages)?.id || '';
   const deployOffer = deployOfferKind && deployOfferTurnId && deployOfferTurnId !== dismissedDeployTurnId
     ? {
-      prompt: deployOfferKind === 'retry'
-        ? t.workspace.publishOfferRetry
-        : deployOfferKind === 'again'
-          ? t.workspace.publishOfferAgain
-          : t.workspace.publishOffer,
-      deploy: deployOfferKind === 'retry' ? t.workspace.publishRetry : t.workspace.publishOfferAction,
+      prompt: deployOfferKind === 'again'
+        ? t.workspace.publishOfferAgain
+        : t.workspace.publishOffer,
+      deploy: t.workspace.publishOfferAction,
       dismiss: t.workspace.publishOfferDismiss,
     }
     : null;
@@ -1966,53 +1978,51 @@ export function WorkspaceScreen() {
 
             <div className="workspace-topbar-center">
               {sandboxTab === 'preview' && shareablePreviewUrl && !previewRefreshing && !previewRefreshFailed && (
-                <PreviewUrlChip
-                  path={previewDisplayPath}
-                  copied={previewCopied}
-                  copy={t.workspace}
-                  onCopy={handleCopyPreviewUrl}
-                  onRefresh={handleRefreshPreview}
-                  onOpen={handleOpenPreview}
-                />
+                <button
+                  type="button"
+                  onClick={handleCopyPreviewUrl}
+                  className="workspace-url-chip"
+                  title={previewCopied ? t.workspace.previewPathCopied : t.workspace.copyPreviewPath}
+                >
+                  <span dir="ltr">{previewDisplayPath}</span>
+                  {previewCopied ? <Check /> : <Copy />}
+                </button>
               )}
             </div>
 
             <div className="workspace-topbar-actions">
-              {sandboxTab === 'preview' && shareablePreviewUrl && !previewRefreshing && !previewRefreshFailed && (
-                <div className="workspace-viewport-switch" role="group" aria-label={t.workspace.previewViewport}>
-                  <button
-                    type="button"
-                    aria-pressed={previewViewport === 'desktop'}
-                    aria-label={t.workspace.previewDesktop}
-                    data-tooltip={t.workspace.previewDesktop}
-                    onClick={() => setPreviewViewport('desktop')}
-                  >
-                    <Laptop />
-                  </button>
-                  <button
-                    type="button"
-                    aria-pressed={previewViewport === 'mobile'}
-                    aria-label={t.workspace.previewMobile}
-                    data-tooltip={t.workspace.previewMobile}
-                    onClick={() => setPreviewViewport('mobile')}
-                  >
-                    <Smartphone />
-                  </button>
-                </div>
-              )}
-              {sandboxTab === 'files' && canDownload && (
+              <div className="workspace-topbar-group">
+                <button
+                  type="button"
+                  onClick={handlePublish}
+                  disabled={publishDisabled}
+                  className="workspace-icon-button is-publish"
+                  aria-label={publishHint}
+                  data-tooltip={publishHint}
+                >
+                  <Rocket className="size-3.5" />
+                </button>
                 <button
                   type="button"
                   onClick={() => void handleDownload()}
-                  disabled={downloadBusy}
+                  disabled={downloadBusy || !download?.url}
                   className="workspace-icon-button"
-                  aria-label={downloadBusy ? t.workspace.downloading : t.workspace.downloadSource}
-                  data-tooltip={downloadBusy ? t.workspace.downloading : t.workspace.downloadSource}
+                  aria-label={downloadHint}
+                  data-tooltip={downloadHint}
                 >
                   {downloadBusy
-                    ? <span className="size-3.5 animate-spin rounded-full border-2 border-transparent border-t-current" />
+                    ? <span className="workspace-icon-spinner" />
                     : <Download className="size-3.5" />}
                 </button>
+              </div>
+              {sandboxTab === 'preview' && shareablePreviewUrl && !previewRefreshing && !previewRefreshFailed && (
+                <PreviewControls
+                  viewport={previewViewport}
+                  copy={previewControlsCopy}
+                  onViewportChange={setPreviewViewport}
+                  onRefresh={handleRefreshPreview}
+                  onOpen={handleOpenPreview}
+                />
               )}
             </div>
           </div>

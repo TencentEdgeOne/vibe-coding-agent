@@ -1,6 +1,6 @@
 'use client';
 
-import { MessageCircle } from 'lucide-react';
+import { ArrowLeft, MessageCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -71,36 +71,20 @@ export function SiteHeader({
   return (
     <header className="site-topbar">
       <div className="site-brand-cluster">
-        {hasWorkspace ? (
-          <button
-            type="button"
-            onClick={onNewProject}
-            className="site-brand is-back"
-            aria-label={copy.workspace.back}
-            title={copy.workspace.back}
-            style={{ gap: 8 }}
-          >
-            <svg
-              viewBox="0 0 16 16"
-              width="13"
-              height="13"
-              fill="none"
-              aria-hidden="true"
-              style={{ color: '#17181c', flex: '0 0 13px' }}
+        {hasWorkspace && (
+          <span className="site-hint is-start" data-hint={copy.workspace.back}>
+            <button
+              type="button"
+              onClick={onNewProject}
+              className="site-icon-button is-ghost"
+              aria-label={copy.workspace.back}
             >
-              <path
-                d="M10.2 3.2 5.4 8l4.8 4.8"
-                stroke="currentColor"
-                strokeWidth="1.85"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-            <span>{BRAND_MARK}</span>
-          </button>
-        ) : (
-          <div className="site-brand" aria-label={BRAND_MARK}>{BRAND_MARK}</div>
+              <ArrowLeft />
+            </button>
+          </span>
         )}
+        <div className="site-brand" aria-label={BRAND_MARK}>{BRAND_MARK}</div>
+        <span className="site-brand-tag">{copy.brandTag}</span>
         {showExportTranscript && (
           <>
             <button

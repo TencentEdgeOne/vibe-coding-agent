@@ -192,9 +192,6 @@ function PublishSiteCard({
 
   return (
     <div className={`publish-site-card${failed ? ' is-failed' : ''}`}>
-      <span className="publish-site-card-icon" aria-hidden="true">
-        {failed ? <CircleAlert /> : <Rocket />}
-      </span>
       <div className="publish-site-card-body">
         <span className="publish-site-card-caption">{failed ? copy.siteFailed : copy.siteLabel}</span>
         {failed ? (

@@ -883,6 +883,10 @@ input::placeholder {
 
 .workspace-icon-button:disabled {
   cursor: not-allowed;
+}
+
+.workspace-icon-button:disabled svg,
+.workspace-icon-button:disabled .workspace-icon-spinner {
   opacity: 0.45;
 }
 
@@ -1122,10 +1126,22 @@ input::placeholder {
   content: none;
 }
 
+.site-hint.is-start::after {
+  right: auto;
+  left: 0;
+}
+
 .site-hint:hover::after,
 .site-hint:focus-within::after {
   opacity: 1;
   transform: translateY(0);
+}
+
+.site-brand-cluster {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
 }
 
 .site-brand {
@@ -1141,34 +1157,21 @@ input::placeholder {
   white-space: nowrap;
 }
 
-button.site-brand.is-back {
-  gap: 8px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-  appearance: none;
-  cursor: pointer;
-  color: #17181c;
-}
-
-button.site-brand.is-back svg {
-  width: 13px;
-  height: 13px;
-  flex: 0 0 13px;
-  color: #17181c;
-  transition: transform 140ms ease;
-}
-
-button.site-brand.is-back:hover svg {
-  transform: translateX(-1px);
-}
-
-.site-brand-cluster {
-  display: flex;
-  min-width: 0;
+/* Two editions share the same wordmark; the pill is what names this one. */
+.site-brand-tag {
+  display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
-  gap: 6px;
+  border: 1px solid color-mix(in srgb, var(--brand) 22%, transparent);
+  border-radius: 999px;
+  background: rgba(47, 107, 255, 0.08);
+  padding: 3px 8px;
+  color: var(--brand-deep);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .site-topbar-actions {
@@ -1249,6 +1252,19 @@ button.site-brand.is-back:hover svg {
 .site-icon-button svg {
   width: 14px;
   height: 14px;
+}
+
+/* Leaving the project sits next to the wordmark rather than among the
+   actions, so it carries no box of its own until the pointer is on it. */
+.site-icon-button.is-ghost {
+  border-color: transparent;
+  color: #5c6370;
+}
+
+.site-icon-button.is-ghost:hover:not(:disabled) {
+  border-color: transparent;
+  background: transparent;
+  color: #17181c;
 }
 
 .site-icon-button:disabled,
@@ -1455,27 +1471,6 @@ body.is-workspace-resizing {
 .publish-site-card.is-failed {
   border-color: color-mix(in srgb, var(--destructive) 28%, #e6e8ee);
   background: color-mix(in srgb, var(--destructive) 6%, #fff);
-}
-
-.publish-site-card-icon {
-  display: grid;
-  width: 28px;
-  height: 28px;
-  flex: 0 0 28px;
-  place-items: center;
-  border-radius: 8px;
-  background: #f3f4f6;
-  color: #17181c;
-}
-
-.publish-site-card.is-failed .publish-site-card-icon {
-  background: color-mix(in srgb, var(--destructive) 12%, #fff);
-  color: var(--destructive);
-}
-
-.publish-site-card-icon svg {
-  width: 14px;
-  height: 14px;
 }
 
 .publish-site-card-body {
@@ -1708,45 +1703,34 @@ body.is-workspace-resizing {
 .workspace-topbar-actions {
   min-width: 0;
   justify-content: flex-end;
+  justify-self: end;
+  gap: 14px;
+}
+
+.workspace-topbar-group {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
   gap: 6px;
 }
 
 .workspace-url-chip {
   display: flex;
-  height: 30px;
-  width: 240px;
-  min-width: 240px;
+  width: min(280px, 38vw);
+  height: 26px;
+  min-width: 120px;
   align-items: center;
-  gap: 2px;
-  overflow: visible;
+  gap: 7px;
+  overflow: hidden;
   border: 1px solid #e8eaee;
   border-radius: 999px;
   background: #fff;
-  padding: 0 4px 0 10px;
+  padding: 0 10px;
   color: #6b7280;
   font-size: 11px;
 }
 
-.workspace-url-chip-label,
-.workspace-url-chip-action {
-  border: 0;
-  background: transparent;
-}
-
-.workspace-url-chip-label {
-  display: flex;
-  position: relative;
-  min-width: 0;
-  flex: 1 1 0;
-  align-items: center;
-  gap: 7px;
-  overflow: visible;
-  padding: 0 4px 0 0;
-  color: inherit;
-  font-size: inherit;
-}
-
-.workspace-url-chip-label > span {
+.workspace-url-chip > span {
   min-width: 0;
   flex: 1;
   overflow: hidden;
@@ -1755,32 +1739,25 @@ body.is-workspace-resizing {
   text-align: left;
 }
 
-.workspace-url-chip-label svg {
+.workspace-url-chip svg {
   width: 11px;
   height: 11px;
   flex: 0 0 11px;
 }
 
-.workspace-url-chip-action {
-  display: grid;
-  position: relative;
-  width: 24px;
-  height: 24px;
-  flex: 0 0 24px;
-  place-items: center;
-  border-radius: 999px;
-  color: inherit;
-}
-
-.workspace-url-chip-action:hover,
-.workspace-url-chip-action:focus-visible {
-  background: #f0f1f3;
-  color: #17181c;
-}
-
-.workspace-url-chip-action svg {
+.workspace-icon-spinner {
   width: 13px;
   height: 13px;
+  border: 2px solid transparent;
+  border-top-color: currentcolor;
+  border-radius: 999px;
+  animation: workspace-icon-spin 0.7s linear infinite;
+}
+
+@keyframes workspace-icon-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .workspace-viewport-switch {
@@ -1826,6 +1803,25 @@ body.is-workspace-resizing {
   border-color: transparent;
   background: #f0f1f3;
   transform: none;
+}
+
+.workspace-icon-button.is-publish {
+  color: var(--brand);
+}
+
+.workspace-icon-button.is-publish:hover:not(:disabled),
+.workspace-icon-button.is-publish:focus-visible {
+  background: var(--brand);
+  color: #fff;
+}
+
+.workspace-icon-button.is-publish:disabled {
+  color: #68717e;
+  opacity: 1;
+}
+
+.workspace-icon-button.is-publish:disabled svg {
+  opacity: 0.45;
 }
 
 .workspace-panel-content,
@@ -1913,6 +1909,11 @@ body.is-workspace-resizing {
     display: none;
   }
 
+  .site-brand {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
   .workspace-topbar {
     align-items: center;
     padding: 0 8px;
@@ -1921,18 +1922,14 @@ body.is-workspace-resizing {
   .workspace-topbar-actions {
     max-width: none;
     flex-wrap: nowrap;
+    gap: 6px;
   }
 
-  .workspace-url-chip {
-    width: auto;
-    min-width: 0;
-    padding: 0 4px;
+  .workspace-topbar-group {
+    gap: 2px;
   }
 
-  .workspace-url-chip-label {
-    display: none;
-  }
-
+  .workspace-url-chip,
   .workspace-tab-refreshing {
     display: none;
   }
