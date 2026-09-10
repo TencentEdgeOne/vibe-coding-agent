@@ -49,7 +49,7 @@ export type ChatTask = {
   message: string;
   /** Model this turn runs on. Absent means the deployment's configured default. */
   model?: string;
-  /** Host domain used to pick the Makers publish region. */
+  /** Host domain used to pick the Makers publish acceleration area. */
   siteDomain?: string;
   resetProject: boolean;
   status: ChatTaskStatus;

@@ -90,8 +90,8 @@ export async function deployProjectToMakers(
 
     options.onStage('uploading');
 
-    const { region, area } = resolveMakersPublishTarget(options.siteDomain);
-    const makers = new Makers({ token, region });
+    const { area } = resolveMakersPublishTarget(options.siteDomain);
+    const makers = new Makers({ token });
 
     let projectId = state.makersProjectId;
     if (!projectId) {

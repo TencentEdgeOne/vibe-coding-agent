@@ -41,7 +41,7 @@ export async function runChatPipeline(
     userMessagePersisted?: boolean;
     /** Validated model for this turn; '' or absent runs the configured default. */
     model?: string;
-    /** Host domain used to pick the Makers publish region. */
+    /** Host domain used to pick the Makers publish acceleration area. */
     siteDomain?: string;
     /** Server clock when the user message was persisted; first-visible metrics are since this. */
     timingOriginMs?: number;

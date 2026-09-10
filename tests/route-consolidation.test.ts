@@ -103,6 +103,8 @@ test('publish is an MCP deploy tool instead of a dedicated HTTP route', async ()
   assert.match(deploy, /deployProjectToMakers/);
   assert.match(deploy, /rewritePublishZip/);
   assert.match(deploy, /resolveMakersPublishTarget/);
+  assert.match(deploy, /new Makers\(\{ token \}\)/);
+  assert.doesNotMatch(deploy, /new Makers\(\{ token, region \}\)/);
   assert.match(deploy, /makersProjectId/);
   assert.match(deploy, /context\.env/);
   assert.match(deploy, /env\?\.API_TOKEN/);
