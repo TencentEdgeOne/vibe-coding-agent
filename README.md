@@ -1,7 +1,5 @@
 # Vibe Coding General Template
 
-English · [简体中文](./README_zh-CN.md)
-
 Built with the Claude Agent SDK and TypeScript. It turns natural-language requests into lightweight SPA or SSG web apps such as campaign pages, marketing sites, and portfolios. File writes, dependency installation, and live preview run in an isolated sandbox. Agent Runtime then deploys the generated project to the Makers platform through the Makers SDK.
 
 **Framework:** Claude Agent SDK · **Category:** Coding · **Language:** TypeScript

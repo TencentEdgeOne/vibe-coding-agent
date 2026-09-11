@@ -1,7 +1,5 @@
 # Vibe Coding 通用模板
 
-[English](./README.md) · 简体中文
-
 基于 Claude Agent SDK 与 TypeScript 实现，可根据自然语言需求快速生成活动页、官网、作品集等 SPA、SSG 轻量 Web 应用，在隔离沙箱中完成文件写入、依赖安装和实时预览，并由 Agent 运行时通过 Makers SDK 将生成项目部署到 Makers 平台。
 
 **框架：** Claude Agent SDK · **分类：** Coding · **语言：** TypeScript
