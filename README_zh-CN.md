@@ -1,119 +1,108 @@
-# Web Dev Agent
+# Vibe Coding 通用模板
 
-> 一个基于 Claude Agent SDK 和 EdgeOne Makers 的沙箱 Web 开发 Agent。
+[English](./README.md) · 简体中文
+
+基于 Claude Agent SDK 与 TypeScript 实现，可根据自然语言需求快速生成活动页、官网、作品集等 SPA、SSG 轻量 Web 应用，在隔离沙箱中完成文件写入、依赖安装和实时预览，并由 Agent 运行时通过 Makers SDK 将生成项目部署到 Makers 平台。
 
 **框架：** Claude Agent SDK · **分类：** Coding · **语言：** TypeScript
 
 [![部署到 EdgeOne Makers](https://cdnstatic.tencentcs.com/edgeone/pages/deploy.svg)](https://console.cloud.tencent.com/edgeone/makers/new?template=vibe-coding-agent&from=within&fromAgent=1&agentLang=typescript)
 
-## 概览
+## 整体流程
 
-Web Dev Agent 可以把自然语言需求转换为可运行的 Web 项目。每个会话会准备一个隔离的临时沙箱工作区，在其中创建或修改项目文件、安装依赖、发布实时预览，并把验证结果反馈回 Agent 循环。它适合需要生成应用、查看预览、浏览文件的一体化 Coding 类 Makers 模板。
+本模板将需求理解、代码生成、沙箱预览和一键部署串联为完整流程：
 
-- **临时沙箱工作区** — 在当前会话对应的临时沙箱中创建和修改项目代码
-- **多技术栈生成** — 创建或更新 Next.js、Vite/React、静态页面、Node 服务、Flask/FastAPI 等轻量 Web 应用
-- **Claude Agent SDK 循环** — 使用 EdgeOne 沙箱 MCP 工具和受限工具集运行模型
-- **实时预览** — 在临时沙箱内启动应用，并返回运行时生成的预览 URL
-- **验证反馈** — 执行构建或 Python 编译检查，验证失败时尝试一轮自动修复
+```mermaid
+flowchart LR
+    A["自然语言需求"] --> B["Agent 理解与代码生成"]
+    B --> C["隔离沙箱<br/>写文件 / 装依赖 / 预览"]
+    C --> D["Makers SDK 部署"]
+    D --> E["Makers 线上站点"]
+```
 
-## 环境变量
+## 快速开始
 
-| 变量 | 是否必填 | 说明 |
-|----------|----------|-------------|
-| `AI_GATEWAY_API_KEY` | 是 | 模型网关 API Key。使用 Makers Models API Key，或任意 OpenAI 兼容供应商的 Key。 |
-| `AI_GATEWAY_BASE_URL` | 是 | 网关 Base URL。使用 Makers Models 时填写 `https://ai-gateway.edgeone.link/v1`。 |
-| `AI_GATEWAY_MODEL` | 否 | 模型 ID。默认值为 `@makers/deepseek-v4-flash`（Makers 内置模型）。它同时是输入框模型选择器的初始项，以及没人手动选择时实际运行的模型。 |
-| `AI_GATEWAY_EXTRA_MODELS` | 否 | 为输入框的模型选择器追加条目，格式为逗号分隔的 `id\|展示名`（展示名可省略）。内置模型已经在列表中，这里用于填写已在控制台绑定 Key 的厂商模型，例如 `deepseek/deepseek-v4-pro\|DeepSeek V4 Pro`。所有条目共用同一套网关 Key 与 Base URL，因此它扩展的是可选模型而不是可选厂商。不在最终列表中的模型会被服务端拒绝。 |
-| `API_TOKEN` | 是（发布） | 右上角【发布】用于把生成项目部署到 EdgeOne Pages 的 Makers API Token。部署区域根据站点根域名（`.dev` / `.cool`）判断，不使用环境变量。 |
-| `WEB_DEV_AGENT_DEBUG` | 否 | 设置为 `true` 或 `1` 时启用脱敏的服务端调试日志。默认关闭。 |
+1. 创建并获取 [API Token](https://cloud.tencent.com/document/product/1552/127422)。
+2. 使用下面的示例模板直接开始部署。
 
-本模板遵循 OpenAI 兼容标准，可以将这些变量指向 Makers Models 或任意兼容供应商。
+[![Web Coding Agent](https://cdnstatic.tencentcs.com/edgeone/pages/docs/vibe-coding-template.png)](https://console.cloud.tencent.com/edgeone/makers/new?template=vibe-coding-agent&from=within&fromAgent=1&agentLang=typescript)
 
-### 如何获取 `AI_GATEWAY_API_KEY`
+**[Web Coding Agent](https://console.cloud.tencent.com/edgeone/makers/new?template=vibe-coding-agent&from=within&fromAgent=1&agentLang=typescript)** — 一个基于沙箱环境的 Agent 通用模板，用于编写、预览、验证和迭代现代 Web 应用。
 
-1. 打开 [Makers Console](https://edgeone.ai/makers/new?s_url=https://console.tencentcloud.com/edgeone/makers)。
-2. 登录并启用 Makers。
-3. 进入 **Makers → Models → API Key** 并创建 Key。
-4. 将它填写到 `AI_GATEWAY_API_KEY`。
+3. 在部署配置页面，填写 `API_TOKEN` 环境变量。
+4. 点击部署，等待 Makers 完成构建并生成访问地址。
 
-内置模型免费但有额度限制，适合验证使用。生产环境请在控制台绑定自己的模型供应商 Key（BYOK）。
+## 核心能力
 
-### 供应商兜底变量
+本模板提供构建 Vibe Coding 平台所需的完整能力，包括 Agent 运行、沙箱工具、模型调用与多租户隔离等；整体方案详见 [Vibe Coding](https://pages.edgeone.ai/zh/document/vibe-coding)，以下重点介绍本模板的部分核心能力。
 
-Agent 会优先使用 `AI_GATEWAY_*` 变量。需要时也可以使用 Anthropic 兼容或 DeepSeek 兼容变量作为兜底：
+### 集成 Makers SDK 部署
 
-| 变量 | 是否必填 | 说明 |
-|----------|----------|-------------|
-| `ANTHROPIC_API_KEY` | 否 | Anthropic 兼容 API Key 兜底。 |
-| `ANTHROPIC_AUTH_TOKEN` | 否 | Anthropic 兼容认证 Token 兜底。 |
-| `ANTHROPIC_MODEL` | 否 | Anthropic 兼容模型兜底。 |
-| `ANTHROPIC_BASE_URL` | 否 | Anthropic 兼容 Base URL 兜底。 |
-| `ANTHROPIC_CUSTOM_HEADERS` | 否 | 传给 Anthropic SDK 的额外请求头。 |
-| `DEEPSEEK_API_KEY` | 否 | DeepSeek 兼容 API Key 兜底。 |
-| `DEEPSEEK_MODEL` | 否 | DeepSeek 兼容模型兜底。 |
-| `DEEPSEEK_BASE_URL` | 否 | DeepSeek 兼容 Base URL 兜底。 |
-| `CLAUDE_CODE_EXECUTABLE_PATH` | 否 | 可选的 Claude Code 可执行文件路径。 |
+部署由 Agent Runtime 统一控制，关键流程如下：
 
-## 本地开发
+1. 用户确认发布后，Runtime 读取当前会话的项目源码。
+2. Runtime 使用 `API_TOKEN` 调用 Makers SDK，上传部署包并触发构建与部署。
+3. 部署完成后，系统保存项目状态并向用户返回可访问的 HTTPS 地址。
 
-**前置依赖：** Node.js、npm
+部署的详细接入流程可参考 [Makers SDK](https://www.npmjs.com/package/@edgeone/makers-sdk)。
+
+### 安全边界
+
+- `API_TOKEN` 只留在 Agent Runtime，用于调用 SDK 部署，不会进入模型上下文、隔离沙箱。
+- 每个会话使用独立沙箱，代码、依赖与执行环境相互隔离。
+
+## 本地调试和部署
+
+### 启动本地开发调试
+
+1. 进入项目根目录，安装 [EdgeOne CLI](https://cloud.tencent.com/document/product/1552/127423)：
+
+   ```bash
+   npm install -g edgeone
+   ```
+
+2. 登录 EdgeOne，并关联需要调试的 Makers 项目：
+
+   ```bash
+   edgeone login
+   edgeone makers link
+   ```
+
+   关联项目后会把控制台配置的 `API_TOKEN` 和调用 Models 所需的 API Key 自动同步到本地。
+
+3. 启动 Makers 本地开发环境：
+
+   ```bash
+   edgeone makers dev
+   ```
+
+   启动成功后访问：
+
+   - Agent 应用：http://localhost:8088/
+   - 可观测链路追踪：http://localhost:8088/agent-metrics
+
+尚未关联项目时，也可以复制 `.env.example` 为 `.env` 后手动填写环境变量。
+
+### 部署项目
+
+如果项目已关联 Git 仓库，推送代码即可触发 Makers 的 CI 构建与部署。也可以通过 CLI 直接部署：
 
 ```bash
-npm install
-cp .env.example .env
-edgeone makers dev
+# 部署至生产环境
+edgeone makers deploy -n <项目名>
 ```
 
-打开 `http://localhost:8088/agent-metrics` 查看本地可观测面板。
-
-## 项目结构
-
-```text
-web-dev-agent/
-├── app/                    # Next.js 前端界面
-│   ├── layout.tsx          # 应用元数据和根布局
-│   ├── page.tsx            # 对话、进度、预览和文件浏览界面
-│   └── globals.css         # 全局样式
-├── agents/                 # EdgeOne Makers Agent 路由和流水线
-│   ├── chat.ts             # POST /chat：创建并流式返回；GET /chat：重连
-│   ├── models.ts           # GET /models：当前部署的输入框模型目录
-│   ├── publish.ts          # POST /publish：打包沙箱产物并用 makers-sdk 部署
-│   ├── file.ts             # /file 路由
-│   ├── _agent.ts           # Claude Agent SDK 集成
-│   ├── _constants.ts       # 运行时常量
-│   ├── _memory.ts          # 对话历史和项目状态
-│   ├── _pipelines.ts       # 对话和文件读取流水线
-│   ├── _project.ts         # 沙箱项目、预览和验证辅助逻辑
-│   ├── _types.ts           # 共享 TypeScript 类型
-│   ├── tools/              # 自定义沙箱 MCP 工具
-│   └── utils/              # 路径、文本和构建错误辅助逻辑
-├── edgeone.json            # Agent 运行时配置
-├── next.config.ts          # 模板应用的 Next.js 配置
-├── package.json            # 脚本和依赖
-└── tsconfig.json           # TypeScript 配置
-```
-
-以 `_` 开头的文件是私有模块，不会作为 EdgeOne 公开路由暴露。
-
-## 工作原理
-
-Agent 在 `agents/` 下以会话模式运行。带有相同 `conversation_id` 的请求会路由到同一个运行时实例，并在沙箱生命周期内复用同一个临时项目工作区。
-
-1. **提交并流式返回** — 前端携带消息和 `Makers-Conversation-Id` 请求头调用 `POST /chat`。接口持久化任务后在同一个 SSE 响应中持续返回事件，因此正常一轮只调用一次 Agent 路由；从首页发起的新请求也可以设置 `resetProject: true` 来重建项目工作区。
-2. **状态恢复** — Chat pipeline 从 `context.store` 读取对话历史；沙箱已回收时，通过 `context.sandbox.restore()` 从项目 Blob 恢复生成源码。
-3. **LLM 与工具循环** — Claude Agent SDK 使用 `edgeone-sandbox` MCP 服务、`permissionMode: 'dontAsk'` 和仅限沙箱的工具运行。工作区由 host 在模型循环前准备好，Agent 再用 `write_project_file` 写入文件。
-4. **项目编辑** — 生成的源码通过 `write_project_file` 按文件逐个写入，让进度持续反馈到界面。命令执行和依赖安装都在沙箱内完成。
-5. **发布预览** — `publish_preview` 在内部 `3000` 端口启动应用（`/preview/` 已就绪时复用），等待预览入口就绪，并返回仅在当前临时沙箱生命周期内可用的预览 URL。
-6. **验证检查** — Node 项目包含 build 脚本时运行 `npm run build`；存在 Python 文件时运行 `python -m compileall .`。如果 Agent 成功运行后验证失败，流水线会尝试一轮自动修复。
-7. **持久化、SSE 与重连** — 源码检查点通过 `context.sandbox.persist()` 写入当前项目保留的 `__sandbox` Blob Store，归档字节不再经过对话元数据。正常生成通过 `POST /chat` 的 SSE 接收状态、日志、工具、文件、预览、构建状态和最终回复；页面刷新后使用 `GET /chat?runId=...` 重连任务，`GET /resume` 在同一 SSE 连接中恢复工作区并预热最多 48 个、总计 2 MiB 的文本文件。
-
-文件路由为 `/file?path=<relative-path>`，并使用同一会话上下文从沙箱项目读取文本文件。沙箱凭证由运行时提供，本地无需配置。沙箱实例仍是临时资源，生命周期由 `agents.sandbox.timeout` 控制；持久化源码计入用户当前项目的 Blob 存储和配额。
+部署成功后点击 Console 的链接可以访问具体构建信息和部署后的 URL。
 
 ## 资源
 
+- [Vibe Coding](https://pages.edgeone.ai/zh/document/vibe-coding)
 - [Makers Agents 文档](https://cloud.tencent.com/document/product/1552/132759)
 - [Agent 开发快速开始](https://cloud.tencent.com/document/product/1552/132786)
 - [Makers Models](https://cloud.tencent.com/document/product/1552/132748)
+- [API Token](https://cloud.tencent.com/document/product/1552/127422)
+- [EdgeOne CLI](https://cloud.tencent.com/document/product/1552/127423)
+- [Makers SDK](https://www.npmjs.com/package/@edgeone/makers-sdk)
 
 ## 许可证
 

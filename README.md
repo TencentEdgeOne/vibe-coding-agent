@@ -1,119 +1,96 @@
-# Web Dev Agent
+# Vibe Coding General Template
 
-> A sandbox-based web development agent built with the Claude Agent SDK on EdgeOne Makers.
+English · [简体中文](./README_zh-CN.md)
+
+Built with the Claude Agent SDK and TypeScript. It turns natural-language requests into lightweight SPA or SSG web apps such as campaign pages, marketing sites, and portfolios. File writes, dependency installation, and live preview run in an isolated sandbox. Agent Runtime then deploys the generated project to the Makers platform through the Makers SDK.
 
 **Framework:** Claude Agent SDK · **Category:** Coding · **Language:** TypeScript
 
 [![Deploy to EdgeOne Makers](https://cdnstatic.tencentcs.com/edgeone/pages/deploy.svg)](https://edgeone.ai/makers/new?template=vibe-coding-agent&from=within&fromAgent=1&agentLang=typescript)
 
-## Overview
+## Quick start
 
-Web Dev Agent turns natural-language requests into runnable web projects. For each conversation, it prepares an isolated temporary sandbox workspace where it creates or edits project files, installs dependencies, publishes a live preview, and feeds verification results back into the agent loop. Use it for coding-style Makers templates where users need a generated app, a visible preview, and a file browser in one workflow.
+1. Create an [API Token](https://pages.edgeone.ai/document/api-token).
+2. Start from the template below.
 
-- **Temporary sandbox workspace** — creates and edits project code inside the current conversation's temporary sandbox
-- **Multi-stack generation** — creates or updates Next.js, Vite/React, static, Node service, Flask/FastAPI, and similar lightweight web apps
-- **Claude Agent SDK loop** — runs the model with EdgeOne sandbox MCP tools and a restricted tool set
-- **Live preview** — starts the app inside the temporary sandbox and returns a runtime-generated preview URL
-- **Verification feedback** — runs build or Python compile checks and attempts one automatic repair pass when verification fails
+[![Web Coding Agent](https://cdnstatic.tencentcs.com/edgeone/pages/docs/vibe-coding-template.png)](https://edgeone.ai/makers/new?template=vibe-coding-agent&from=within&fromAgent=1&agentLang=typescript)
 
-## Environment Variables
+**[Web Coding Agent](https://edgeone.ai/makers/new?template=vibe-coding-agent&from=within&fromAgent=1&agentLang=typescript)** — A sandbox-based general Agent template for writing, previewing, verifying, and iterating on modern web apps.
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `AI_GATEWAY_API_KEY` | Yes | Model gateway API key. Use your Makers Models API Key, or any OpenAI-compatible provider key. |
-| `AI_GATEWAY_BASE_URL` | Yes | Gateway base URL. For Makers Models, use `https://ai-gateway.edgeone.link/v1`. |
-| `AI_GATEWAY_MODEL` | No | Model ID. Defaults to `@makers/deepseek-v4-flash` (a built-in Makers model). This is what the composer's model picker starts on and what runs when nobody picks. |
-| `AI_GATEWAY_EXTRA_MODELS` | No | Extra entries for the composer's model picker, as comma-separated `id\|Label` pairs (label optional). Built-in models are listed already; use this for vendor models whose key you bound in the console, e.g. `deepseek/deepseek-v4-pro\|DeepSeek V4 Pro`. One gateway key and base URL serve every entry, so this extends the choice of model, not of provider. Anything not in the resulting list is rejected server-side. |
-| `API_TOKEN` | Yes (Publish) | Makers API token used by the header **Publish** action to deploy the generated project to EdgeOne Pages. Region is inferred from the site hostname (`.dev` vs `.cool`), not from an environment variable. |
-| `WEB_DEV_AGENT_DEBUG` | No | Set to `true` or `1` to enable redacted server-side debug logs. Defaults to off. |
+3. On the deploy configuration page, set the `API_TOKEN` environment variable.
+4. Click deploy and wait for Makers to finish the build and return a URL.
 
-This template follows the OpenAI-compatible standard — point these at Makers Models or any compatible provider.
+## Core capabilities
 
-### How to get `AI_GATEWAY_API_KEY`
+This template covers the building blocks of a Vibe Coding platform: Agent runtime, sandbox tools, model access, and tenant isolation. See [Vibe Coding](https://pages.edgeone.ai/document/vibe-coding) for the overall approach. The sections below highlight what this template itself implements.
 
-1. Open the [Makers Console](https://edgeone.ai/makers/new?s_url=https://console.tencentcloud.com/edgeone/makers).
-2. Sign in and enable Makers.
-3. Go to **Makers → Models → API Key** and create a key.
-4. Copy it into `AI_GATEWAY_API_KEY`.
+### Deploy with the Makers SDK
 
-Built-in models are free and rate-limited, which makes them suitable for validation. For production, bind your own provider key (BYOK) in the console.
+Agent Runtime owns the publish path:
 
-### Provider fallbacks
+1. After the user confirms publish, the runtime reads the current conversation's project source.
+2. The runtime calls the Makers SDK with `API_TOKEN`, uploads the artifact, and triggers build and deploy.
+3. When deploy finishes, the runtime saves project state and returns a public HTTPS URL.
 
-The agent prefers `AI_GATEWAY_*` variables. It also accepts Anthropic-compatible and DeepSeek-compatible fallback variables when needed:
+See [Makers SDK](https://www.npmjs.com/package/@edgeone/makers-sdk) for the integration details.
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `ANTHROPIC_API_KEY` | No | Anthropic-compatible API key fallback. |
-| `ANTHROPIC_AUTH_TOKEN` | No | Anthropic-compatible auth token fallback. |
-| `ANTHROPIC_MODEL` | No | Anthropic-compatible model fallback. |
-| `ANTHROPIC_BASE_URL` | No | Anthropic-compatible base URL fallback. |
-| `ANTHROPIC_CUSTOM_HEADERS` | No | Extra headers passed to the Anthropic SDK. |
-| `DEEPSEEK_API_KEY` | No | DeepSeek-compatible API key fallback. |
-| `DEEPSEEK_MODEL` | No | DeepSeek-compatible model fallback. |
-| `DEEPSEEK_BASE_URL` | No | DeepSeek-compatible base URL fallback. |
-| `CLAUDE_CODE_EXECUTABLE_PATH` | No | Optional path to a custom Claude Code executable. |
+### Security boundary
 
-## Local Development
+- `API_TOKEN` stays in Agent Runtime. It is used only to call the SDK for deploy, and never enters the model context or the isolated sandbox.
+- Each conversation gets its own sandbox. Code, dependencies, and the execution environment stay isolated.
 
-**Prerequisites:** Node.js, npm
+## Local debug and deploy
+
+### Start local development
+
+1. From the project root, install the [EdgeOne CLI](https://pages.edgeone.ai/document/edgeone-cli):
+
+   ```bash
+   npm install -g edgeone
+   ```
+
+2. Sign in to EdgeOne and link the Makers project you want to debug:
+
+   ```bash
+   edgeone login
+   edgeone makers link
+   ```
+
+   Linking syncs the console `API_TOKEN` and the Models API key to your local environment.
+
+3. Start the Makers local development environment:
+
+   ```bash
+   edgeone makers dev
+   ```
+
+   After it starts, open:
+
+   - Agent app: http://localhost:8088/
+   - Observability traces: http://localhost:8088/agent-metrics
+
+If the project is not linked yet, copy `.env.example` to `.env` and fill in the variables manually.
+
+### Deploy the project
+
+If the project is connected to a Git repository, pushing code triggers a Makers CI build and deploy. You can also deploy with the CLI:
 
 ```bash
-npm install
-cp .env.example .env
-edgeone makers dev
+# Deploy to production
+edgeone makers deploy -n <project-name>
 ```
 
-Open `http://localhost:8088/agent-metrics` for the local observability panel.
-
-## Project Structure
-
-```text
-web-dev-agent/
-├── app/                    # Next.js frontend UI
-│   ├── layout.tsx          # App metadata and root layout
-│   ├── page.tsx            # Chat, progress, preview, and file browser UI
-│   └── globals.css         # Global styles
-├── agents/                 # EdgeOne Makers agent routes and pipeline
-│   ├── chat.ts             # POST /chat: create + stream; GET /chat: reconnect
-│   ├── models.ts           # GET /models: composer catalogue for this deployment
-│   ├── publish.ts          # POST /publish: pack sandbox and deploy with makers-sdk
-│   ├── file.ts             # /file route
-│   ├── _agent.ts           # Claude Agent SDK integration
-│   ├── _constants.ts       # Runtime constants
-│   ├── _memory.ts          # Conversation history and project state
-│   ├── _pipelines.ts       # Chat and file-read pipelines
-│   ├── _project.ts         # Sandbox project, preview, and verification helpers
-│   ├── _types.ts           # Shared TypeScript types
-│   ├── tools/              # Custom sandbox MCP tools
-│   └── utils/              # Path, text, and build-error helpers
-├── edgeone.json            # Agent runtime configuration
-├── next.config.ts          # Next.js configuration for the template app
-├── package.json            # Scripts and dependencies
-└── tsconfig.json           # TypeScript configuration
-```
-
-Files prefixed with `_` are private modules — not exposed as public routes by EdgeOne.
-
-## How It Works
-
-The agent runs in session mode under `agents/`. Requests with the same `conversation_id` are routed to the same runtime instance and reuse the same temporary project workspace for the sandbox lifetime.
-
-1. **Submit and stream** — the frontend calls `POST /chat` with a message and the `Makers-Conversation-Id` header. The endpoint persists the task and streams it over the same SSE response, so a normal turn uses one Agent request. A new request from the home view can also set `resetProject: true` to recreate the project workspace.
-2. **State restore** — the chat pipeline reads conversation history from `context.store` and restores generated source from project Blob storage through `context.sandbox.restore()` when the sandbox is cold.
-3. **LLM and tool loop** — the Claude Agent SDK runs with the `edgeone-sandbox` MCP server, `permissionMode: 'dontAsk'`, and sandbox-only tools. The host prepares the project workspace before the model loop; the agent then writes files with `write_project_file`.
-4. **Project editing** — generated source files are written incrementally through one `write_project_file` call per file, so progress reaches the UI continuously. Commands and dependency installation run inside the sandbox.
-5. **Preview publish** — `publish_preview` starts the app on internal port `3000` (or reuses it when `/preview/` is already ready), waits for the preview entry to become ready, and returns a preview URL that is valid only for the current temporary sandbox lifetime.
-6. **Verification** — the runtime runs `npm run build` when a Node project has a build script, or `python -m compileall .` when Python files are present. If verification fails after a successful agent run, the pipeline attempts one auto-fix pass.
-7. **Persistence, SSE, and reconnect** — source checkpoints use `context.sandbox.persist()` and are stored under the current project's reserved `__sandbox` Blob store, so archive bytes never pass through conversation metadata. `POST /chat` receives status, logs, tool calls, file updates, preview state, build status, and the final reply. After a refresh, `GET /chat?runId=...` reconnects to the same detached task; `GET /resume` restores the workspace and hydrates up to 48 text files / 2 MiB over the same SSE connection.
-
-The file route is `/file?path=<relative-path>` and uses the same conversation context to read text files from the sandbox project. Sandbox credentials are provided by the runtime; no local sandbox credentials are required. Sandbox instances remain temporary and are controlled by `agents.sandbox.timeout`, while persisted source is charged to and retained with the user's project Blob storage.
+After a successful deploy, use the Console link to open the build details and the live URL.
 
 ## Resources
 
+- [Vibe Coding](https://pages.edgeone.ai/document/vibe-coding)
 - [Makers Agents Documentation](https://pages.edgeone.ai/document/agents)
 - [Quick Start: Agent Development](https://pages.edgeone.ai/document/agents-quick-start)
 - [Makers Models](https://pages.edgeone.ai/document/models)
+- [API Token](https://pages.edgeone.ai/document/api-token)
+- [EdgeOne CLI](https://pages.edgeone.ai/document/edgeone-cli)
+- [Makers SDK](https://www.npmjs.com/package/@edgeone/makers-sdk)
 
 ## License
 
