@@ -8,12 +8,6 @@
 
 [![部署到 EdgeOne Makers](https://cdnstatic.tencentcs.com/edgeone/pages/deploy.svg)](https://console.cloud.tencent.com/edgeone/makers/new?template=vibe-coding-agent&from=within&fromAgent=1&agentLang=typescript)
 
-## 整体流程
-
-本模板将需求理解、代码生成、沙箱预览和一键部署串联为完整流程：
-
-![](https://mediastatic-hk-1258344699.cos-internal.ap-hongkong.tencentcos.cn/tRpcWrite/100027539259/5a2843edad8811f18d3852540008be5a.png)
-
 ## 快速开始
 
 1. 创建并获取 [API Token](https://cloud.tencent.com/document/product/1552/127422)。
