@@ -57,8 +57,24 @@ test('directory tools summarize as a path, not JSON', () => {
 
 test('tool output is capped at two kilobytes', () => {
   const summary = summarizeToolOutput('x'.repeat(3_000));
-  assert.ok(summary.length < 2_100);
-  assert.match(summary, /truncated$/);
+  assert.ok(summary.length <= 2_000);
+  assert.doesNotMatch(summary, /truncated/i);
+});
+
+test('command output keeps the tail and collapses npm http fetch noise', () => {
+  const lines = [
+    'npm info using npm@10.8.2',
+    ...Array.from({ length: 40 }, (_, index) => (
+      `npm http fetch GET 200 https://registry.npmjs.org/pkg-${index} ${index}ms`
+    )),
+    'added 120 packages in 3s',
+  ];
+  const summary = summarizeToolOutput(lines.join('\n'), '', 'commands');
+
+  assert.doesNotMatch(summary, /truncated/i);
+  assert.doesNotMatch(summary, /registry\.npmjs\.org/);
+  assert.match(summary, /npm http fetch ×40/);
+  assert.match(summary, /added 120 packages/);
 });
 
 test('activity trim keeps timing logs when the item cap is exceeded', () => {

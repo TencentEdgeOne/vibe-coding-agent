@@ -15,6 +15,7 @@
  * file is the whole cleanup.
  */
 
+import { formatCommandOutput, looksLikeCommandLog } from '../../../shared/command-output.ts';
 import type { ChatStreamEvent, ProgressPhase } from '../../../shared/protocol.ts';
 import type { DomainEvent, ToolKind } from '../_events.ts';
 
@@ -33,8 +34,11 @@ const PHASE_BY_TOOL_KIND: Record<ToolKind, ProgressPhase | undefined> = {
   other: undefined,
 };
 
-function truncateForDisplay(value: string, limit = OUTPUT_DISPLAY_LIMIT) {
-  return value.length > limit ? `${value.slice(0, limit)}\n... truncated` : value;
+function truncateForDisplay(value: string) {
+  if (looksLikeCommandLog(value)) {
+    return formatCommandOutput(value);
+  }
+  return value.length > OUTPUT_DISPLAY_LIMIT ? value.slice(0, OUTPUT_DISPLAY_LIMIT) : value;
 }
 
 /**

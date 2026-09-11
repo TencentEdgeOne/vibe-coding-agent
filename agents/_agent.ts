@@ -315,7 +315,7 @@ export async function runCodingAgent(
               type: 'tool_output',
               data: {
                 tool_use_id: id,
-                outputSummary: summarizeToolOutput(accumulated, state.appDir),
+                outputSummary: summarizeToolOutput(accumulated, state.appDir, 'commands'),
               },
             });
           },
@@ -549,7 +549,7 @@ export async function runCodingAgent(
             ...(known?.command ? { command: known.command } : {}),
             ok: event.ok,
             preview: truncateForStream(output, 500),
-            outputSummary: summarizeToolOutput(output, state.appDir),
+            outputSummary: summarizeToolOutput(output, state.appDir, known?.name),
             status: event.ok ? 'completed' : 'failed',
             endedAt: event.at,
           },

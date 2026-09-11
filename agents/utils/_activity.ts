@@ -1,3 +1,4 @@
+import { formatCommandOutput } from '../../shared/command-output.ts';
 import type { PersistedActivity, PersistedActivityTurn } from '../_types.ts';
 import { isTimingLog } from './_timing.ts';
 
@@ -6,7 +7,7 @@ const SENSITIVE_KEY = /(authorization|cookie|password|passwd|secret|token|api[_-
 
 function truncate(value: string, limit = SUMMARY_LIMIT) {
   const normalized = value.replace(/\x1b\[[0-9;?]*[~A-Za-z]/g, '').trim();
-  return normalized.length > limit ? `${normalized.slice(0, limit)}\n... truncated` : normalized;
+  return normalized.length > limit ? normalized.slice(0, limit) : normalized;
 }
 
 function redactInlineSecrets(value: string) {
@@ -87,9 +88,14 @@ export function summarizeToolInput(name: string, input: unknown, projectDir = ''
   return truncate(JSON.stringify(safeValue(record, projectDir), null, 2));
 }
 
-export function summarizeToolOutput(value: string, projectDir = '') {
+export function summarizeToolOutput(value: string, projectDir = '', name = '') {
   const withoutProjectPath = projectDir ? value.split(projectDir).join('<project>') : value;
-  return truncate(redactInlineSecrets(withoutProjectPath));
+  const cleaned = redactInlineSecrets(withoutProjectPath);
+  const shortName = name.replace(/^mcp__[^_]+__/, '');
+  if (shortName === 'commands') {
+    return formatCommandOutput(cleaned);
+  }
+  return truncate(cleaned);
 }
 
 function isTimingActivity(activity: PersistedActivity) {

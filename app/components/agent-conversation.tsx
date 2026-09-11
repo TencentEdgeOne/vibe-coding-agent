@@ -24,6 +24,7 @@ import {
 import { displayPublishOrigin } from '../../shared/publish-target';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { formatCommandOutput } from '../../shared/command-output';
 import {
   presentToolActivity,
   type ToolAction,
@@ -97,6 +98,16 @@ function ActivityIcon({ status, action }: { status: ActivityStatus; action: Tool
   return <ActionIcon action={action} />;
 }
 
+function displayToolOutput(
+  output: string,
+  isCommand: boolean,
+) {
+  if (!output) return '';
+  return isCommand
+    ? formatCommandOutput(output)
+    : output.replace(/\n?\.\.\. truncated\s*$/i, '');
+}
+
 function ToolActivityRow({ activity, copy, previouslyReadPaths }: {
   activity: Extract<AssistantActivity, { kind: 'tool' }>;
   copy: ConversationCopy;
@@ -104,15 +115,29 @@ function ToolActivityRow({ activity, copy, previouslyReadPaths }: {
 }) {
   const [open, setOpen] = useState(false);
   const autoOpenedRef = useRef(false);
+  const outputRef = useRef<HTMLPreElement | null>(null);
   const presentation = presentToolActivity(activity, previouslyReadPaths);
+  const isCommand = presentation.action === 'Run command';
+  const output = displayToolOutput(activity.outputSummary || '', isCommand);
+  const inputIsRedundant = isCommand && Boolean(activity.inputSummary)
+    && activity.inputSummary.trim() === (presentation.target || activity.command || '').trim();
+  const showInput = Boolean(activity.inputSummary) && !inputIsRedundant;
+  const canExpand = showInput || Boolean(output);
 
   useEffect(() => {
     if (autoOpenedRef.current) return;
-    if (activity.status === 'running' && activity.outputSummary) {
+    if (activity.status === 'running' && output) {
       autoOpenedRef.current = true;
       setOpen(true);
     }
-  }, [activity.status, activity.outputSummary]);
+  }, [activity.status, output]);
+
+  useEffect(() => {
+    const node = outputRef.current;
+    if (!open || !node) return;
+    node.scrollTop = node.scrollHeight;
+  }, [open, output]);
+
   const label = activity.status === 'running'
     ? copy.running
     : activity.status === 'completed'
@@ -125,7 +150,7 @@ function ToolActivityRow({ activity, copy, previouslyReadPaths }: {
     <div className="tool-activity-row">
       <button
         type="button"
-        onClick={() => setOpen((current) => !current)}
+        onClick={() => canExpand && setOpen((current) => !current)}
         aria-expanded={open}
         className={`tool-activity-trigger tool-activity-${activity.status}`}
       >
@@ -134,27 +159,24 @@ function ToolActivityRow({ activity, copy, previouslyReadPaths }: {
           <span>{actionLabel(presentation.action, copy)}{presentation.target ? ' ' : ''}</span>
           {presentation.target && <strong>{presentation.target}</strong>}
         </span>
-        {(activity.inputSummary || activity.outputSummary) && (
+        {canExpand && (
           <ChevronRight className={`tool-activity-chevron ${open ? 'rotate-90' : ''}`} />
         )}
         <span className="sr-only">{label}</span>
       </button>
-      {open && (
-        <div className="tool-activity-detail">
-          {activity.inputSummary && (
+      {open && canExpand && (
+        <div className={`tool-activity-detail${isCommand ? ' is-command' : ''}`}>
+          {showInput && (
             <div>
               <span>{copy.input}</span>
               <pre>{activity.inputSummary}</pre>
             </div>
           )}
-          {activity.outputSummary && (
+          {output && (
             <div>
-              <span>{copy.output}</span>
-              <pre>{activity.outputSummary}</pre>
+              {!isCommand && <span>{copy.output}</span>}
+              <pre ref={outputRef}>{output}</pre>
             </div>
-          )}
-          {!activity.inputSummary && !activity.outputSummary && (
-            <p className="tool-activity-empty">{label}</p>
           )}
         </div>
       )}

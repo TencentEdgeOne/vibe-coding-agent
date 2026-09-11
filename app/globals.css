@@ -377,6 +377,11 @@ input::placeholder {
   animation: trace-list-in 160ms ease-out both;
 }
 
+.tool-activity-detail.is-command {
+  background: #111318;
+  padding: 8px 10px;
+}
+
 .tool-activity-detail span {
   color: #8b93a1;
   font-size: 10px;
@@ -393,6 +398,12 @@ input::placeholder {
   font-size: 11px;
   line-height: 1.55;
   overflow-wrap: anywhere;
+}
+
+.tool-activity-detail.is-command pre {
+  max-height: 220px;
+  color: #d6dae2;
+  line-height: 1.5;
 }
 
 .tool-activity-empty {
