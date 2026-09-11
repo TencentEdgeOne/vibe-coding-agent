@@ -119,9 +119,10 @@ function ToolActivityRow({ activity, copy, previouslyReadPaths }: {
   const presentation = presentToolActivity(activity, previouslyReadPaths);
   const isCommand = presentation.action === 'Run command';
   const output = displayToolOutput(activity.outputSummary || '', isCommand);
-  const inputIsRedundant = isCommand && Boolean(activity.inputSummary)
-    && activity.inputSummary.trim() === (presentation.target || activity.command || '').trim();
-  const showInput = Boolean(activity.inputSummary) && !inputIsRedundant;
+  const inputSummary = activity.inputSummary ?? '';
+  const inputIsRedundant = isCommand && Boolean(inputSummary)
+    && inputSummary.trim() === (presentation.target || activity.command || '').trim();
+  const showInput = Boolean(inputSummary) && !inputIsRedundant;
   const canExpand = showInput || Boolean(output);
 
   useEffect(() => {
@@ -169,7 +170,7 @@ function ToolActivityRow({ activity, copy, previouslyReadPaths }: {
           {showInput && (
             <div>
               <span>{copy.input}</span>
-              <pre>{activity.inputSummary}</pre>
+              <pre>{inputSummary}</pre>
             </div>
           )}
           {output && (
