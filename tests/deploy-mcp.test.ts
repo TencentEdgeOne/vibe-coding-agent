@@ -35,8 +35,8 @@ test('publish_project reports deploy stages as tool_output', async () => {
 test('deploy stages have stable labels the chip can parse', () => {
   assert.equal(formatDeployStage('packaging'), 'Packaging the project');
   assert.equal(formatDeployStage('uploading'), 'Uploading the artifact');
-  assert.equal(formatDeployStage('deploying'), 'Deploying to EdgeOne Pages');
-  assert.equal(formatDeployStage('deploying', 'building'), 'Deploying to EdgeOne Pages (building)');
+  assert.equal(formatDeployStage('deploying'), 'Deploying to EdgeOne Makers');
+  assert.equal(formatDeployStage('deploying', 'building'), 'Deploying to EdgeOne Makers (building)');
 });
 
 test('deploying without a token fails before packaging', async () => {

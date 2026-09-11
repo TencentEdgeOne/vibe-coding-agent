@@ -14,7 +14,7 @@ import { extractToolUseId } from './_commands-wrap.ts';
 function appendDeployStageLine(lines: string[], stage: PublishStage, status?: string) {
   const line = formatDeployStage(stage, status);
   const last = lines.at(-1);
-  if (last && last.startsWith('Deploying to EdgeOne Pages') && line.startsWith('Deploying to EdgeOne Pages')) {
+  if (last && last.startsWith('Deploying to EdgeOne Makers') && line.startsWith('Deploying to EdgeOne Makers')) {
     lines[lines.length - 1] = line;
     return;
   }
@@ -48,7 +48,7 @@ export function buildPublishProjectTool(
 ) {
   return defineClaudeTool(
     'publish_project',
-    'Deploy the current project to EdgeOne Pages. Call this only when the user explicitly asks to deploy, publish, or go live. Call it at most once per request. Do not use it for the sandbox preview — that is publish_preview. The UI shows a site card; do not repeat any production URL in your reply.',
+    'Deploy the current project to EdgeOne Makers. Call this only when the user explicitly asks to deploy, publish, or go live. Call it at most once per request. Do not use it for the sandbox preview — that is publish_preview. The UI shows a site card; do not repeat any production URL in your reply.',
     {},
     async (_input, extra) => {
       const toolUseId = extractToolUseId(extra);

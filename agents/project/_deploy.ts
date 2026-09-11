@@ -14,7 +14,7 @@ import { rewritePublishZip } from './_publish-rewrite.ts';
 export function formatDeployStage(stage: PublishStage, status?: string) {
   if (stage === 'uploading') return 'Uploading the artifact';
   if (stage === 'deploying') {
-    return status ? `Deploying to EdgeOne Pages (${status})` : 'Deploying to EdgeOne Pages';
+    return status ? `Deploying to EdgeOne Makers (${status})` : 'Deploying to EdgeOne Makers';
   }
   return 'Packaging the project';
 }
