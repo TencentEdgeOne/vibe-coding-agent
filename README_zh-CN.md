@@ -12,20 +12,12 @@
 
 本模板将需求理解、代码生成、沙箱预览和一键部署串联为完整流程：
 
-```mermaid
-flowchart LR
-    A["自然语言需求"] --> B["Agent 理解与代码生成"]
-    B --> C["隔离沙箱<br/>写文件 / 装依赖 / 预览"]
-    C --> D["Makers SDK 部署"]
-    D --> E["Makers 线上站点"]
-```
+![](https://mediastatic-hk-1258344699.cos-internal.ap-hongkong.tencentcos.cn/tRpcWrite/100027539259/5a2843edad8811f18d3852540008be5a.png)
 
 ## 快速开始
 
 1. 创建并获取 [API Token](https://cloud.tencent.com/document/product/1552/127422)。
 2. 使用下面的示例模板直接开始部署。
-
-[![Web Coding Agent](https://cdnstatic.tencentcs.com/edgeone/pages/docs/vibe-coding-template.png)](https://console.cloud.tencent.com/edgeone/makers/new?template=vibe-coding-agent&from=within&fromAgent=1&agentLang=typescript)
 
 **[Web Coding Agent](https://console.cloud.tencent.com/edgeone/makers/new?template=vibe-coding-agent&from=within&fromAgent=1&agentLang=typescript)** — 一个基于沙箱环境的 Agent 通用模板，用于编写、预览、验证和迭代现代 Web 应用。
 

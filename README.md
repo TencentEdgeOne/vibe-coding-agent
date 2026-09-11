@@ -13,8 +13,6 @@ Built with the Claude Agent SDK and TypeScript. It turns natural-language reques
 1. Create an [API Token](https://pages.edgeone.ai/document/api-token).
 2. Start from the template below.
 
-[![Web Coding Agent](https://cdnstatic.tencentcs.com/edgeone/pages/docs/vibe-coding-template.png)](https://edgeone.ai/makers/new?template=vibe-coding-agent&from=within&fromAgent=1&agentLang=typescript)
-
 **[Web Coding Agent](https://edgeone.ai/makers/new?template=vibe-coding-agent&from=within&fromAgent=1&agentLang=typescript)** — A sandbox-based general Agent template for writing, previewing, verifying, and iterating on modern web apps.
 
 3. On the deploy configuration page, set the `API_TOKEN` environment variable.
