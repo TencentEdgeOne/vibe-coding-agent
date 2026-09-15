@@ -4,7 +4,7 @@
 
 ## Quick start
 
-1. Create an [API Token](https://write.woa.com/document/177158578199498752).
+1. Create an [API Token](https://pages.edgeone.ai/document/api-token).
 
 2. Start from the example template below.
 
@@ -51,13 +51,13 @@ const deployment = await makers.deployments.deploy({
 });
 ```
 
-See [Makers SDK](https://write.woa.com/document/220119083634003968) for the integration details.
+See [Makers SDK](https://pages.edgeone.ai/document/overview) for the integration details.
 
 ## Local debug and deploy
 
 ### Start local development
 
-1. From the project root, install the [EdgeOne CLI](https://write.woa.com/document/162228053883678720):
+1. From the project root, install the [EdgeOne CLI](https://pages.edgeone.ai/document/edgeone-cli):
 
    ```bash
    npm install -g edgeone
