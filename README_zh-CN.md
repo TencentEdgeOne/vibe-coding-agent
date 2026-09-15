@@ -4,7 +4,7 @@
 
 ## 快速开始
 
-1. 创建并获取 [API Token](https://write.woa.com/document/177158578199498752)。
+1. 创建并获取 [API Token](https://makers.edgeone.link/document/api-token)。
 
 2. 使用下面的示例模板直接开始部署。
 
@@ -51,13 +51,13 @@ const deployment = await makers.deployments.deploy({
 });
 ```
 
-部署的详细接入流程可参考 [Makers SDK](https://write.woa.com/document/220119083634003968)。
+部署的详细接入流程可参考 [Makers SDK](https://makers.edgeone.link/document/overview)。
 
 ## 本地调试和部署
 
 ### 启动本地开发调试
 
-1. 进入项目根目录，安装 [EdgeOne CLI](https://write.woa.com/document/162228053883678720)：
+1. 进入项目根目录，安装 [EdgeOne CLI](https://makers.edgeone.link/document/edgeone-cli)：
 
    ```bash
    npm install -g edgeone
