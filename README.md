@@ -51,7 +51,7 @@ const deployment = await makers.deployments.deploy({
 });
 ```
 
-See [Makers SDK](https://pages.edgeone.ai/document/overview) for the integration details.
+See [Makers SDK](https://pages.edgeone.ai/document/sdk-overview) for the integration details.
 
 ## Local debug and deploy
 
