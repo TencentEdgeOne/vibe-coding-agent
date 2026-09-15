@@ -51,7 +51,7 @@ const deployment = await makers.deployments.deploy({
 });
 ```
 
-部署的详细接入流程可参考 [Makers SDK](https://makers.edgeone.link/document/overview)。
+部署的详细接入流程可参考 [Makers SDK](https://makers.edgeone.link/document/sdk-overview)。
 
 ## 本地调试和部署
 
