@@ -327,9 +327,53 @@ test('an empty preview refresh does not boot the sandbox', async () => {
   assert.equal(fixture.calls.commands.length, 0);
 });
 
+test('workspace status is announced only while a cold sandbox is being prepared', async () => {
+  const phases: string[] = [];
+  const send = (event: { type: string; data?: { phase?: string } }) => {
+    if (event.type === 'prepare_phase' && event.data?.phase) phases.push(event.data.phase);
+  };
+
+  const fresh = sandboxContext('cid-prepare-cold');
+  await activateSandbox(fresh.context, 'cid-prepare-cold', { send });
+  assert.deepEqual(phases, ['workspace']);
+
+  const present = sandboxContext('cid-prepare-present');
+  const state = createProjectState('cid-prepare-present');
+  state.created = true;
+  await saveProjectState(present.context, 'cid-prepare-present', state);
+  const sandbox = (present.context as unknown as {
+    sandbox: { files: { exists: (target: string) => Promise<boolean> } };
+  }).sandbox;
+  const files = new Set([
+    'projects/cid-prepare-present/app',
+    'projects/cid-prepare-present/app/package.json',
+    'projects/cid-prepare-present/app/node_modules',
+  ]);
+  sandbox.files.exists = async (target: string) => files.has(target);
+  phases.length = 0;
+  await activateSandbox(present.context, 'cid-prepare-present', { send });
+  assert.deepEqual(phases, [], 'a project already on this VM is not announced as a new workspace');
+  await activateSandbox(present.context, 'cid-prepare-present', { send });
+  assert.deepEqual(phases, [], 'the same sandbox stays quiet');
+
+  const missing = sandboxContext('cid-prepare-restore');
+  const saved = createProjectState('cid-prepare-restore');
+  saved.created = true;
+  await saveProjectState(missing.context, 'cid-prepare-restore', saved);
+  (missing.context as unknown as {
+    sandbox: { files: { exists: (target: string) => Promise<boolean> } };
+  }).sandbox.files.exists = async () => false;
+  phases.length = 0;
+  await activateSandbox(missing.context, 'cid-prepare-restore', { send });
+  assert.deepEqual(phases, ['workspace']);
+  assert.equal(missing.calls.restore, 1);
+});
+
 test('sandbox, session, and preview routes declare the lazy boundary', async () => {
   const [
     chat,
+    deploy,
+    sandbox,
     live,
     resume,
     snapshot,
@@ -342,6 +386,8 @@ test('sandbox, session, and preview routes declare the lazy boundary', async () 
     refresh,
   ] = await Promise.all([
     readFile('agents/_lib/turn/chat.ts', 'utf8'),
+    readFile('agents/_lib/turn/deploy.ts', 'utf8'),
+    readFile('agents/_lib/lazy/sandbox.ts', 'utf8'),
     readFile('agents/_lib/session/live.ts', 'utf8'),
     readFile('agents/_lib/session/resume.ts', 'utf8'),
     readFile('agents/_lib/project/snapshot.ts', 'utf8'),
@@ -383,7 +429,9 @@ test('sandbox, session, and preview routes declare the lazy boundary', async () 
   assert.match(timing, /instance: instanceId\(\)/);
   assert.match(task, /orphaned task has no live runner on this instance/);
   assert.match(task, /patchConversationRecord\(context, conversationId, \{\s*chatTask: task,/);
-  assert.match(chat, /type: 'prepare_phase', data: \{ phase: 'workspace' \}/);
+  assert.doesNotMatch(chat, /type: 'prepare_phase', data: \{ phase: 'workspace' \}/);
+  assert.doesNotMatch(deploy, /type: 'prepare_phase', data: \{ phase: 'workspace' \}/);
+  assert.match(sandbox, /type: 'prepare_phase', data: \{ phase: 'workspace' \}/);
   assert.match(chat, /type: 'prepare_phase', data: \{ phase: 'agent' \}/);
   assert.match(
     refresh.slice(refresh.indexOf('const onVisibility'), refresh.indexOf('window.setInterval')),

@@ -10,7 +10,8 @@ export type ActivityStatus = 'running' | 'completed' | 'failed' | 'stopped';
 
 export type ProgressPhase = 'scaffold' | 'modify' | 'code' | 'install' | 'preview' | 'link';
 
-/** Real startup milestones before the model produces its first visible output. */
+/** What the status line may name before the model speaks. `workspace` is sent
+ *  only while a cold sandbox is being created or a snapshot is being unpacked. */
 export type PreparePhase = 'accepted' | 'workspace' | 'agent';
 
 export type SystemInfoType = 'compact' | 'usage' | 'status' | 'system' | 'sdk';

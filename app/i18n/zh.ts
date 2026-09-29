@@ -76,10 +76,13 @@ export const zh = {
     // Labels the picker for screen readers only; the control itself shows the
     // model's own name, which is the more useful thing to read sighted.
     modelLabel: '选择模型',
-    activityPreparingAgent: '正在准备 Agent',
-    activityPrepareAccepted: '正在接收需求…',
+    // One sentence until the model speaks. Workspace is named only while that
+    // setup is actually running; the other phases stay on this line so a later
+    // turn does not replay a startup script.
+    activityPreparingAgent: '正在思考…',
+    activityPrepareAccepted: '正在思考…',
     activityPrepareWorkspace: '正在准备工作区…',
-    activityPrepareAgent: '正在启动 AI…',
+    activityPrepareAgent: '正在思考…',
     activityAnalyzing: '正在分析',
     activityRunning: '正在执行',
     activityCompleted: '已完成',

@@ -169,7 +169,9 @@ export function useLiveTurn(options: {
         content: '',
         activities: [],
         status: 'running',
-        preparePhase: 'accepted',
+        // The opening turn still has to build a workspace, so it must not say
+        // it is thinking and then correct itself. A later turn already has one.
+        preparePhase: messages.length === 0 ? 'workspace' : 'accepted',
       },
     ];
     setMessages((current) => [...current, ...turnMessages]);

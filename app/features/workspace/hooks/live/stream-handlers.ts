@@ -111,7 +111,9 @@ export function createLiveChatSession(sessionOptions: LiveChatSessionOptions): L
         cacheConversationId(event.data.conversation_id);
         setConversationId(event.data.conversation_id);
       }
-      if (event.data?.preparePhase) {
+      // `accepted` is recorded before any real step. Applying it here would
+      // replace "preparing the workspace" with "thinking" and then flip back.
+      if (event.data?.preparePhase && event.data.preparePhase !== 'accepted') {
         patchAssistant({ preparePhase: event.data.preparePhase });
       }
       return;

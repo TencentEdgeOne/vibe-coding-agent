@@ -270,11 +270,17 @@ async function activate(
     };
   }
 
+  // A warm VM is already the workspace. Naming this step on a later turn
+  // replayed a startup script over work the user could not see.
+  const restoring = projectMayNeedRestore(state);
+  if (!restoring) {
+    options.send?.({ type: 'prepare_phase', data: { phase: 'workspace' } });
+  }
   await ensureWorkspaceDirectories(context, state);
 
   // A brand-new conversation has nothing to probe or unpack. The chat task
   // record may already exist; that is not a snapshot.
-  if (!projectMayNeedRestore(state)) {
+  if (!restoring) {
     return {
       state,
       hasFiles: false,
@@ -298,6 +304,7 @@ async function activate(
   }
 
   if (!hasFiles) {
+    options.send?.({ type: 'prepare_phase', data: { phase: 'workspace' } });
     try {
       const restored = await timeStage('workspace:restore', { phase: 'snapshot' }, () => withTimeout(
         restorePersistedProject(context, conversationId, state, {

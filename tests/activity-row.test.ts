@@ -361,23 +361,37 @@ test('every assistant turn keeps its own status rail through completion', async 
   assert.match(styles, /\.agent-status-bar\.is-sticky \{[\s\S]*?position: sticky;/);
   assert.match(styles, /\.agent-status-bar-indicator i \{[\s\S]*?animation: agent-status-bar-breathe/);
   assert.match(styles, /@keyframes agent-status-bar-breathe/);
+  assert.match(styles, /\.agent-status-bar\.is-preparing \.agent-status-bar-label \{[\s\S]*?animation: agent-status-bar-flicker/);
+  assert.match(styles, /@keyframes agent-status-bar-flicker \{[\s\S]*?opacity: 0\.45;/);
+  assert.match(styles, /prefers-reduced-motion: reduce\) \{[\s\S]*?\.agent-status-bar\.is-preparing \.agent-status-bar-label/);
   assert.match(
     styles,
     /\.conversation-composer-dock \{[\s\S]*?position: relative;[\s\S]*?z-index: 4;/,
   );
   assert.match(styles, /\.model-picker-menu \{[\s\S]*?z-index: 20;/);
   assert.doesNotMatch(styles, /agent-running-spin/);
-  assert.match(zh, /activityPreparingAgent: '正在准备 Agent'/);
+  assert.match(zh, /activityPreparingAgent: '正在思考…'/);
   assert.match(zh, /activityAnalyzing: '正在分析'/);
-  assert.match(zh, /activityPrepareAccepted: '正在接收需求…'/);
+  assert.match(zh, /activityPrepareAccepted: '正在思考…'/);
   assert.match(zh, /activityPrepareWorkspace: '正在准备工作区…'/);
-  assert.match(zh, /activityPrepareAgent: '正在启动 AI…'/);
-  assert.match(en, /activityPreparingAgent: 'Preparing the agent'/);
+  assert.match(zh, /activityPrepareAgent: '正在思考…'/);
+  assert.doesNotMatch(zh, /正在接收需求|正在启动 AI|正在准备 Agent/);
+  assert.match(en, /activityPreparingAgent: 'Thinking…'/);
   assert.match(en, /activityAnalyzing: 'Analyzing'/);
-  assert.match(en, /activityPrepareAccepted: 'Receiving request…'/);
+  assert.match(en, /activityPrepareAccepted: 'Thinking…'/);
   assert.match(en, /activityPrepareWorkspace: 'Preparing the workspace…'/);
-  assert.match(en, /activityPrepareAgent: 'Starting AI…'/);
+  assert.match(en, /activityPrepareAgent: 'Thinking…'/);
+  assert.doesNotMatch(en, /Receiving request|Starting AI|Preparing the agent/);
   assert.doesNotMatch(status, /percent|percentage|progress%/i);
+});
+
+test('the opening turn starts on the workspace and accepted does not walk it back', async () => {
+  const [turn, handlers] = await Promise.all([
+    readFile('app/features/workspace/hooks/use-live-turn.ts', 'utf8'),
+    readFile('app/features/workspace/hooks/live/stream-handlers.ts', 'utf8'),
+  ]);
+  assert.match(turn, /preparePhase: messages\.length === 0 \? 'workspace' : 'accepted'/);
+  assert.match(handlers, /preparePhase !== 'accepted'/);
 });
 
 test('the prepare label uses the real phase and never invents a percentage', () => {

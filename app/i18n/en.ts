@@ -60,10 +60,13 @@ export const en = {
     stop: 'Stop generation',
     stopping: 'Stopping task…',
     modelLabel: 'Select model',
-    activityPreparingAgent: 'Preparing the agent',
-    activityPrepareAccepted: 'Receiving request…',
+    // One sentence until the model speaks. Workspace is named only while that
+    // setup is actually running; the other phases stay on this line so a later
+    // turn does not replay a startup script.
+    activityPreparingAgent: 'Thinking…',
+    activityPrepareAccepted: 'Thinking…',
     activityPrepareWorkspace: 'Preparing the workspace…',
-    activityPrepareAgent: 'Starting AI…',
+    activityPrepareAgent: 'Thinking…',
     activityAnalyzing: 'Analyzing',
     activityRunning: 'Running',
     activityCompleted: 'Completed',

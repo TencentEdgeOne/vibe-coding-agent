@@ -578,12 +578,27 @@
   white-space: nowrap;
 }
 
+.agent-status-bar.is-preparing .agent-status-bar-label {
+  animation: agent-status-bar-flicker 2.4s ease-in-out infinite;
+}
+
 .agent-status-bar-elapsed {
   color: var(--n-400);
   font-size: var(--fs-2xs);
   font-variant-numeric: tabular-nums;
   line-height: 1.4;
   white-space: nowrap;
+}
+
+@keyframes agent-status-bar-flicker {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.45;
+  }
 }
 
 @keyframes agent-status-bar-breathe {
@@ -1269,7 +1284,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .agent-status-bar-indicator i {
+  .agent-status-bar-indicator i,
+  .agent-status-bar.is-preparing .agent-status-bar-label {
     animation: none;
   }
 
