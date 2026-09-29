@@ -2,12 +2,12 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "incremental": false,
-    "customConditions": ["node"],
     "plugins": []
   },
   "include": [
     "agents/**/*.ts",
-    "shared/**/*.ts"
+    "shared/**/*.ts",
+    "edge-functions/**/*.ts"
   ],
   "exclude": [
     "node_modules",

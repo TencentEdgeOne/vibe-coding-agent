@@ -4,16 +4,30 @@ import {
   lastFinishedAssistant,
   resolveDeployOffer,
   type DeployOfferMessage,
-} from '../app/lib/deploy-prompt.ts';
+} from '../app/lib/tool-activity.ts';
 
 const writeTurn: DeployOfferMessage = {
   id: 'a1',
   role: 'assistant',
   status: 'done',
   activities: [
-    { kind: 'tool', name: 'mcp__edgeone-sandbox__write_project_file', status: 'completed' },
+    { kind: 'tool', name: 'files_write', inputSummary: 'app/page.tsx', status: 'completed' },
   ],
 };
+
+const deployTurn = (status: 'completed' | 'failed'): DeployOfferMessage => ({
+  id: 'a-deploy',
+  role: 'assistant',
+  status: 'done',
+  activities: [
+    {
+      kind: 'tool',
+      name: 'commands',
+      inputSummary: 'edgeone makers deploy --json',
+      status,
+    },
+  ],
+});
 
 test('a finished project turn offers the first deploy', () => {
   assert.equal(resolveDeployOffer([writeTurn], { canDownload: true, loading: false }), 'first');
@@ -30,51 +44,33 @@ test('the offer waits until the project exists and the agent is idle', () => {
 
 test('a later edit after a live site offers republish', () => {
   const messages: DeployOfferMessage[] = [
-    {
-      id: 'a0',
-      role: 'assistant',
-      status: 'done',
-      activities: [{ kind: 'publish', status: 'completed', url: 'https://demo.edgeone.cool' }],
-    },
-    writeTurn,
+    deployTurn('completed'),
+    { ...writeTurn, id: 'a2' },
   ];
   assert.equal(resolveDeployOffer(messages, { canDownload: true, loading: false }), 'again');
 });
 
+test('a live deployment without a deploy row still offers republish', () => {
+  assert.equal(
+    resolveDeployOffer([writeTurn], {
+      canDownload: true,
+      loading: false,
+      hasLiveDeployment: true,
+    }),
+    'again',
+  );
+});
+
 test('a successful deploy turn does not ask again', () => {
   assert.equal(
-    resolveDeployOffer([{
-      id: 'a2',
-      role: 'assistant',
-      status: 'done',
-      activities: [
-        { kind: 'tool', name: 'mcp__edgeone-deploy__publish_project', status: 'completed' },
-        { kind: 'publish', status: 'completed', url: 'https://demo.edgeone.cool' },
-      ],
-    }], { canDownload: true, loading: false }),
+    resolveDeployOffer([deployTurn('completed')], { canDownload: true, loading: false }),
     null,
   );
 });
 
 test('a failed deploy turn does not offer again — the stream already has the failure', () => {
   assert.equal(
-    resolveDeployOffer([{
-      id: 'a3',
-      role: 'assistant',
-      status: 'done',
-      activities: [{ kind: 'publish', status: 'failed' }],
-    }], { canDownload: true, loading: false }),
-    null,
-  );
-  assert.equal(
-    resolveDeployOffer([{
-      id: 'a3b',
-      role: 'assistant',
-      status: 'done',
-      activities: [
-        { kind: 'tool', name: 'mcp__edgeone-deploy__publish_project', status: 'failed' },
-      ],
-    }], { canDownload: true, loading: false }),
+    resolveDeployOffer([deployTurn('failed')], { canDownload: true, loading: false }),
     null,
   );
 });

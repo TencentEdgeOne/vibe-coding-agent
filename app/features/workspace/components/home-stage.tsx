@@ -1,11 +1,9 @@
 'use client';
 
 import type { FormEvent, KeyboardEvent } from 'react';
-import { Sparkles } from 'lucide-react';
-import { Card } from '@/components/ui/card';
-import { Textarea } from '@/components/ui/textarea';
-import { ModelPicker } from '@/app/components/model-picker';
-import type { Locale, UiCopy } from '@/app/i18n';
+import { BookOpen, Server, Sparkles } from 'lucide-react';
+import type { HomeFeatureIcon, Locale, UiCopy } from '@/app/i18n';
+import { ModelPicker } from './model-picker';
 import type { ModelOption } from '../../../../shared/models';
 
 type HomeStageProps = {
@@ -15,6 +13,7 @@ type HomeStageProps = {
   placeholder: string;
   canSend: boolean;
   loading: boolean;
+  stopping: boolean;
   models: readonly ModelOption[];
   model: string;
   onModelChange: (model: string) => void;
@@ -23,6 +22,15 @@ type HomeStageProps = {
   onSend: () => void;
 };
 
+// lucide fits every glyph to the same 24×24 box but they fill very different
+// amounts of it, so one shared size draws them at visibly different weights.
+// These are matched on each drawing's own extent instead: Server and BookOpen
+// both reach all four edges of the box, so they share a size.
+function FeatureIcon({ icon }: { icon: HomeFeatureIcon }) {
+  if (icon === 'skills') return <BookOpen aria-hidden="true" size={15} />;
+  return <Server aria-hidden="true" size={15} />;
+}
+
 export function HomeStage({
   copy,
   locale,
@@ -30,6 +38,7 @@ export function HomeStage({
   placeholder,
   canSend,
   loading,
+  stopping,
   models,
   model,
   onModelChange,
@@ -40,72 +49,84 @@ export function HomeStage({
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault();
-      onSend();
+      if (!loading && !stopping && canSend) onSend();
     }
   };
 
   return (
-    <section className="home-stage flex flex-1 flex-col items-center justify-center px-6 py-12 text-center">
-      <div className="w-full max-w-[820px]">
-        <h1 className="text-[clamp(2rem,4vw,2.75rem)] font-bold leading-[1.18]">
+    <section className="home-stage scroll-quiet">
+      {/* my-auto centers the hero when it fits and keeps the top reachable when it
+          does not, which justify-center would clip. */}
+      <div className="home-inner my-auto">
+        <h1 className="home-title">
           {copy.home.titleBefore}
           {locale === 'en' ? ' ' : ''}
-          <span className="text-primary">{copy.home.titleAccent}</span>
+          <span className="home-title-accent">{copy.home.titleAccent}</span>
           {locale === 'en' ? ' ' : ''}
           {copy.home.titleAfter}
         </h1>
-        <p className="mt-3 text-[15px] text-muted-foreground">{copy.home.subtitle}</p>
+        <p className="home-subtitle">{copy.home.subtitle}</p>
 
-        <Card className="home-composer mt-8 gap-0 overflow-visible rounded-[10px] border-border p-4 text-left shadow-none transition-[border-color,box-shadow] focus-within:border-primary focus-within:shadow-[0_0_0_3px_rgba(47,107,255,0.12)]">
-          <form onSubmit={onSubmit}>
-            <Textarea
-              value={input}
-              onChange={(event) => onInputChange(event.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={placeholder || copy.home.placeholder}
-              rows={3}
-              className="min-h-[104px] resize-none border-0 bg-transparent px-1 py-1 text-[14px] leading-relaxed shadow-none focus-visible:ring-0"
-            />
-            <div className="mt-2 flex items-center justify-end gap-2">
-              {/* Sits with the submit button rather than among the example chips:
-                  both are about how this run happens, the chips are about what to
-                  ask for. */}
-              <ModelPicker
-                models={models}
-                value={model}
-                ariaLabel={copy.workspace.modelLabel}
-                disabled={loading}
-                onChange={onModelChange}
-              />
-              <button
-                type="submit"
-                disabled={!canSend}
-                aria-label={copy.home.fastBuild}
-                className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-4 text-xs font-semibold text-primary-foreground transition-colors hover:bg-[var(--brand-deep)] disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {loading ? (
-                  <span className="size-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
-                ) : (
-                  <Sparkles className="size-4" />
-                )}
-                {copy.home.fastBuild}
-              </button>
+        <form className="home-composer" onSubmit={onSubmit}>
+          <textarea
+            value={input}
+            onChange={(event) => onInputChange(event.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder={placeholder || copy.home.placeholder}
+            rows={3}
+            disabled={stopping}
+          />
+          <div className="home-composer-actions">
+            <div className="home-examples">
+              {copy.home.examples.map((example) => (
+                <button
+                  key={example.label}
+                  type="button"
+                  className="home-example"
+                  onClick={() => onInputChange(example.prompt)}
+                >
+                  {/* Carries the truncation itself: text sitting directly in a
+                      flex container becomes an anonymous item, and text-overflow
+                      does not inherit onto it, so the chip would clip its label
+                      mid-character instead of ellipsizing it. */}
+                  <span className="home-example-label">{example.label}</span>
+                </button>
+              ))}
             </div>
-          </form>
-        </Card>
-
-        <div className="mt-5 flex flex-wrap justify-center gap-2.5">
-          {copy.home.examples.map((example) => (
-            <button
-              key={example}
-              type="button"
-              onClick={() => onInputChange(example)}
-              className="rounded-lg border border-border bg-card px-3.5 py-1.5 text-[12px] text-secondary-foreground transition-colors hover:border-primary/45 hover:bg-accent hover:text-accent-foreground"
-            >
-              {example}
+            {/* Sits with the submit button rather than among the example chips:
+                both are about how this run happens, the chips are about what to
+                ask for. */}
+            <ModelPicker
+              models={models}
+              value={model}
+              ariaLabel={copy.workspace.modelLabel}
+              disabled={loading || stopping}
+              onChange={onModelChange}
+            />
+            <button type="submit" disabled={!canSend} className="home-submit">
+              {loading || stopping ? <span className="home-submit-spinner" /> : <Sparkles />}
+              {stopping ? copy.workspace.stopping : copy.home.fastBuild}
             </button>
+          </div>
+        </form>
+
+        {copy.home.features.length > 0 && (
+        <ul className="home-features">
+          {copy.home.features.map((feature) => (
+            <li key={feature.title} className="home-feature">
+              <span className="home-feature-copy">
+                <strong>
+                  <span className="home-feature-icon">
+                    <FeatureIcon icon={feature.icon} />
+                  </span>
+                  {feature.title}
+                </strong>
+                <span className="home-feature-desc">{feature.desc}</span>
+              </span>
+            </li>
           ))}
-        </div>
+        </ul>
+        )}
       </div>
     </section>
   );

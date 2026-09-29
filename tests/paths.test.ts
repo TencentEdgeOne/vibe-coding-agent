@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { normalizeRelPath, toAppRelPath } from '../agents/utils/_relpath.ts';
+import { normalizeRelPath, toAppRelPath } from '../agents/_lib/utils/relpath.ts';
 
 const appDir = 'projects/520e08c1-185a-4cbf-afc4-db1abfb15f14/app';
 

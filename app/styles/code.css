@@ -1,0 +1,40 @@
+/* ============================================================
+   Code panel — file tree and file content.
+   ============================================================ */
+
+.files-panel {
+  display: grid;
+  min-height: 0;
+  flex: 1;
+  grid-template-columns: 220px minmax(0, 1fr);
+  overflow: hidden;
+  background: var(--code-paper);
+  color: var(--code-ink);
+}
+
+.files-panel-content {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+}
+
+/* The file list and the file body are two steps on a phone. Desktop keeps
+   both in the split, so this control is not rendered there. */
+.files-view-back {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .files-panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .files-panel.is-file-open .files-panel-tree,
+  .files-panel:not(.is-file-open) .files-panel-content {
+    display: none;
+  }
+
+  .files-view-back {
+    display: inline-flex;
+  }
+}

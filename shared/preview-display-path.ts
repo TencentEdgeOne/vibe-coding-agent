@@ -1,5 +1,5 @@
 // Mirror of the sandbox preview base path. Kept here so the address chip can
-// hide the gateway prefix without the frontend importing agents/_constants.
+// hide the gateway prefix without the frontend importing agents/_lib/constants.
 export const PREVIEW_PATH_PREFIX = '/preview/';
 
 // Render a mirrored preview route (pathname[+search][+hash]) as the address-bar
@@ -23,4 +23,19 @@ export function previewDisplayPathFromPath(path: string) {
   params.delete('access_token');
   const nextSearch = params.toString();
   return `${pathname}${nextSearch ? `?${nextSearch}` : ''}${hash}`;
+}
+
+/**
+ * The inverse, for opening or copying the route the pane is showing.
+ *
+ * `previewDeepLink` resolves its argument against the preview base, so it needs
+ * the tracked form — prefix included. The address bar and the route list are in
+ * display form, so this puts the gateway prefix back and leaves the base to
+ * carry the access token.
+ */
+export function previewTrackedPathFromDisplayPath(displayPath: string) {
+  if (!displayPath) return '';
+  if (displayPath.startsWith(PREVIEW_PATH_PREFIX)) return displayPath;
+  const withoutLeadingSlash = displayPath.replace(/^\/+/, '');
+  return `${PREVIEW_PATH_PREFIX}${withoutLeadingSlash}`;
 }

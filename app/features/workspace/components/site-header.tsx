@@ -1,7 +1,7 @@
 'use client';
 
-import { ArrowLeft, MessageCircle } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { ArrowLeft, MessageCircle, Rocket } from 'lucide-react';
+import { Button } from '@/app/components/ui/button';
 import {
   Dialog,
   DialogClose,
@@ -11,11 +11,20 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from '@/components/ui/dialog';
+} from '@/app/components/ui/dialog';
 import { LanguageSwitch } from '@/app/components/language-switch';
 import type { Locale, UiCopy } from '@/app/i18n';
 
-const BRAND_MARK = 'MAKERS VIBE CODING';
+type SiteHeaderProps = {
+  copy: UiCopy;
+  language: Locale;
+  hasWorkspace: boolean;
+  contactUrl: string;
+  templateSourceUrl: string;
+  templateDeployUrl: string;
+  onLanguageChange: (language: Locale) => void;
+  onBack: () => void;
+};
 
 /**
  * lucide dropped its brand marks, and a generic branch or fork glyph would not
@@ -29,25 +38,6 @@ function GithubMark() {
   );
 }
 
-type SiteHeaderProps = {
-  copy: UiCopy;
-  language: Locale;
-  hasWorkspace: boolean;
-  contactUrl: string;
-  templateSourceUrl: string;
-  templateDeployUrl: string;
-  showDeploy: boolean;
-  onLanguageChange: (language: Locale) => void;
-  onNewProject: () => void;
-  onDeploy: () => void;
-  showExportTranscript?: boolean;
-  canExportTranscript?: boolean;
-  onExportTranscript?: () => void;
-  canExportSession?: boolean;
-  exportSessionBusy?: boolean;
-  onExportSession?: () => void;
-};
-
 export function SiteHeader({
   copy,
   language,
@@ -55,27 +45,19 @@ export function SiteHeader({
   contactUrl,
   templateSourceUrl,
   templateDeployUrl,
-  showDeploy,
   onLanguageChange,
-  onNewProject,
-  onDeploy,
-  showExportTranscript = false,
-  canExportTranscript = false,
-  onExportTranscript,
-  canExportSession = false,
-  exportSessionBusy = false,
-  onExportSession,
+  onBack,
 }: SiteHeaderProps) {
   const isZh = language === 'zh';
 
   return (
-    <header className="site-topbar">
+    <header className={`site-topbar${hasWorkspace ? ' is-workspace' : ''}`}>
       <div className="site-brand-cluster">
         {hasWorkspace && (
           <span className="site-hint is-start" data-hint={copy.workspace.back}>
             <button
               type="button"
-              onClick={onNewProject}
+              onClick={onBack}
               className="site-icon-button is-ghost"
               aria-label={copy.workspace.back}
             >
@@ -83,38 +65,8 @@ export function SiteHeader({
             </button>
           </span>
         )}
-        <div className="site-brand" aria-label={BRAND_MARK}>{BRAND_MARK}</div>
+        <div className="site-brand" aria-label="MAKERS VIBE CODING">MAKERS VIBE CODING</div>
         <span className="site-brand-tag">{copy.brandTag}</span>
-        {showExportTranscript && (
-          <>
-            <button
-              type="button"
-              onClick={onExportTranscript}
-              disabled={!canExportTranscript}
-              className="site-secondary-button"
-              title={canExportTranscript ? copy.workspace.exportTranscript : copy.workspace.exportTranscriptEmpty}
-            >
-              {copy.workspace.exportTranscript}
-            </button>
-            <button
-              type="button"
-              onClick={onExportSession}
-              disabled={!canExportSession || exportSessionBusy}
-              className="site-secondary-button"
-              title={
-                exportSessionBusy
-                  ? copy.workspace.exportSessionBusy
-                  : canExportSession
-                    ? copy.workspace.exportSession
-                    : copy.workspace.exportSessionEmpty
-              }
-            >
-              {exportSessionBusy
-                ? copy.workspace.exportSessionBusy
-                : copy.workspace.exportSession}
-            </button>
-          </>
-        )}
       </div>
       <div className="site-topbar-actions">
         {!hasWorkspace && (
@@ -124,11 +76,6 @@ export function SiteHeader({
             ariaLabel={copy.languageToggleAria}
             className="site-language"
           />
-        )}
-        {hasWorkspace && showDeploy && (
-          <button type="button" onClick={onDeploy} className="site-secondary-button">
-            {copy.deployLabel}
-          </button>
         )}
         {/* Everything in this bar is now about the template rather than about the
             session, so all of it stays put whether or not a project exists.
@@ -152,13 +99,20 @@ export function SiteHeader({
             target="_blank"
             rel="noreferrer"
             className="site-primary-button"
+            aria-label={copy.templateDeployLabel}
           >
-            {copy.templateDeployLabel}
+            <Rocket />
+            <span className="site-action-label">{copy.templateDeployLabel}</span>
           </a>
           <Dialog>
             <DialogTrigger asChild>
-              <button type="button" className="site-accent-button">
-                {isZh ? '联系我们' : 'Contact'}
+              <button
+                type="button"
+                className="site-accent-button"
+                aria-label={isZh ? '联系我们' : 'Contact'}
+              >
+                <MessageCircle />
+                <span className="site-accent-label">{isZh ? '联系我们' : 'Contact'}</span>
               </button>
             </DialogTrigger>
             <DialogContent

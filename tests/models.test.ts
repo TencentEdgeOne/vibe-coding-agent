@@ -6,13 +6,17 @@ import {
   DEFAULT_MODEL,
   buildModelCatalog,
   parseExtraModels,
+  resolveConfiguredModel,
+  resolveModelCatalog,
+  resolveModelLabel,
   resolveSelectedModel,
 } from '../shared/models.ts';
 import {
-  resolveConfiguredModel,
-  resolveModelCatalog,
+  describeModelRun,
   resolveRequestedModel,
-} from '../agents/_models.ts';
+  resolveRunningModelLabel,
+} from '../agents/_lib/models.ts';
+import { LIVE_TURN, MODEL_PICKER, WORKSPACE, surface } from './helpers/source.ts';
 
 // The picker renders labels, never ids. The ids are scoped with the platform
 // tier, so a label falling back to its id would print the one word no
@@ -68,7 +72,7 @@ test('an extra model that repeats a built-in does not appear twice', () => {
   assert.equal(catalog.length, BUILT_IN_MODELS.length);
   assert.equal(
     catalog.find((option) => option.id === DEFAULT_MODEL)?.label,
-    'DeepSeek V4 Flash',
+    'DeepSeek V4.1 Flash',
   );
 });
 
@@ -120,12 +124,68 @@ test('a deployment extends its own picker without opening it to everything', () 
   assert.equal(resolveRequestedModel(context, 'openai/gpt-5'), '');
 });
 
+// The agent has to answer "which model are you" with the words the user is
+// looking at in the picker, so both ends read the label through one function.
+test('a model is named to the user by its label, never by its id', () => {
+  assert.equal(resolveModelLabel(BUILT_IN_MODELS, '@makers/kimi-k2.6'), 'Kimi K2.6');
+  assert.equal(resolveModelLabel(BUILT_IN_MODELS, '  @makers/hy3  '), 'Hunyuan 3');
+  // An id this deployment runs without listing still must not print the tier.
+  assert.equal(resolveModelLabel(BUILT_IN_MODELS, '@makers/unlisted'), 'unlisted');
+  for (const empty of ['', '   ', undefined, null, 7]) {
+    assert.equal(resolveModelLabel(BUILT_IN_MODELS, empty), '');
+  }
+
+  const context = { env: { AI_GATEWAY_EXTRA_MODELS: 'openai/gpt-5|GPT-5' } };
+  assert.equal(resolveRunningModelLabel(context, 'openai/gpt-5'), 'GPT-5');
+  assert.equal(resolveRunningModelLabel(context, '@makers/kimi-k2.6'), 'Kimi K2.6');
+});
+
+// Whether a composer switch took effect is otherwise unobservable: every model
+// reaches this harness through one Anthropic-shaped interface, so each one
+// reports itself as that vendor's model whatever the user picked. modelUsage is
+// keyed by the model actually billed, which makes it the only ground truth.
+test('a finished run reports the model it asked for against the one it billed', () => {
+  const requested = '@makers/kimi-k2.6';
+
+  const matched = describeModelRun(requested, {
+    [requested]: { cacheReadInputTokens: 19000, cacheCreationInputTokens: 0 },
+  });
+  assert.equal(matched.mismatch, false);
+  assert.equal(
+    matched.line,
+    `requested=${requested} served=${requested} cacheRead=19000 cacheWrite=0`,
+  );
+
+  // A gateway that quietly served something else looks identical from the
+  // outside, so this is the one place it becomes visible.
+  const substituted = describeModelRun(requested, { '@makers/deepseek-v4-flash': {} });
+  assert.equal(substituted.mismatch, true);
+  assert.match(substituted.line, /served=@makers\/deepseek-v4-flash/);
+
+  // Silence is not a substitution: an unreported run must not raise a warning.
+  for (const silent of [undefined, {}]) {
+    assert.equal(describeModelRun(requested, silent).mismatch, false);
+    assert.match(describeModelRun(requested, silent).line, /served=<unreported>/);
+  }
+  assert.match(describeModelRun('', undefined).line, /requested=<default>/);
+
+  // The system prompt is a ~20k-character prefix that no longer changes between
+  // turns, so these two counters are how anyone tells whether that bought
+  // reuse. They add up across every model a single run touched.
+  const cached = describeModelRun(requested, {
+    [requested]: { cacheReadInputTokens: 5800, cacheCreationInputTokens: 100 },
+    '@makers/hy3': { cacheReadInputTokens: 200, cacheCreationInputTokens: 50 },
+  });
+  assert.match(cached.line, /cacheRead=6000 cacheWrite=150/);
+  assert.match(describeModelRun(requested, { [requested]: {} }).line, /cacheRead=0 cacheWrite=0/);
+});
+
 // Replacing the native <select> moved keyboard support, the selected marker and
 // dismissal from the platform into this component. A listbox that only answers
 // the mouse is a downgrade from the control it replaced, so the parts the
 // browser used to supply are asserted here.
 test('the model picker keeps what the native select gave it for free', async () => {
-  const picker = await readFile('app/components/model-picker.tsx', 'utf8');
+  const picker = await surface(MODEL_PICKER);
   // The comments explain why the native control is gone, so they name it.
   const code = picker.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
 
@@ -153,4 +213,44 @@ test('the model picker keeps what the native select gave it for free', async () 
   const guard = picker.indexOf('if (models.length < 2)');
   assert.ok(guard > 0 && picker.lastIndexOf('useEffect(', guard) < guard);
   assert.equal(picker.slice(guard).includes('useEffect('), false);
+});
+
+// The picker is the user's choice for the next turn. Persisting it through a
+// dedicated /session-model route would write a preference before they asked
+// for anything; /prompt is when a model is actually needed, so that is where
+// the choice travels. Omitting it is valid: the runtime then uses the
+// deployment default rather than a previously stored preference.
+test('the composer model travels on /prompt, not a session-model route', async () => {
+  const [
+    screen,
+    client,
+    live,
+    prompt,
+    task,
+    agent,
+  ] = await Promise.all([
+    surface(WORKSPACE),
+    surface('app/features/workspace/workspace-api.ts'),
+    surface(LIVE_TURN),
+    readFile('agents/prompt.ts', 'utf8'),
+    readFile('agents/_lib/session/task.ts', 'utf8'),
+    readFile('agents/_lib/session/live.ts', 'utf8'),
+  ]);
+
+  assert.match(screen, /onModelChange=\{setModel\}/);
+  assert.doesNotMatch(screen, /setSessionModel/);
+  assert.doesNotMatch(client, /\/session-model/);
+  assert.match(client, /\.\.\.\(options\.model \? \{ model: options\.model \} : \{\}\)/);
+  assert.match(live, /model: modelRef\.current/);
+  assert.match(prompt, /resolveRequestedModel\(context, body\.model\)/);
+  assert.doesNotMatch(task, /getModelPreference/);
+  assert.match(task, /requestedModel \? \{ model: requestedModel \}/);
+  // The task, model, and language land in the one write that starts the turn.
+  assert.match(task, /patchConversationRecord\(context, conversationId, \{\s*chatTask: task,/);
+  assert.match(task, /\.\.\.\(requestedModel \? \{ modelPreference: requestedModel \} : \{\}\)/);
+  assert.doesNotMatch(task, /saveModelPreference\(/);
+  assert.match(
+    agent,
+    /\(options\.model \|\| ''\)\.trim\(\) \|\| resolveConfiguredModel\(options\.context\)/,
+  );
 });

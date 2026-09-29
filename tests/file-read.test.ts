@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { PREVIEW_MAX_BYTES } from '../agents/_constants.ts';
+import { PREVIEW_MAX_BYTES } from '../agents/_lib/constants.ts';
 import {
   capBatchReadResults,
   truncateUtf8,
-} from '../agents/utils/_file-preview.ts';
+} from '../agents/_lib/utils/file-preview.ts';
 
 test('file preview truncates on a UTF-8 boundary', () => {
   const result = truncateUtf8(`${'a'.repeat(PREVIEW_MAX_BYTES - 1)}你`, PREVIEW_MAX_BYTES);

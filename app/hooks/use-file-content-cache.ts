@@ -14,7 +14,7 @@ type FileCacheEntry = {
 
 // Caches generated file contents so opening a file does not cost a /file request
 // (each one still wakes the agent route and crosses the sandbox boundary). Entries come
-// from two places: the file_content events the agent pushes as it writes, and
+// from two places: file_changed events that trigger GET /file?paths=, and
 // /file responses for files it never wrote this session. The sandbox mtime/size
 // reported by the file tree decides when an entry is still good.
 export function useFileContentCache() {

@@ -1,12 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {
-  appendTrimmedActivityTurn,
-  dedupeActivityTurns,
-  summarizeToolInput,
-  summarizeToolOutput,
-} from '../agents/utils/_activity.ts';
-import type { PersistedActivityTurn } from '../agents/_types.ts';
+import { summarizeToolInput, summarizeToolOutput, toolPaintsOwnProgress } from '../shared/timeline.ts';
 
 test('tool summaries redact secrets and project paths', () => {
   const summary = summarizeToolInput('mcp__edgeone__commands', {
@@ -19,107 +13,93 @@ test('tool summaries redact secrets and project paths', () => {
   assert.match(summary, /<project>/);
 });
 
-test('activity history collapses immediate retry duplicates', () => {
-  const base: PersistedActivityTurn = {
-    id: 'first',
-    user: 'stop this',
-    assistant: 'stopped',
-    status: 'stopped',
-    createdAt: 100,
-    activities: [],
-  };
-  const deduped = dedupeActivityTurns([
-    base,
-    { ...base, id: 'retry', createdAt: 200, activities: [{ kind: 'text', content: 'partial' }] },
-  ]);
-  assert.equal(deduped.length, 1);
-  assert.equal(deduped[0].id, 'retry');
-});
-
 test('file writes expose paths and sizes without source contents', () => {
-  const summary = summarizeToolInput('write_project_file', {
-    path: 'src/app.tsx',
-    content: 'const privateValue = 42;',
-  });
+  for (const name of ['files_write', 'mcp__edgeone-sandbox__files_write', 'write_project_file']) {
+    const summary = summarizeToolInput(name, {
+      path: 'src/app.tsx',
+      content: 'const privateValue = 42;',
+    });
 
-  assert.match(summary, /src\/app\.tsx/);
-  assert.match(summary, /24 chars/);
-  assert.doesNotMatch(summary, /privateValue/);
+    assert.match(summary, /src\/app\.tsx/);
+    assert.match(summary, /24 chars/);
+    assert.doesNotMatch(summary, /privateValue/);
+  }
 });
 
 test('a streamed single-file call stays blank until its path arrives', () => {
+  assert.equal(summarizeToolInput('files_write', {}), '');
   assert.equal(summarizeToolInput('write_project_file', {}), '');
 });
 
-test('directory tools summarize as a path, not JSON', () => {
-  assert.equal(summarizeToolInput('mcp__edgeone-sandbox__files_make_dir', { path: 'src/lib' }), 'src/lib');
+test('directory tools keep the path in the dumped input', () => {
+  assert.match(summarizeToolInput('mcp__edgeone-sandbox__files_make_dir', { path: 'src/lib' }), /src\/lib/);
 });
 
-test('tool output is capped at two kilobytes', () => {
-  const summary = summarizeToolOutput('x'.repeat(3_000));
-  assert.ok(summary.length <= 2_000);
-  assert.doesNotMatch(summary, /truncated/i);
+test('Skill activity keeps the skill name and the tool output', () => {
+  assert.match(summarizeToolInput('Skill', { skill: 'edgeone-makers-tools' }), /edgeone-makers-tools/);
+  assert.match(summarizeToolOutput('Launching skill: edgeone-makers-tools', '', 'Skill'), /Launching skill/);
+  assert.match(summarizeToolOutput('Skill not found: nope', '', 'Skill'), /Skill not found/);
 });
 
-test('command output keeps the tail and collapses npm http fetch noise', () => {
-  const lines = [
-    'npm info using npm@10.8.2',
-    ...Array.from({ length: 40 }, (_, index) => (
-      `npm http fetch GET 200 https://registry.npmjs.org/pkg-${index} ${index}ms`
-    )),
-    'added 120 packages in 3s',
-  ];
-  const summary = summarizeToolOutput(lines.join('\n'), '', 'commands');
-
-  assert.doesNotMatch(summary, /truncated/i);
-  assert.doesNotMatch(summary, /registry\.npmjs\.org/);
-  assert.match(summary, /npm http fetch ×40/);
-  assert.match(summary, /added 120 packages/);
+test('specific Makers skill activity keeps the document body', () => {
+  const name = 'mcp__edgeone-sandbox__load_makers_skill';
+  assert.match(summarizeToolInput(name, { skill: 'makers-agents' }), /makers-agents/);
+  assert.match(summarizeToolOutput('---\nname: edgeone-makers-agents\n---\nGuide', '', name), /makers-agents/);
+  assert.match(summarizeToolOutput('Unable to load Makers skill: missing', '', name), /Unable to load/);
 });
 
-test('activity trim keeps timing logs when the item cap is exceeded', () => {
-  const activities = [
-    { kind: 'log' as const, message: '[timing] task_start duration_ms=12 since_turn_ms=12', startedAt: 1, endedAt: 13 },
-    { kind: 'log' as const, message: '[timing] first_visible duration_ms=800 since_turn_ms=800 via=narration', startedAt: 1, endedAt: 801 },
-    ...Array.from({ length: 8 }, (_, index) => ({
-      kind: 'text' as const,
-      content: `step-${index}`,
-    })),
-  ];
-  const next = appendTrimmedActivityTurn(
-    [],
-    {
-      id: 'turn',
-      user: 'hi',
-      assistant: 'ok',
-      status: 'completed',
-      createdAt: 1,
-      activities,
-    },
-    25,
-    4,
-  );
-  assert.equal(next[0].activities.length, 4);
-  assert.equal(next[0].activities.filter((item) => item.kind === 'log').length, 2);
-  assert.equal(next[0].activities.filter((item) => item.kind === 'text').length, 2);
-});
+test('glob and skill inputs keep every field instead of a short label', () => {
+  const glob = summarizeToolInput('Glob', { pattern: '**/*', path: 'src' });
+  assert.match(glob, /pattern/);
+  assert.match(glob, /\*\*\/\*/);
+  assert.match(glob, /"path": "src"/);
 
-test('activity history replaces duplicate turns and applies both caps', () => {
-  const makeTurn = (id: string, count = 1): PersistedActivityTurn => ({
-    id,
-    user: id,
-    assistant: id,
-    status: 'completed',
-    createdAt: 1,
-    activities: Array.from({ length: count }, (_, index) => ({
-      kind: 'text' as const,
-      content: `${id}-${index}`,
-    })),
+  const skill = summarizeToolInput('mcp__edgeone-sandbox__load_makers_skill', {
+    skill: 'makers-agents',
+    ref: 'platform/sse-protocol.md',
   });
-  const current = [makeTurn('one'), makeTurn('two')];
-  const next = appendTrimmedActivityTurn(current, makeTurn('two', 4), 2, 3);
+  assert.match(skill, /makers-agents/);
+  assert.match(skill, /platform\/sse-protocol\.md/);
+});
 
-  assert.deepEqual(next.map((turn) => turn.id), ['one', 'two']);
-  assert.equal(next[1].activities.length, 3);
-  assert.equal(next[1].activities[0].kind === 'text' && next[1].activities[0].content, 'two-1');
+test('deploy and preview rows hide empty arguments and model-facing results', () => {
+  assert.equal(summarizeToolInput('mcp__edgeone-sandbox__deploy_project', {}), '');
+  assert.equal(summarizeToolInput('mcp__edgeone-sandbox__start_preview', { restart: true }), '');
+  assert.equal(toolPaintsOwnProgress('mcp__edgeone-sandbox__deploy_project'), true);
+  assert.equal(toolPaintsOwnProgress('mcp__edgeone-sandbox__start_preview'), true);
+  assert.equal(toolPaintsOwnProgress('commands'), false);
+
+  const published = summarizeToolOutput(JSON.stringify({
+    status: 'published',
+    url: 'https://demo.edgeone.app',
+    note: 'Tell the user in their language and write this complete URL.',
+  }), '', 'mcp__edgeone-sandbox__deploy_project');
+  assert.equal(published, 'https://demo.edgeone.app');
+
+  const deployError = summarizeToolOutput(JSON.stringify({
+    status: 'error',
+    error: 'The sandbox image does not provide the CLI yet.',
+    instruction: 'Stop. Do not inspect PATH.',
+  }), '', 'deploy_project');
+  assert.equal(deployError, 'The sandbox image does not provide the CLI yet.');
+
+  const preview = summarizeToolOutput(JSON.stringify({
+    status: 'success',
+    preview: { url: 'https://sandbox.example/?access_token=secret-token' },
+    note: 'The preview panel is already showing this URL. Do not put it in your reply.',
+  }), '', 'mcp__edgeone-sandbox__start_preview');
+  assert.equal(preview, '');
+  assert.doesNotMatch(preview, /access_token|Do not put it/);
+});
+
+test('a plain failure from either tool stays readable', () => {
+  const error = 'Failed to start edgeone makers dev.';
+  assert.equal(summarizeToolOutput(error, '', 'start_preview'), error);
+  assert.equal(summarizeToolOutput(error, '', 'deploy_project'), error);
+});
+
+test('tool output is capped at eight kilobytes', () => {
+  const summary = summarizeToolOutput('x'.repeat(10_000));
+  assert.ok(summary.length < 8_200);
+  assert.match(summary, /truncated$/);
 });

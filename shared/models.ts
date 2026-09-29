@@ -1,12 +1,17 @@
 /**
  * The models the composer offers and the runtime accepts.
  *
- * Both ends read this file: the browser renders the picker from it and the agent
- * runtime validates the choice that comes back against it. One list is what
- * keeps the UI from offering a model the server would refuse.
+ * The edge function, the agent, and the browser all read this file: the edge
+ * function serves the menu, the agent validates the choice that comes back,
+ * and the browser renders the picker. One list is what keeps the UI from
+ * offering a model the server would refuse.
  *
  * Keep this module runtime-agnostic: no React, Next.js, or EdgeOne imports.
  */
+
+type EnvContext = {
+  env?: Record<string, unknown> | null;
+};
 
 export type ModelOption = {
   /** Sent to the gateway verbatim; must match the platform's ID exactly. */
@@ -19,7 +24,7 @@ export type ModelOption = {
 };
 
 /** Runs when the deployment configures nothing and the user picks nothing. */
-export const DEFAULT_MODEL = '@makers/deepseek-v4-flash';
+export const DEFAULT_MODEL = '@makers/deepseek-v4.1-flash';
 
 /**
  * The models the platform serves without a vendor key. Free and rate limited,
@@ -30,6 +35,7 @@ export const DEFAULT_MODEL = '@makers/deepseek-v4-flash';
  * a deployment that has bound one adds it through EXTRA_MODELS_ENV_KEY.
  */
 export const BUILT_IN_MODELS: readonly ModelOption[] = [
+  { id: '@makers/deepseek-v4.1-flash', label: 'DeepSeek V4.1 Flash' },
   { id: '@makers/deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
   { id: '@makers/deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
   { id: '@makers/hy3', label: 'Hunyuan 3' },
@@ -41,12 +47,48 @@ export const BUILT_IN_MODELS: readonly ModelOption[] = [
 
 export const EXTRA_MODELS_ENV_KEY = 'AI_GATEWAY_EXTRA_MODELS';
 
+function envValue(context: EnvContext | null | undefined, key: string) {
+  const value = context?.env?.[key];
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+/**
+ * The model this deployment runs when the composer has not chosen one. Kept as
+ * the single reader of the model env chain so the picker's default and the
+ * agent's fallback can never drift apart.
+ */
+export function resolveConfiguredModel(context?: EnvContext | null) {
+  return envValue(context, 'AI_GATEWAY_MODEL')
+    || envValue(context, 'ANTHROPIC_MODEL')
+    || envValue(context, 'DEEPSEEK_MODEL')
+    || DEFAULT_MODEL;
+}
+
+/** The menu the composer's picker shows for this deployment. */
+export function resolveModelCatalog(context?: EnvContext | null): ModelOption[] {
+  return buildModelCatalog({
+    configuredModel: resolveConfiguredModel(context),
+    extraModels: envValue(context, EXTRA_MODELS_ENV_KEY),
+  });
+}
+
 /**
  * A readable stand-in when an entry carries no label. Drops a leading `@scope/`,
  * which is where the built-in IDs carry the platform tier.
  */
 function fallbackLabel(id: string) {
   return id.replace(/^@[^/]+\//, '') || id;
+}
+
+/**
+ * What to call a model in front of the user: the catalogue's label, or a
+ * readable form of an ID this deployment runs without listing. Never the raw
+ * ID, which is where the built-in models carry the platform tier.
+ */
+export function resolveModelLabel(catalog: readonly ModelOption[], id: unknown): string {
+  const trimmed = typeof id === 'string' ? id.trim() : '';
+  if (!trimmed) return '';
+  return catalog.find((option) => option.id === trimmed)?.label || fallbackLabel(trimmed);
 }
 
 /**

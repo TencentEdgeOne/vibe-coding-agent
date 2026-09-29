@@ -3,7 +3,7 @@ import test from 'node:test';
 import {
   resolveNarrationEmit,
   type NarrationEmitState,
-} from '../agents/utils/_narration.ts';
+} from '../shared/timeline.ts';
 
 function emptyState(): NarrationEmitState {
   return { currentTextBlock: '', emittedNarration: '' };
@@ -95,6 +95,22 @@ test('assistant replay after tool reset does not re-emit the same trailing block
     true,
   );
   assert.equal(out.text, null);
+});
+
+// Deltas arrive token-sized, so a chunk that repeats the character before it
+// is ordinary text. Dropping it as a duplicate corrupts whatever it belonged
+// to, and a deploy URL one character short still looks like a deploy URL.
+test('a delta that repeats the preceding characters is still text', () => {
+  let state = emptyState();
+  const url = 'https://demo-preview-yy3vnimd.example.com?eo_token=example-token-aa';
+
+  for (const delta of ['站点已上线。', 'https://demo-preview-y', 'y', '3vnimd', '.example.com?eo_token=example-token-a', 'a']) {
+    const out = apply(state, delta);
+    assert.equal(out.text, delta, `dropped delta ${JSON.stringify(delta)}`);
+    state = out.state;
+  }
+
+  assert.equal(state.emittedNarration, `站点已上线。${url}`);
 });
 
 test('cumulative stream deltas only forward the remainder', () => {

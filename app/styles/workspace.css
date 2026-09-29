@@ -1,0 +1,1059 @@
+/* ============================================================
+   Workspace — the split canvas: chat column on the left, the
+   preview/code/session result panel on the right. The default
+   split is 4:6; a gutter between the columns updates
+   --workspace-chat-share.
+
+   These rules are intentionally unlayered. Tailwind v4 emits its
+   utilities inside @layer utilities, and unlayered CSS outranks
+   every layer, so the panel chrome wins over the shadcn defaults
+   without a single !important.
+   ============================================================ */
+
+.workspace-shell {
+  --workspace-chat-share: 40%;
+  display: flex;
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+  background: var(--n-0);
+}
+
+.workspace-shell > .agent-conversation {
+  width: auto;
+  min-width: 280px;
+  min-height: 0;
+  flex: 0 0 var(--workspace-chat-share);
+  overflow: hidden;
+  border-right: 1px solid var(--n-150);
+  background: var(--n-0);
+  transition:
+    flex-basis var(--t-slow) var(--ease),
+    border-color var(--t-base) ease;
+}
+
+.workspace-shell.is-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.workspace-shell.is-resizing > .agent-conversation {
+  transition: none;
+}
+
+.workspace-shell.is-resizing iframe {
+  pointer-events: none;
+}
+
+.workspace-shell.is-chat-only > .agent-conversation {
+  width: 100%;
+  max-width: 720px;
+  flex: 1 1 auto;
+  margin: 0 auto;
+  border-right: 0;
+}
+
+.workspace-result-panel {
+  display: flex;
+  width: auto;
+  min-width: 360px;
+  min-height: 0;
+  flex: 1 1 0;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--n-25);
+  animation: workspace-panel-enter var(--t-slow) var(--ease) both;
+  /* The topbar sizes its address column from the panel's own inline size, so
+     the panel is the query container rather than the viewport. */
+  container-type: inline-size;
+}
+
+.workspace-result-panel[data-presence='exiting'] {
+  pointer-events: none;
+  animation-name: workspace-panel-exit;
+}
+
+.workspace-split-handle {
+  position: relative;
+  z-index: 16;
+  flex: 0 0 8px;
+  margin: 0 -4px;
+  cursor: col-resize;
+  touch-action: none;
+  background: transparent;
+  user-select: none;
+  animation: workspace-split-handle-in var(--t-base) var(--ease) both;
+}
+
+.workspace-split-handle::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 2px;
+  border-radius: 1px;
+  background: transparent;
+  transition: background-color var(--t-fast) var(--ease);
+}
+
+.workspace-split-handle:hover::before,
+.workspace-split-handle:focus-visible::before,
+.workspace-shell.is-resizing .workspace-split-handle::before {
+  background: var(--brand);
+}
+
+.workspace-shell.is-panel-exiting .workspace-split-handle {
+  pointer-events: none;
+  animation: workspace-split-handle-out var(--t-base) var(--ease) both;
+}
+
+.workspace-split-handle:focus-visible {
+  outline: none;
+}
+
+@keyframes workspace-panel-enter {
+  from {
+    opacity: 0;
+    transform: translateX(28px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes workspace-panel-exit {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(28px);
+  }
+}
+
+@keyframes workspace-split-handle-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes workspace-split-handle-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes workspace-panel-enter-stacked {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes workspace-panel-exit-stacked {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+}
+
+/* ---- Panel top bar ----------------------------------------------------- */
+
+/* Owns a layer, because its tooltips hang below it and land on the preview
+   iframe. Declared once here rather than left to each tooltip to out-number the
+   content on its own: that only held while nothing below the bar was positioned,
+   and it put a bare compositing decision in a rule about a text bubble.
+
+   The value has to clear .workspace-preview-loading (10), which is chrome
+   losing to a content state — and no tooltip can fix that from the inside. The
+   tooltip already asks for 40, but this layer traps it: a child cannot escape
+   its parent's stacking context, so the bar's number is the only one that
+   counts. At 1 the preview scrim blurred the tooltip along with the iframe. */
+.workspace-topbar {
+  display: grid;
+  position: relative;
+  z-index: 20;
+  min-height: 44px;
+  /* `grid-template-columns` is set by the container query below, so the centre
+     column is sized from the panel rather than the viewport. */
+  align-items: center;
+  gap: 12px;
+  background: var(--n-25);
+  padding: 0 12px 0 18px;
+}
+
+/* The bar is a grid of tabs | address | actions, with equal side tracks so the
+   address bar lands on the panel's midline. The tab strip is much wider than the
+   action buttons, so any layout that hands each flank what it asks for leaves
+   the bar tens of pixels right of centre — off-centre is what the equal tracks
+   are for.
+
+   The centre is a definite track rather than `auto`: an automatic track is sized
+   by its contents, which left the bar at about 286px and the route field inside
+   it at roughly half that. Stating the cap as the track's maximum is what
+   actually hands the route that room. The cap is generous because the route is
+   the one thing in this bar a person reads rather than clicks. */
+.workspace-topbar {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 420px) minmax(0, 1fr);
+}
+
+/* Below this the equal tracks are narrower than their contents, and `minmax(0,
+   1fr)` would let the tab strip spill into the address bar — the overlap this
+   layout has to rule out. Instead of trading the centring away to keep one row,
+   the bar takes its own full-width row, which is centred by construction. Only
+   the layout that has a bar reflows: the flag is set by the component, so Code
+   and Session keep the single-row height.
+
+   The threshold is the sum the single row actually needs, not a round number:
+   two side tracks wide enough for the longest tab strip (2 x 188), the address
+   cap (420), the two column gaps (24) and the bar's padding (30), which is 850.
+   Under-triggering by even 30px here is what let the strip touch the bar. */
+@container (max-width: 849px) {
+  .workspace-topbar.has-preview-bar {
+    grid-template-areas:
+      'tabs actions'
+      'address address';
+    grid-template-columns: max-content minmax(0, 1fr);
+    padding-bottom: 6px;
+    row-gap: 6px;
+  }
+
+  .workspace-topbar.has-preview-bar .workspace-topbar-tabs {
+    grid-area: tabs;
+  }
+
+  .workspace-topbar.has-preview-bar .workspace-topbar-actions {
+    grid-area: actions;
+  }
+
+  .workspace-topbar.has-preview-bar .workspace-topbar-center {
+    grid-area: address;
+    justify-content: stretch;
+  }
+
+  .workspace-topbar.has-preview-bar .workspace-preview-address {
+    max-width: none;
+  }
+}
+
+.workspace-topbar-tabs,
+.workspace-topbar-tablist,
+.workspace-topbar-center,
+.workspace-topbar-actions,
+.workspace-tabs {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.workspace-topbar-tabs {
+  flex-direction: row;
+  gap: 8px;
+  justify-self: start;
+}
+
+.workspace-topbar-tablist {
+  flex-direction: row;
+  gap: 0;
+}
+
+.workspace-topbar-center {
+  justify-content: center;
+}
+
+/* Two clusters read as one row of icons unless the space between them is wider
+   than the space inside them: what leaves the project, then what drives the
+   preview. Same whitespace-only separation the site header uses. */
+.workspace-topbar-actions {
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  justify-self: end;
+  gap: 14px;
+}
+
+.workspace-topbar-group {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.workspace-tabs {
+  /* The container measures its tabs, so its width rides along with them as a
+     label opens and another closes. That movement is the animation: the strip
+     widens and narrows with the labels rather than holding a reserved track. */
+  display: flex;
+  width: max-content;
+  height: 30px;
+  gap: 2px;
+  border-radius: var(--r-md);
+  background: var(--n-100);
+  padding: 2px;
+}
+
+.workspace-tab {
+  height: 26px;
+  flex: 0 0 auto;
+  justify-content: center;
+  gap: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  padding: 0 10px;
+  color: var(--n-600);
+  font-size: var(--fs-xs);
+  box-shadow: none;
+  transition:
+    color var(--t-base) ease,
+    background var(--t-base) ease;
+}
+
+/* A one-cell grid whose track animates between 0 and 1fr. That is the one
+   formulation where closing and opening interpolate over the same span: a
+   max-width cap only ever animates the part of the text past the cap, so the
+   two directions ran at visibly different speeds on the same duration. */
+.workspace-tab-label {
+  display: grid;
+  grid-template-columns: 0fr;
+  margin-left: 0;
+  opacity: 0;
+  transition:
+    grid-template-columns var(--t-base) var(--ease),
+    margin-left var(--t-base) var(--ease),
+    opacity var(--t-base) ease;
+}
+
+/* The inner element is what hides the overflow; the track can only shrink past
+   the text if something below it clips. */
+.workspace-tab-label > span {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* The tab in view is the one that says what it is; the others stay as icons so
+   the strip is a set of destinations rather than three competing labels. */
+.workspace-tab[data-state='active'] {
+  gap: 0;
+}
+
+.workspace-tab[data-state='active'] .workspace-tab-label {
+  grid-template-columns: 1fr;
+  margin-left: 5px;
+  opacity: 1;
+}
+
+.workspace-tab svg {
+  width: 12px;
+  height: 12px;
+  transition: color var(--t-base) ease;
+}
+
+/* Selection is the white pill — lifted, outlined, and branded. Hover goes the
+   other way: a flat, darker recess that could not be read as the open tab. */
+.workspace-tab:hover:not([data-state='active']) {
+  background: var(--n-200);
+  color: var(--n-900);
+}
+
+/* The selected tab must not flinch on hover, click or keyboard focus. */
+.workspace-tab[data-state='active'],
+.workspace-tab[data-state='active']:hover,
+.workspace-tab[data-state='active']:focus,
+.workspace-tab[data-state='active']:focus-visible {
+  background: var(--n-0);
+  color: var(--n-900);
+  outline: none;
+  box-shadow: var(--shadow-1);
+}
+
+.workspace-tab[data-state='active'] svg {
+  color: var(--brand);
+}
+
+.workspace-preview-address {
+  display: flex;
+  position: relative;
+  /* Fills the middle column, whatever the panel leaves it. Back, forward, size,
+     route, open and refresh make it wide; the route button is the only one that
+     flexes, so it ellipsizes when the column is narrow instead of pushing the
+     tabs sideways. */
+  width: 100%;
+  max-width: 420px;
+  min-width: 0;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid var(--n-150);
+  border-radius: var(--r-full);
+  background: var(--n-0);
+  padding: 0 4px;
+}
+
+.workspace-preview-nav {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+/* A thin track pinned just under the bar. It reports a wait the parent cannot
+   otherwise observe: the route change happens in a cross-origin frame, so there
+   is no load event here and the bar would sit unchanged for about a second
+   after a selection.
+
+   It sits outside the bar's own rounded box rather than inside it: clipping it
+   to the radius would take the route menu with it, that being a child of the
+   same element. The sweep is decorative — the real signal is the
+   `role="progressbar"` element appearing and disappearing, because the duration
+   cannot be known in advance. */
+.workspace-address-progress {
+  position: absolute;
+  z-index: 1;
+  top: calc(100% + 1px);
+  right: 4px;
+  left: 4px;
+  height: 3px;
+  overflow: hidden;
+  border-radius: var(--r-full);
+  /* A visible trough, not a tint: at 8% opacity the 2px bar read as a smudge on
+     the panel rather than as progress. */
+  background: var(--n-200);
+}
+
+.workspace-address-progress::after {
+  position: absolute;
+  inset: 0;
+  width: 45%;
+  content: '';
+  border-radius: inherit;
+  background: var(--brand);
+  animation: workspace-address-progress 1.2s var(--ease) infinite;
+}
+
+@keyframes workspace-address-progress {
+  from {
+    transform: translateX(-45%);
+  }
+
+  to {
+    transform: translateX(255%);
+  }
+}
+
+/* The sweep is the one piece of motion in the bar, so it is also the one that
+   has to respect a reduced-motion preference: the track stays, the travelling
+   segment is replaced by a static one. */
+@media (prefers-reduced-motion: reduce) {
+  .workspace-address-progress::after {
+    width: 100%;
+    animation: none;
+  }
+}
+
+.workspace-address-button {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  place-items: center;
+  border-radius: var(--r-sm);
+  color: var(--n-600);
+}
+
+.workspace-address-button:hover:not(:disabled),
+.workspace-address-button:focus-visible {
+  background: var(--n-100);
+  color: var(--n-900);
+}
+
+.workspace-address-button:disabled {
+  color: var(--n-300);
+  cursor: default;
+}
+
+.workspace-address-button svg {
+  width: 12px;
+  height: 12px;
+}
+
+.workspace-address-route {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  border-radius: var(--r-full);
+  padding: 0 6px;
+  color: var(--n-700);
+  font-size: var(--fs-xs);
+  text-align: left;
+}
+
+.workspace-address-route:hover:not(:disabled),
+.workspace-address-route:focus-visible {
+  background: var(--n-100);
+  color: var(--n-900);
+}
+
+.workspace-address-route:disabled {
+  cursor: default;
+}
+
+.workspace-address-route > span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-address-route svg {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+  color: var(--n-500);
+}
+
+.workspace-route-menu {
+  display: flex;
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 100%;
+  max-height: 260px;
+  flex-direction: column;
+  overflow-y: auto;
+  border: 1px solid var(--n-150);
+  border-radius: var(--r-md);
+  background: var(--n-0);
+  padding: 4px;
+  box-shadow: var(--shadow-2);
+}
+
+.workspace-route-menu button {
+  display: block;
+  width: 100%;
+  border-radius: var(--r-sm);
+  padding: 6px 8px;
+  color: var(--n-700);
+  font-size: var(--fs-xs);
+  text-align: left;
+}
+
+.workspace-route-menu button:hover,
+.workspace-route-menu button[aria-selected='true'] {
+  background: var(--n-100);
+  color: var(--n-900);
+}
+
+.workspace-route-menu button span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-route-empty {
+  margin: 0;
+  padding: 8px;
+  color: var(--n-500);
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+}
+
+.workspace-icon-button svg {
+  width: 13px;
+  height: 13px;
+}
+
+.workspace-icon-button {
+  display: grid;
+  position: relative;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  color: var(--n-600);
+  transition:
+    border-color var(--t-fast) ease,
+    background var(--t-fast) ease,
+    color var(--t-fast) ease;
+}
+
+.workspace-panel-attention {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--danger);
+  box-shadow: 0 0 0 2px var(--n-0);
+}
+
+.workspace-icon-button:hover:not(:disabled),
+.workspace-icon-button:focus-visible {
+  background: var(--n-100);
+  color: var(--n-900);
+}
+
+.workspace-icon-button:disabled {
+  cursor: not-allowed;
+}
+
+/* The glyph fades, not the button. The tooltip is the only thing that says why
+   the button is refusing, so a rule that dimmed the whole element dimmed the
+   explanation along with it — and, because opacity makes a stacking context,
+   left that tooltip a translucent layer sitting directly on the preview iframe
+   for as long as the action ran. */
+.workspace-icon-button:disabled svg,
+.workspace-icon-button:disabled .workspace-icon-spinner {
+  opacity: 0.45;
+}
+
+/* Publishing is what this panel is for, so it is the one action in the row
+   ranked above the utilities next to it. Colour alone, and only on the glyph:
+   the row is a fixed run of 30px cells sharing its line with the preview
+   address, so a label or a wider cell reflows both, and a resting border made
+   a quiet row of icons look like it had a box loose in it. */
+.workspace-icon-button.is-publish {
+  color: var(--brand);
+}
+
+.workspace-icon-button.is-publish:hover:not(:disabled),
+.workspace-icon-button.is-publish:focus-visible {
+  background: var(--brand);
+  color: var(--n-0);
+}
+
+/* A publish that cannot run stops advertising itself, which is most of a
+   session: the panel opens before there is a project to publish, and without
+   this the loudest thing in it would be a button that refuses. The tooltip
+   carries the reason in either state. */
+.workspace-icon-button.is-publish:disabled {
+  color: var(--n-600);
+}
+
+/* Sized to the icons it replaces, so a running action does not shift the row. */
+.workspace-icon-spinner {
+  width: 13px;
+  height: 13px;
+  border: 2px solid transparent;
+  border-top-color: currentcolor;
+  border-radius: var(--r-full);
+  animation: workspace-icon-spin 0.7s linear infinite;
+}
+
+@keyframes workspace-icon-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.workspace-icon-button[data-tooltip]::after {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 8px);
+  right: 0;
+  width: max-content;
+  max-width: 220px;
+  pointer-events: none;
+  content: attr(data-tooltip);
+  border-radius: var(--r-sm);
+  background: var(--n-900);
+  padding: 5px 8px;
+  color: var(--n-0);
+  font-size: var(--fs-xs);
+  line-height: 15px;
+  opacity: 0;
+  transform: translateY(-3px);
+  transition:
+    opacity var(--t-fast) ease,
+    transform var(--t-fast) ease;
+}
+
+.workspace-icon-button[data-tooltip]:hover::after,
+.workspace-icon-button[data-tooltip]:focus-visible::after {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Stays on the canvas whether the result panel is open or not, so opening
+   preview/code/session is always a user action rather than a side effect of
+   the stream. */
+.workspace-panel-toggle {
+  position: absolute;
+  top: 7px;
+  right: 10px;
+  z-index: 15;
+  animation: workspace-panel-toggle-in var(--t-base) var(--ease) both;
+}
+
+@keyframes workspace-panel-toggle-in {
+  from {
+    opacity: 0;
+    transform: translateX(6px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+/* ---- Panel body -------------------------------------------------------- */
+
+.workspace-panel-content {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--n-25);
+}
+
+/* Tab panes live side by side and are toggled with display, so the preview
+   iframe survives a switch to the Code tab instead of reloading. */
+.workspace-panel-pane {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.workspace-panel-pane.is-hidden {
+  display: none;
+}
+
+.workspace-preview-shell {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--n-25);
+}
+
+.workspace-preview-stage {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  justify-content: center;
+  overflow: hidden;
+  background: var(--n-150);
+}
+
+.workspace-preview-frame {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  flex: 0 0 auto;
+  background: var(--n-0);
+  transition:
+    width 220ms ease,
+    box-shadow 220ms ease;
+}
+
+.workspace-preview-shell.is-mobile .workspace-preview-frame {
+  width: min(390px, 100%);
+  border-right: 1px solid var(--n-300);
+  border-left: 1px solid var(--n-300);
+  box-shadow: var(--shadow-device);
+}
+
+/* Only the scrim. Centring lives here, but nothing is laid out directly on it:
+   a grid spanning the whole frame gave each child its own track, which put the
+   spinner and its sentence at opposite ends of the preview. */
+.workspace-preview-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Blurred rather than bleached: a flat 90% white wash flattened the page
+     underneath until it read as a rendering fault instead of a paused state. */
+  background: var(--scrim);
+  padding: 24px;
+  backdrop-filter: blur(3px);
+  pointer-events: none;
+}
+
+.workspace-preview-loading.is-actionable {
+  pointer-events: auto;
+}
+
+/* One surface for every transient preview state, built from the same border,
+   radius, and elevation as the workspace's other floating panels. On the scrim
+   alone the sentence read as content belonging to the page below it. */
+.workspace-preview-status {
+  display: flex;
+  max-width: min(100%, 30em);
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid var(--n-150);
+  border-radius: var(--r-md);
+  background: var(--n-0);
+  padding: 10px 14px;
+  color: var(--n-600);
+  font-size: var(--fs-sm);
+  text-align: center;
+  box-shadow: var(--shadow-2);
+  animation: workspace-preview-status-in var(--t-base) var(--ease) both;
+}
+
+/* A refresh that finishes quickly should not flash a panel on its way past.
+   `both` holds the panel at opacity 0 through the delay, so only a wait long
+   enough to notice ever shows one. The two states that are not transient — a
+   failure to acknowledge, a publish in progress — appear immediately. */
+.workspace-preview-loading:not(.is-actionable) .workspace-preview-status {
+  animation-delay: 220ms;
+}
+
+@keyframes workspace-preview-status-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* An action belongs under the sentence it follows, not beside it. */
+.workspace-preview-status.is-stacked {
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 18px;
+}
+
+.workspace-preview-status .workspace-icon-spinner {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  border-top-color: var(--brand);
+}
+
+.workspace-empty-state {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  overflow: auto;
+  background: var(--n-25);
+  padding: 24px;
+  color: var(--n-700);
+  text-align: center;
+}
+
+.workspace-empty-state > p:first-of-type {
+  color: var(--n-800);
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+
+.workspace-empty-state > p:last-of-type,
+.workspace-empty-disclaimer {
+  max-width: min(100%, 42em);
+  margin-top: 0;
+  color: var(--n-500);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  text-wrap: balance;
+  white-space: normal;
+}
+
+.workspace-error-bar {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--danger-border);
+  background: var(--danger-soft);
+  padding: 10px 14px;
+  color: var(--n-700);
+  font-size: var(--fs-sm);
+}
+
+/* Stacked layout still has to fit the viewport: fixed vh panes used to add up to
+   more than one screen, so the shell scrolled past the panels into empty space. */
+@media (max-width: 900px) {
+  .workspace-shell {
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .workspace-shell > .agent-conversation {
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    flex: 1 1 45%;
+    border-right: 0;
+    border-bottom: 1px solid var(--n-150);
+  }
+
+  .workspace-shell.is-chat-only > .agent-conversation {
+    max-width: none;
+    min-height: 0;
+    flex: 1 1 auto;
+    margin: 0;
+    border-bottom: 0;
+  }
+
+  .workspace-result-panel {
+    min-width: 0;
+    min-height: 0;
+    flex: 1 1 55%;
+    animation-name: workspace-panel-enter-stacked;
+  }
+
+  .workspace-result-panel[data-presence='exiting'] {
+    animation-name: workspace-panel-exit-stacked;
+  }
+
+  .workspace-split-handle {
+    display: none;
+  }
+}
+
+@media (max-width: 640px) {
+  /* On a phone, the chat and result panel are two full-screen surfaces rather
+     than two short panes. The panel toggle in the topbar swaps between them;
+     the conversation keeps its own scroll position while hidden. */
+  .workspace-shell > .agent-conversation {
+    height: 100%;
+    flex: 1 1 auto;
+  }
+
+  .workspace-shell:not(.is-chat-only) > .agent-conversation {
+    display: none;
+  }
+
+  .workspace-shell:not(.is-chat-only) > .workspace-result-panel {
+    flex: 1 1 auto;
+  }
+
+  .workspace-result-panel {
+    animation-name: workspace-panel-enter-full;
+  }
+
+  .workspace-result-panel[data-presence='exiting'] {
+    animation-name: workspace-panel-exit-full;
+  }
+
+  .workspace-topbar {
+    align-items: center;
+    padding: 0 8px;
+  }
+
+  /* Six controls in a 40px-tall bar: the clusters give up their separation
+     before any single action gives up its place. */
+  .workspace-topbar-actions {
+    max-width: none;
+    flex-wrap: nowrap;
+    gap: 6px;
+  }
+
+  .workspace-topbar-group {
+    gap: 2px;
+  }
+
+  .workspace-tab {
+    padding: 0 8px;
+  }
+
+  /* The address bar shrinks rather than disappears: it is how a deep route
+     stays readable, and the route button ellipsizes to make the room. */
+  .workspace-topbar-center {
+    max-width: none;
+  }
+
+  .workspace-preview-address {
+    width: 100%;
+    max-width: 240px;
+  }
+
+  .workspace-route-menu {
+    width: max(100%, 200px);
+  }
+
+  .workspace-icon-button[data-tooltip]::after {
+    right: auto;
+    left: 0;
+  }
+}
+
+@keyframes workspace-panel-enter-full {
+  from {
+    opacity: 0;
+    transform: translateX(100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes workspace-panel-exit-full {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-result-panel,
+  .workspace-split-handle,
+  .workspace-panel-toggle {
+    animation: none;
+  }
+
+  /* The delay is what keeps a fast refresh from flashing a panel, so it stays
+     while the movement goes. */
+  .workspace-preview-status {
+    transform: none;
+    animation-name: workspace-preview-status-fade;
+  }
+
+  @keyframes workspace-preview-status-fade {
+    from {
+      opacity: 0;
+    }
+
+    to {
+      opacity: 1;
+    }
+  }
+}

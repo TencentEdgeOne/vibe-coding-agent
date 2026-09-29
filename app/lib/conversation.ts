@@ -1,6 +1,6 @@
-import type { ChatMessage } from '../types/workspace';
+import type { AssistantActivity, ChatMessage } from '../types/workspace';
 
-const CONVERSATION_STORAGE_KEY = 'web-dev-agent-conversation-id';
+const CONVERSATION_STORAGE_KEY = 'vibe-coding-platform-conversation-id';
 
 export function createConversationId() {
   return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
@@ -52,16 +52,65 @@ export function createMessageId(role: ChatMessage['role']) {
   return `${role}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-export function sanitizeThinkingContent(value: string) {
-  return value
-    .replace(/\x1b\[[0-9;?]*[~A-Za-z]/g, '')
-    .replace(/\[20[01]~/g, '')
-    .replace(/\x1b\][^\x07]*\x07/g, '')
-    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '')
-    .replace(/<think\b[^>]*>/gi, '')
-    .replace(/<\/think>/gi, '')
-    .replace(/\n{4,}/g, '\n\n\n')
-    .replace(/<t(?:h(?:i(?:n(?:k(?:\b[^>]*)?)?)?)?)?$/i, '');
+export type StoppedTurnSnapshot = {
+  /** The rendered list, with the interrupted turn marked stopped. */
+  messages: ChatMessage[];
+  /** The same turn's activities, for the /stop payload. */
+  activities: AssistantActivity[];
+  /** The prompt that opened the turn, so the persisted turn stays a pair. */
+  userContent: string;
+};
+
+// Stopping a turn has to land in two places: the screen and the turn persisted
+// through /stop. Deriving that state twice let the two drift — one pass mapped
+// the trailing message, the other reverse-searched for a running assistant —
+// so both now come out of a single pass over a single snapshot.
+export function markLastTurnStopped(
+  messages: ChatMessage[],
+  stoppedText: string,
+): StoppedTurnSnapshot {
+  let stoppedIndex = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role === 'assistant' && message.status === 'running') {
+      stoppedIndex = index;
+      break;
+    }
+  }
+
+  const lastUserContentBefore = (end: number) => {
+    for (let index = end - 1; index >= 0; index -= 1) {
+      if (messages[index].role === 'user') return messages[index].content;
+    }
+    return '';
+  };
+
+  if (stoppedIndex === -1) {
+    return {
+      messages,
+      activities: [],
+      userContent: lastUserContentBefore(messages.length),
+    };
+  }
+
+  // One timestamp for the whole turn: the tools all stopped at the same click,
+  // and a per-activity Date.now() would order them by array position.
+  const endedAt = Date.now();
+  const activities = (messages[stoppedIndex].activities ?? []).map((activity) => (
+    activity.kind === 'tool' && activity.status === 'running'
+      ? { ...activity, status: 'stopped' as const, endedAt }
+      : activity
+  ));
+
+  return {
+    messages: messages.map((message, index) => (
+      index === stoppedIndex
+        ? { ...message, content: stoppedText, status: 'stopped' as const, activities }
+        : message
+    )),
+    activities,
+    userContent: lastUserContentBefore(stoppedIndex),
+  };
 }
 
 export function extractProjectName() {
@@ -82,7 +131,14 @@ export function extractProjectName() {
   };
 }
 
-// Where this template's own code lives, for a reader who wants it rather than a copy.
+const EDGEONE_AI_CONTACT_URL = 'https://pages.edgeone.ai/contact?source=pages-home';
+export const TENCENT_CLOUD_CONTACT_URL = 'https://cloud.tencent.com/online-service?from=connect-us';
+
+export function getContactUrl(domain: string) {
+  return domain === 'edgeone.dev' ? EDGEONE_AI_CONTACT_URL : TENCENT_CLOUD_CONTACT_URL;
+}
+
+/** Where this template's own code lives, for a reader who wants it rather than a copy. */
 export const TEMPLATE_SOURCE_URL = 'https://github.com/TencentEdgeOne/vibe-coding-agent';
 
 // Taking a copy of this template is a console flow, so the button is a link out
@@ -91,19 +147,23 @@ export const TEMPLATE_SOURCE_URL = 'https://github.com/TencentEdgeOne/vibe-codin
 // the host splits the same way the contact URL does, because the two consoles are
 // separate deployments and neither can sign in the other's accounts.
 const TEMPLATE_DEPLOY_QUERY = 'template=vibe-coding-agent&from=within&fromAgent=1&agentLang=typescript';
-const EDGEONE_AI_DEPLOY_URL = `https://edgeone.ai/makers/new?${TEMPLATE_DEPLOY_QUERY}`;
-export const TENCENT_CLOUD_DEPLOY_URL = `https://console.cloud.tencent.com/edgeone/makers/new?${TEMPLATE_DEPLOY_QUERY}`;
-const EDGEONE_AI_CONTACT_URL = 'https://pages.edgeone.ai/contact?source=pages-home';
-export const TENCENT_CLOUD_CONTACT_URL = 'https://cloud.tencent.com/online-service?from=connect-us';
-// 认领部署（EdgeOne）功能暂不上线，先隐藏入口。上线时改回 true 即可。
-export const CLAIM_DEPLOY_ENABLED = false;
+const EDGEONE_AI_TEMPLATE_DEPLOY_URL = `https://edgeone.ai/makers/new?${TEMPLATE_DEPLOY_QUERY}`;
+const TENCENT_CLOUD_TEMPLATE_DEPLOY_URL = `https://console.cloud.tencent.com/edgeone/makers/new?${TEMPLATE_DEPLOY_QUERY}`;
 
-export function getDeployUrl(domain: string) {
-  return domain === 'edgeone.dev' ? EDGEONE_AI_DEPLOY_URL : TENCENT_CLOUD_DEPLOY_URL;
+export function getTemplateDeployUrl(domain: string) {
+  return domain === 'edgeone.dev'
+    ? EDGEONE_AI_TEMPLATE_DEPLOY_URL
+    : TENCENT_CLOUD_TEMPLATE_DEPLOY_URL;
 }
 
-export function getContactUrl(domain: string) {
-  return domain === 'edgeone.dev' ? EDGEONE_AI_CONTACT_URL : TENCENT_CLOUD_CONTACT_URL;
+const EDGEONE_AI_MODELS_DOCS_URL = 'https://pages.edgeone.ai/document/models';
+const TENCENT_CLOUD_MODELS_DOCS_URL = 'https://makers.edgeone.link/document/models';
+
+// Same root-domain split as contact and template-deploy: `edgeone.dev` is the
+// international site, everything else (China `edgeone.cool`, local, unknown) is
+// the China docs host.
+export function getMakersModelsDocsUrl(domain: string) {
+  return domain === 'edgeone.dev' ? EDGEONE_AI_MODELS_DOCS_URL : TENCENT_CLOUD_MODELS_DOCS_URL;
 }
 
 // Decode a base64 string into a Blob. The source archive arrives base64-encoded
@@ -115,19 +175,4 @@ export function base64ToBlob(base64: string, contentType: string): Blob {
     bytes[i] = binary.charCodeAt(i);
   }
   return new Blob([bytes], { type: contentType });
-}
-
-export function downloadTextFile(filename: string, content: string, mimeType = 'application/x-ndjson') {
-  if (typeof document === 'undefined') {
-    return;
-  }
-  const blob = new Blob([content], { type: `${mimeType};charset=utf-8` });
-  const objectUrl = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = objectUrl;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(objectUrl);
 }

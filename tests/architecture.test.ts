@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readdir, readFile } from 'node:fs/promises';
+import { access, readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -13,10 +13,18 @@ async function sourceFiles(root: string): Promise<string[]> {
   return nested.flat();
 }
 
-/** Comments explain boundaries and legitimately name what they exclude. */
-function stripComments(source: string) {
-  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-}
+test('frontend UI and helpers live under app/, not the repo root', async () => {
+  const topLevel = await readdir('.', { withFileTypes: true });
+  const directories = new Set(topLevel.filter((entry) => entry.isDirectory()).map((entry) => entry.name));
+  assert.ok(
+    !directories.has('components'),
+    'root components/ is leftover shadcn layout; keep UI under app/components/',
+  );
+  assert.ok(
+    !directories.has('lib'),
+    'root lib/ is leftover shadcn layout; keep helpers under app/lib/',
+  );
+});
 
 test('frontend never imports the agent runtime', async () => {
   for (const file of await sourceFiles('app')) {
@@ -26,10 +34,16 @@ test('frontend never imports the agent runtime', async () => {
       /(?:from\s+|import\s*)['"][^'"]*agents\//,
       `${file} crosses the app → agents boundary; move the contract to shared/`,
     );
+  }
+});
+
+test('edge functions never import the agent runtime', async () => {
+  for (const file of await sourceFiles('edge-functions')) {
+    const source = await readFile(file, 'utf8');
     assert.doesNotMatch(
       source,
-      /@edgeone\/makers-sdk/,
-      `${file} must not import the Node-only Makers SDK`,
+      /(?:from\s+|import\s*)['"][^'"]*agents\//,
+      `${file} crosses the edge-functions → agents boundary; move the contract to shared/`,
     );
   }
 });
@@ -39,227 +53,130 @@ test('shared modules remain runtime agnostic', async () => {
     const source = await readFile(file, 'utf8');
     assert.doesNotMatch(
       source,
-      /(?:from\s+|import\s*)['"](?:react|next|@anthropic-ai|\.\.\/app|\.\.\/agents)/,
+      /(?:from\s+|import\s*)['"](?:react|next|@anthropic-ai|\.\.\/app|\.\.\/agents|node:)/,
       `${file} contains a framework or runtime dependency`,
     );
   }
 });
 
-test('agent implementation files are private to Makers file routing', async () => {
-  for (const directory of ['core', 'pipelines', 'project', 'tools', 'utils']) {
-    for (const file of await sourceFiles(path.join('agents', directory))) {
-      assert.ok(
-        path.basename(file).startsWith('_'),
-        `${file} must start with _ or Makers will scan it as an endpoint`,
-      );
+const AGENT_ROUTE_FILES = new Set([
+  'agents/session.ts',
+  'agents/prompt.ts',
+  'agents/preview.ts',
+  'agents/stop.ts',
+  'agents/file.ts',
+  'agents/download.ts',
+  'agents/transcript.ts',
+  'agents/workspace.ts',
+]);
+
+test('agent routes stay at agents/ and implementation lives in agents/_lib/', async () => {
+  const topLevel = await readdir('agents', { withFileTypes: true });
+  for (const entry of topLevel) {
+    if (entry.name === '_lib') {
+      assert.ok(entry.isDirectory(), 'agents/_lib must be the private implementation directory');
+      continue;
     }
+    assert.ok(
+      entry.isFile() && AGENT_ROUTE_FILES.has(path.join('agents', entry.name)),
+      `${entry.name} is not a known agent route; move internals under agents/_lib/`,
+    );
   }
-});
 
-// The core is the reusable engine: ports in, domain events out. If a `context`,
-// a Request, or a Response reaches it, it has silently become Makers-only again
-// and no CLI or SDK host can share it.
-test('the agent core stays free of any host runtime', async () => {
-  const coreFiles = await sourceFiles(path.join('agents', 'core'));
-  assert.ok(coreFiles.length > 0, 'expected agents/core to contain source files');
-
-  for (const file of coreFiles) {
-    const source = stripComments(await readFile(file, 'utf8'));
-    const isAdapter = file.includes(`${path.sep}adapters${path.sep}`);
-
-    assert.doesNotMatch(
-      source,
-      /(?:from\s+|import\s*)['"][^'"]*\.\.\/(?:app|pipelines)\//,
-      `${file} must not depend on the frontend or the HTTP pipelines`,
-    );
-    assert.doesNotMatch(
-      source,
-      /@edgeone\/makers-sdk|(?:from\s+|import\s*)['"](?:react|next)/,
-      `${file} must not import a host framework`,
-    );
-
-    // Only adapters are allowed to name a host's runtime objects.
-    if (isAdapter) continue;
-    assert.doesNotMatch(
-      source,
-      /\bcontext\s*:\s*any\b|\bcontext\?\.|new Response\(|createSSEResponse/,
-      `${file} leaks a host runtime into the core; keep it behind a port or an adapter`,
+  for (const file of await sourceFiles(path.join('agents', '_lib'))) {
+    assert.ok(
+      !path.basename(file).startsWith('_'),
+      `${file} is already private via agents/_lib/; drop the underscore prefix`,
     );
   }
 });
 
-// The core must stay reusable by a host that has no EdgeOne sandbox at all,
-// which is what the local adapter stands in for.
-test('the core has a working host besides Makers', async () => {
-  const local = stripComments(
-    await readFile(path.join('agents', 'core', 'adapters', '_local.ts'), 'utf8'),
-  );
+test('workspace screen is assembled from session, live, preview, and workspace hooks', async () => {
+  const hooks = await readdir(path.join('app', 'features', 'workspace', 'hooks'));
+  for (const name of [
+    'use-session-resume.ts',
+    'use-live-turn.ts',
+    'use-preview-surface.ts',
+    'use-workspace-state.ts',
+    'use-workspace-split.ts',
+  ]) {
+    assert.ok(hooks.includes(name), `missing workspace hook ${name}`);
+  }
+});
 
-  assert.doesNotMatch(
-    local,
-    /context|sandbox\.|@edgeone/,
-    'the local adapter must implement the ports without any Makers concept',
-  );
-  for (const capability of ['files', 'commands', 'persist', 'restore']) {
-    assert.match(
-      local,
-      new RegExp(capability),
-      `the local adapter must cover the ${capability} capability`,
+test('retired session-truth modules stay gone', async () => {
+  for (const target of [
+    'agents/_lib/memory.ts',
+    'agents/_lib/agent.ts',
+    'agents/_lib/chat-tasks.ts',
+    'agents/_lib/shared.ts',
+    'agents/_lib/pipelines',
+    'agents/_lib/project/templates.ts',
+    'scripts/bake-templates.mjs',
+    'agents/session-model.ts',
+    'shared/makers-dev.ts',
+    'shared/makers-deploy.ts',
+    'shared/npm-install.ts',
+    'shared/tool-phase.ts',
+    'shared/sanitize-assistant-text.ts',
+  ]) {
+    await assert.rejects(access(target), `${target} should have been removed`);
+  }
+});
+
+test('app/components only holds shared UI primitives', async () => {
+  const names = await readdir('app/components');
+  for (const name of [
+    'agent-conversation.tsx',
+    'files-panel.tsx',
+    'session-panel.tsx',
+    'model-picker.tsx',
+  ]) {
+    assert.ok(
+      !names.includes(name),
+      `${name} belongs under app/features/workspace/components, not app/components/`,
     );
   }
 });
 
-// Conversation persistence now goes through ConversationStorePort. Reaching for
-// `context.store` again would re-couple that logic to Makers one call at a time,
-// which is exactly how the original coupling accumulated.
-test('conversation persistence stays behind the store port', async () => {
-  const offenders: string[] = [];
-
-  for (const file of await sourceFiles('agents')) {
-    // The adapter's whole job is to touch context.store; the ports file names it
-    // in type documentation.
-    if (file.endsWith(path.join('adapters', '_makers.ts'))) continue;
-    if (file.endsWith(path.join('core', '_ports.ts'))) continue;
-
-    const source = stripComments(await readFile(file, 'utf8'));
-    if (/context[?.]*\.store\b/.test(source)) offenders.push(file);
+test('workspace feature component directories expose index.tsx', async () => {
+  const root = path.join('app', 'features', 'workspace', 'components');
+  for (const name of ['conversation', 'files', 'result-panel']) {
+    await access(path.join(root, name, 'index.tsx'));
   }
-
-  assert.deepEqual(
-    offenders,
-    [],
-    'these files reach context.store directly; go through createMakersStorePort instead',
-  );
 });
 
-// Command execution is the chokepoint for every sandbox side effect. Once it is
-// behind the workspace port, the whole project layer can run on another host.
-test('sandbox command execution stays behind the workspace port', async () => {
-  const offenders: string[] = [];
-
-  for (const file of await sourceFiles('agents')) {
-    if (file.endsWith(path.join('adapters', '_makers.ts'))) continue;
-    if (file.endsWith(path.join('core', '_ports.ts'))) continue;
-
-    const source = stripComments(await readFile(file, 'utf8'));
-    if (/context[?.]*\.sandbox[?.]*\.commands\b/.test(source)) offenders.push(file);
-  }
-
-  assert.deepEqual(
-    offenders,
-    [],
-    'these files run sandbox commands directly; go through runCommand instead',
-  );
-});
-
-// The broadest of the three guards: no file outside the adapter may name the
-// sandbox at all. This also catches the `const sandbox = context.sandbox`
-// aliasing form, which a narrower pattern silently misses.
-test('the sandbox is reachable only through the workspace port', async () => {
-  const offenders: string[] = [];
-
-  for (const file of await sourceFiles('agents')) {
-    if (file.endsWith(path.join('adapters', '_makers.ts'))) continue;
-    if (file.endsWith(path.join('core', '_ports.ts'))) continue;
-
-    const source = stripComments(await readFile(file, 'utf8'));
-    if (/context[?.]*\.sandbox\b/.test(source)) offenders.push(file);
-  }
-
-  assert.deepEqual(
-    offenders,
-    [],
-    'these files reach context.sandbox directly; go through createMakersWorkspacePort instead',
-  );
-});
-
-// The core describes what happened; hosts decide how it looks. A progress-bar
-// phase or a prerendered summary string leaking back in is how the original
-// coupling started, so the presenter is the only place allowed to name them.
-test('the core carries no presentation vocabulary', async () => {
-  const uiVocabulary = /\bphaseHint\b|\binputSummary\b|\boutputSummary\b|\bneedsWorkspace\b|\biframe\b/;
-  const offenders: string[] = [];
-
-  for (const file of await sourceFiles(path.join('agents', 'core'))) {
-    // Translating domain events into the browser's wire format is this
-    // directory's entire purpose.
-    if (file.includes(`${path.sep}presenters${path.sep}`)) continue;
-
-    const source = stripComments(await readFile(file, 'utf8'));
-    if (uiVocabulary.test(source)) offenders.push(file);
-  }
-
-  assert.deepEqual(
-    offenders,
-    [],
-    'these core files name a UI concern; keep it in a presenter or a host',
-  );
-});
-
-// The agent loop is the seam a different SDK would be swapped at, so running it
-// is the driver's exclusive job. `query()` or an MCP server built anywhere else
-// means a second loop has appeared and the seam is no longer load-bearing —
-// which is precisely how the previous abstraction here decayed into decoration.
-test('only the driver runs an agent loop', async () => {
-  const offenders: string[] = [];
-
-  for (const file of await sourceFiles('agents')) {
-    if (file.includes(`${path.sep}drivers${path.sep}`)) continue;
-
-    const source = stripComments(await readFile(file, 'utf8'));
-    if (/\bquery\(\{|createSdkMcpServer\(/.test(source)) offenders.push(file);
-  }
-
-  assert.deepEqual(
-    offenders,
-    [],
-    'these files drive an agent SDK directly; go through an AgentDriverPort instead',
-  );
-});
-
-/**
- * Files still importing the vendor SDK outside the driver.
- *
- * A ratchet, not a permission list: entries may be removed as each dependency
- * moves behind a port, and nothing may be added. What remains here is type-only
- * or session-export surface, none of which runs the loop.
- */
-const SDK_IMPORT_RATCHET = [
-  path.join('agents', '_session.ts'),
-  path.join('agents', '_types.ts'),
-  path.join('agents', 'sdk-session.ts'),
-  path.join('agents', 'tools', '_project-tools.ts'),
-  path.join('agents', 'tools', '_deploy-tools.ts'),
-  path.join('agents', 'utils', '_sdk-transcript.ts'),
-];
-
-test('the vendor SDK reaches no further than it already does', async () => {
-  const importers: string[] = [];
-
-  for (const file of await sourceFiles('agents')) {
-    if (file.includes(`${path.sep}drivers${path.sep}`)) continue;
-
+test('app source files stay within size limits', async () => {
+  for (const file of await sourceFiles('app')) {
+    if (file.startsWith(`app${path.sep}components${path.sep}ui${path.sep}`)) continue;
+    if (file.startsWith(`app${path.sep}i18n${path.sep}`)) continue;
     const source = await readFile(file, 'utf8');
-    if (/@anthropic-ai\/claude-agent-sdk/.test(source)) importers.push(file);
+    const lines = source.split(/\r?\n/).filter((line, index, all) => (
+      index < all.length - 1 || line !== ''
+    )).length;
+    const limit = file.endsWith('.tsx') ? 300 : 350;
+    assert.ok(
+      lines <= limit,
+      `${file} has ${lines} lines (limit ${limit})`,
+    );
   }
-
-  const added = importers.filter((file) => !SDK_IMPORT_RATCHET.includes(file));
-  assert.deepEqual(
-    added,
-    [],
-    'these files newly import the vendor SDK; put the dependency behind a port or in the driver',
-  );
 });
 
-// Localized copy in the runtime is what forced "右侧预览面板" into an agent
-// reply. Failures cross the boundary as codes so each host writes its own words.
-test('the core ships no user-facing prose', async () => {
-  const offenders: string[] = [];
-
-  for (const file of await sourceFiles(path.join('agents', 'core'))) {
-    const source = stripComments(await readFile(file, 'utf8'));
-    if (/[\u4e00-\u9fff]/.test(source)) offenders.push(file);
+test('session kernel and makers CLI live under agents/_lib', async () => {
+  for (const target of [
+    'agents/_lib/session/store.ts',
+    'agents/_lib/session/transcript.ts',
+    'agents/transcript.ts',
+    'agents/_lib/session/live.ts',
+    'agents/_lib/lazy/sandbox.ts',
+    'agents/_lib/session/projection.ts',
+    'agents/_lib/makers/session.ts',
+    'agents/_lib/makers/cli-dev.ts',
+    'agents/_lib/makers/preview-proxy-source.ts',
+    'shared/timeline.ts',
+    'shared/protocol.ts',
+    'agents/prompt.ts',
+  ]) {
+    await access(target);
   }
-
-  assert.deepEqual(offenders, [], 'these core files contain localized copy; return a reason code instead');
 });

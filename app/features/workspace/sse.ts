@@ -28,13 +28,20 @@ export async function consumeEventStream<T>(
     }
   };
 
-  while (!done) {
-    const chunk = await reader.read();
-    if (chunk.done) break;
-    buffer += decoder.decode(chunk.value, { stream: true });
-    consumeFrames();
-  }
+  try {
+    while (!done) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      buffer += decoder.decode(chunk.value, { stream: true });
+      consumeFrames();
+    }
 
-  buffer += decoder.decode();
-  if (!done && buffer.trim()) consumeFrames(true);
+    buffer += decoder.decode();
+    if (!done && buffer.trim()) consumeFrames(true);
+  } finally {
+    // A server may emit [DONE] before it closes the HTTP response. Explicitly
+    // cancel the reader so the keep-alive socket cannot block makers-dev SIGINT.
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
 }
