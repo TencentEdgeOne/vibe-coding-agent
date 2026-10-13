@@ -171,11 +171,21 @@ test('workspace snapshot and preview status are pullable without the chat stream
   const client = await surface('app/features/workspace/workspace-api.ts');
   const previewSurface = await surface(PREVIEW_SURFACE);
 
+  const filePreview = await readFile(
+    'app/features/workspace/components/files/use-file-preview.ts',
+    'utf8',
+  );
+  const live = await readFile('app/features/workspace/hooks/live/stream-handlers.ts', 'utf8');
+
   assert.match(workspace, /onRequestGet/);
   assert.match(workspace, /runWorkspaceSnapshotPipeline/);
   assert.doesNotMatch(preview, /onRequestGet/);
   assert.match(client, /fetch\('\/workspace'/);
-  assert.match(client, /fetch\(`\/file\?paths=/);
+  // File bodies are not pulled with the snapshot. A click on a code file is
+  // the only client call to /file.
+  assert.doesNotMatch(client, /\/file\?/);
+  assert.doesNotMatch(live, /pullFiles|\/file\?/);
+  assert.match(filePreview, /fetch\(`\/file\?path=/);
   assert.match(
     previewSurface,
     /void options\.refreshWorkspace\?\.\(id, \{ includePreview: false \}\)/,

@@ -12,11 +12,9 @@ type FileCacheEntry = {
   mtime?: number;
 };
 
-// Caches generated file contents so opening a file does not cost a /file request
-// (each one still wakes the agent route and crosses the sandbox boundary). Entries come
-// from two places: file_changed events that trigger GET /file?paths=, and
-// /file responses for files it never wrote this session. The sandbox mtime/size
-// reported by the file tree decides when an entry is still good.
+// Remembers a file after the user opens it, so opening it again does not cost a
+// /file request. A later write drops that path; the next click reads it again.
+// The sandbox mtime/size reported by the file tree decides when an entry is still good.
 export function useFileContentCache() {
   const cacheRef = useRef<Map<string, FileCacheEntry>>(new Map());
   const [version, setVersion] = useState(0);
@@ -33,6 +31,15 @@ export function useFileContentCache() {
     if (cacheRef.current.size === 0) return;
     cacheRef.current.clear();
     bump();
+  }, [bump]);
+
+  const forget = useCallback((paths: string[]) => {
+    const cache = cacheRef.current;
+    let changed = false;
+    for (const path of paths) {
+      if (cache.delete(path)) changed = true;
+    }
+    if (changed) bump();
   }, [bump]);
 
   const reconcile = useCallback((tree: FileTree | null) => {
@@ -79,8 +86,8 @@ export function useFileContentCache() {
   }, [bump]);
 
   return useMemo(
-    () => ({ version, read, write, clear, reconcile }),
-    [version, read, write, clear, reconcile],
+    () => ({ version, read, write, clear, forget, reconcile }),
+    [version, read, write, clear, forget, reconcile],
   );
 }
 

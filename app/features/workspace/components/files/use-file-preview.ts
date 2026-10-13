@@ -52,14 +52,12 @@ export function useFilePreview({
     focusedPathRef.current = null;
   }, [tree?.root]);
 
-  const fetchFile = useCallback(async (path: string, options: { silent?: boolean } = {}) => {
+  const fetchFile = useCallback(async (path: string) => {
     latestRequestRef.current = path;
     inFlightRef.current?.abort();
     const controller = new AbortController();
     inFlightRef.current = controller;
-    if (!options.silent) {
-      setPreview({ status: 'loading', path });
-    }
+    setPreview({ status: 'loading', path });
     try {
       const headers: HeadersInit = {};
       const cid = conversationId || getOrCreateCachedConversationId();
@@ -125,55 +123,43 @@ export function useFilePreview({
       return;
     }
     const inTree = tree?.items.some((item) => item.type === 'file' && item.path === focusPath);
-    const cached = readCachedFile(focusPath);
-    if (!inTree && !cached) {
+    if (!inTree) {
       return;
     }
     focusedPathRef.current = focusPath;
-    if (tree) {
-      const parts = focusPath.split('/');
-      if (parts.length > 1) {
-        setCollapsedDirs((current) => {
-          let changed = false;
-          const next = new Set(current);
-          for (let i = 1; i < parts.length; i += 1) {
-            const dir = parts.slice(0, i).join('/');
-            if (next.has(dir)) {
-              next.delete(dir);
-              changed = true;
-            }
-          }
-          return changed ? next : current;
-        });
+    const parts = focusPath.split('/');
+    if (parts.length <= 1) return;
+    setCollapsedDirs((current) => {
+      let changed = false;
+      const next = new Set(current);
+      for (let i = 1; i < parts.length; i += 1) {
+        const dir = parts.slice(0, i).join('/');
+        if (next.has(dir)) {
+          next.delete(dir);
+          changed = true;
+        }
       }
-    }
-    loadFile(focusPath);
-  }, [focusPath, loadFile, readCachedFile, tree]);
+      return changed ? next : current;
+    });
+  }, [focusPath, tree]);
 
-  const previewStatus = preview.status;
-  const previewPath = preview.status === 'idle' ? null : preview.path;
   useEffect(() => {
     const path = selectedPath;
     if (!path) return;
     const cached = readCachedFile(path);
-    if (cached) {
-      setPreview((current) => (
-        current.status === 'ready' && current.path === path && current.content === cached.content
-          ? current
-          : {
-            status: 'ready',
-            path,
-            content: cached.content,
-            truncated: cached.truncated,
-            size: cached.size,
-          }
-      ));
-      return;
-    }
-    if (previewStatus === 'ready' && previewPath === path) {
-      void fetchFile(path, { silent: true });
-    }
-  }, [cacheVersion, fetchFile, previewPath, previewStatus, readCachedFile, selectedPath]);
+    if (!cached) return;
+    setPreview((current) => (
+      current.status === 'ready' && current.path === path && current.content === cached.content
+        ? current
+        : {
+          status: 'ready',
+          path,
+          content: cached.content,
+          truncated: cached.truncated,
+          size: cached.size,
+        }
+    ));
+  }, [cacheVersion, readCachedFile, selectedPath]);
 
   const toggleDirectory = (path: string) => {
     setCollapsedDirs((current) => {

@@ -3,10 +3,7 @@
 import { useCallback } from 'react';
 import type { FileContentCache } from '@/app/hooks/use-file-content-cache';
 import type { ResumeData, WorkspaceSnapshot } from '../../../../shared/protocol';
-import {
-  fetchFileBatch,
-  fetchWorkspaceSnapshot,
-} from '../workspace-api';
+import { fetchWorkspaceSnapshot } from '../workspace-api';
 import type { PreviewSurfaceApi } from './use-preview-surface';
 import type { WorkspaceStateApi } from './use-workspace-state';
 
@@ -46,21 +43,11 @@ export function useWorkspaceSnapshot(options: {
     return snapshot;
   }, [applySnapshot]);
 
-  const pullFiles = useCallback(async (conversationId: string, paths: string[]) => {
-    if (paths.length === 0) return [];
-    const files = await fetchFileBatch(conversationId, paths);
-    for (const file of files) {
-      if (!file.path || !file.ok || typeof file.content !== 'string') continue;
-      fileCache.write(file.path, {
-        content: file.content,
-        size: typeof file.size === 'number' ? file.size : file.content.length,
-        truncated: Boolean(file.truncated),
-      });
-    }
-    return files;
+  const forgetFiles = useCallback((paths: string[]) => {
+    fileCache.forget(paths);
   }, [fileCache]);
 
-  return { applySnapshot, refresh, pullFiles };
+  return { applySnapshot, refresh, forgetFiles };
 }
 
 export type WorkspaceSnapshotApi = ReturnType<typeof useWorkspaceSnapshot>;

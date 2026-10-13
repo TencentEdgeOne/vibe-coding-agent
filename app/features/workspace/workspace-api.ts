@@ -166,33 +166,3 @@ export function fetchWorkspaceSnapshot(conversationId: string, signal?: AbortSig
   }).then((response) => readJson<WorkspaceSnapshot>(response)).catch(() => null);
 }
 
-export type FileBatchEntry = {
-  path: string;
-  ok?: boolean;
-  content?: string;
-  size?: number;
-  truncated?: boolean;
-  error?: string;
-};
-
-const FILE_BATCH_MAX = 12;
-
-export async function fetchFileBatch(
-  conversationId: string,
-  paths: string[],
-  signal?: AbortSignal,
-): Promise<FileBatchEntry[]> {
-  const unique = [...new Set(paths.map((path) => path.trim()).filter(Boolean))];
-  const files: FileBatchEntry[] = [];
-  for (let index = 0; index < unique.length; index += FILE_BATCH_MAX) {
-    const batch = unique.slice(index, index + FILE_BATCH_MAX);
-    const response = await fetch(`/file?paths=${encodeURIComponent(batch.join(','))}`, {
-      method: 'GET',
-      headers: conversationHeaders(conversationId),
-      signal,
-    });
-    const data = await readJson<{ ok?: boolean; files?: FileBatchEntry[] }>(response);
-    if (Array.isArray(data?.files)) files.push(...data.files);
-  }
-  return files;
-}

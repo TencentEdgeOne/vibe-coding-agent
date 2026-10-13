@@ -31,7 +31,6 @@ export type LiveChatSessionOptions = {
   abortController: AbortController;
   workspaceEpoch: number;
   workspaceEpochRef: MutableRefObject<number>;
-  conversationIdRef: MutableRefObject<string | null>;
   chatAbortControllerRef: MutableRefObject<AbortController | null>;
   stoppingRef: MutableRefObject<boolean>;
   activeTurnIdRef: MutableRefObject<string>;
@@ -58,7 +57,6 @@ export function createLiveChatSession(sessionOptions: LiveChatSessionOptions): L
     setMessages,
     setLoading,
     workspaceEpochRef,
-    conversationIdRef,
     chatAbortControllerRef,
     stoppingRef,
     activeTurnIdRef,
@@ -66,13 +64,11 @@ export function createLiveChatSession(sessionOptions: LiveChatSessionOptions): L
   const activatedPreviewRevisions = new Map<string, number>();
   let sawProjectActivity = false;
   let openedFirstFile = false;
-  let pendingFirstFilePath: string | null = null;
   let gatewayKeyApplied = false;
 
   const revealFirstFile = (path: string) => {
     if (openedFirstFile || !path) return;
     openedFirstFile = true;
-    pendingFirstFilePath = null;
     workspace.setFilesFocusPath(path);
   };
 
@@ -176,35 +172,21 @@ export function createLiveChatSession(sessionOptions: LiveChatSessionOptions): L
     if (event.type === 'file_changed' && event.data?.paths?.length) {
       sawProjectActivity = true;
       const paths = event.data.paths.filter(Boolean);
-      const cid = conversationIdRef.current || sessionOptions.requestConversationId;
-      if (cid && paths.length > 0) {
-        const merge = (sizes = new Map<string, number | undefined>()) => {
-          workspace.setFileTree((current) => mergeFileTreeWrites(
-            current,
-            paths.map((path) => {
-              const size = sizes.get(path);
-              return { path, ...(typeof size === 'number' ? { size } : {}) };
-            }),
-          ));
-        };
-        void snapshot.pullFiles(cid, paths).then((files) => {
-          merge(new Map(files.map((file) => [file.path, file.size])));
-        }, () => {
-          merge();
-        }).finally(() => {
-          if (!openedFirstFile && paths[0]) revealFirstFile(paths[0]);
-        });
-      } else if (!openedFirstFile && paths[0]) {
-        pendingFirstFilePath = paths[0];
+      if (paths.length > 0) {
+        // The write already names the path. Content waits for a click on that
+        // file; fetching it here would wake /file once per write.
+        snapshot.forgetFiles(paths);
+        workspace.setFileTree((current) => mergeFileTreeWrites(
+          current,
+          paths.map((path) => ({ path })),
+        ));
+        if (!openedFirstFile && paths[0]) revealFirstFile(paths[0]);
       }
       return;
     }
     if (event.type === 'file_tree' && event.data) {
       sawProjectActivity = true;
       workspace.setFileTree(event.data);
-      if (pendingFirstFilePath) {
-        revealFirstFile(pendingFirstFilePath);
-      }
       return;
     }
     if (event.type === 'deployment_status' && event.data) {
