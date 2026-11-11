@@ -5,6 +5,8 @@ import {
   resolveDeployOffer,
   type DeployOfferMessage,
 } from '../app/lib/tool-activity.ts';
+import { SITE_PUBLISH_ACTIVITY_COMMAND } from '../shared/site-publish.ts';
+import { liveUrlDisplayText } from '../shared/makers-url.ts';
 
 const writeTurn: DeployOfferMessage = {
   id: 'a1',
@@ -101,4 +103,43 @@ test('lastFinishedAssistant skips a still-running turn', () => {
     { id: 'a6', role: 'assistant', status: 'running', activities: [] },
   ]);
   assert.equal(last?.id, 'a1');
+});
+
+test('a finished host publish does not ask to publish again', () => {
+  const publishTurn: DeployOfferMessage = {
+    id: 'a-publish',
+    role: 'assistant',
+    status: 'done',
+    activities: [
+      { kind: 'tool', name: 'commands', inputSummary: SITE_PUBLISH_ACTIVITY_COMMAND, status: 'completed' },
+    ],
+  };
+  assert.equal(
+    resolveDeployOffer([writeTurn, publishTurn], {
+      canDownload: true,
+      loading: false,
+      hasLiveDeployment: true,
+    }),
+    null,
+  );
+  // A later edit still offers to republish.
+  assert.equal(
+    resolveDeployOffer([publishTurn, { ...writeTurn, id: 'a7' }], { canDownload: true, loading: false }),
+    'again',
+  );
+});
+
+test('a .dev live URL is shown without its query string', () => {
+  assert.equal(
+    liveUrlDisplayText('https://vibe-f227860992.edgeone.dev?eo_token=b402&eo_time=1794380541'),
+    'https://vibe-f227860992.edgeone.dev',
+  );
+  assert.equal(
+    liveUrlDisplayText('https://vibe.edgeone.dev/about?eo_token=x'),
+    'https://vibe.edgeone.dev/about',
+  );
+  assert.equal(
+    liveUrlDisplayText('https://vibe.edgeone.cool?eo_token=x'),
+    'https://vibe.edgeone.cool?eo_token=x',
+  );
 });

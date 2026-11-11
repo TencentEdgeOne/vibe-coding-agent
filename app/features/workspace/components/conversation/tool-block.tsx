@@ -2,6 +2,7 @@
 
 import { presentToolActivity } from '@/app/lib/tool-activity';
 import type { AssistantActivity } from '../../../../../shared/protocol';
+import { liveUrlDisplayText } from '../../../../../shared/makers-url';
 import { statusLabel } from './activity-blocks';
 import { ActivityDetail, ActivityRow } from './activity-row';
 import type { ConversationCopy } from './types';
@@ -49,7 +50,9 @@ export function ToolBlock({ activity, copy }: {
           {activity.outputSummary && (
             <ActivityDetail
               label={copy.output}
-              content={activity.outputSummary}
+              content={presentation.action === 'Deploy project'
+                ? liveUrlDisplayText(activity.outputSummary)
+                : activity.outputSummary}
               tone={failed ? 'danger' : undefined}
             />
           )}

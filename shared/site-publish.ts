@@ -8,3 +8,9 @@ export function isSitePublishRequest(message: string) {
   const trimmed = message.trim();
   return trimmed === SITE_PUBLISH_REQUEST.zh || trimmed === SITE_PUBLISH_REQUEST.en;
 }
+
+/**
+ * The activity row the host publish pipeline writes. The timeline reads it back
+ * as "Deploy project", so a finished publish does not ask to publish again.
+ */
+export const SITE_PUBLISH_ACTIVITY_COMMAND = 'publish site';

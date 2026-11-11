@@ -26,12 +26,14 @@ import { activateSandbox } from '../lazy/sandbox.ts';
 import { bindLiveWorkspace } from '../session/live-workspace.ts';
 import { sendTurnResult } from './result.ts';
 import { publishStaticSite, SiteBuildError } from '../site/publish.ts';
+import { SITE_PUBLISH_ACTIVITY_COMMAND } from '../../../shared/site-publish.ts';
 
 /** Used when an API caller asks to publish without wording the request itself. */
 export const DEPLOY_TIMEOUT_SECONDS = 600;
 
-// The transcript row this pipeline writes.
-const DEPLOY_ACTIVITY_COMMAND = 'publish site';
+// The transcript row this pipeline writes. The timeline must read it as a
+// deploy, or the finished publish offers to publish again.
+const DEPLOY_ACTIVITY_COMMAND = SITE_PUBLISH_ACTIVITY_COMMAND;
 
 const COPY = {
   zh: {

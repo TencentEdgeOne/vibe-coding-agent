@@ -11,6 +11,7 @@ import type {
   PersistedActivityTurn,
 } from './protocol.ts';
 import { WEB_SEARCH_TOOL_NAME } from './web-search.ts';
+import { SITE_PUBLISH_ACTIVITY_COMMAND } from './site-publish.ts';
 
 export function sanitizeAssistantText(input: string): string {
   if (!input) return '';
@@ -583,6 +584,7 @@ export function presentToolActivity(
     return { action: 'Create preview' };
   }
   if (name === 'commands' || name.includes('command')) {
+    if (target === SITE_PUBLISH_ACTIVITY_COMMAND) return { action: 'Deploy project' };
     if (/\bedgeone\s+makers\s+deploy\b/i.test(target)) return { action: 'Deploy project' };
     if (/\bedgeone\s+makers\s+dev\b/i.test(target)) return { action: 'Create preview' };
     return { action: 'Run command', target };

@@ -5,6 +5,7 @@ import { Check, Copy } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { withoutPlatformName } from '../../../../../shared/platform-name';
+import { liveUrlDisplayText } from '../../../../../shared/makers-url';
 import type { ConversationCopy } from './types';
 
 function plainText(node: ReactNode): string {
@@ -39,7 +40,7 @@ function ConversationLink({ href, copy, children }: {
       rel="noopener noreferrer"
       dir={isAddress ? 'ltr' : undefined}
     >
-      {children}
+      {isAddress ? liveUrlDisplayText(url) : children}
     </a>
   );
 
